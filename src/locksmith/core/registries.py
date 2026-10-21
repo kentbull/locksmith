@@ -9,7 +9,9 @@ from keri import kering
 from keri.acdc import regeventing
 from keri.app import querying
 from keri.app.httping import CESR_CONTENT_TYPE
-from keri.core import Diger, Number, Saider, SerderACDC, eventing
+from keri.core import Number, SerderACDC, eventing
+
+from locksmith.core import evidence
 from keri.help import helping
 
 
@@ -18,7 +20,7 @@ def _events(stream):
     ims, events = bytearray(stream), []
     while ims:
         event = SerderACDC(raw=ims)
-        if event.pvrsn != kering.Vrsn_2_0 or event.ilk != ('rip' if not events else 'bup'):
+        if event.pvrsn != kering.Vrsn_2_0 or event.ilk not in (('rip',) if not events else ('bup', 'upd')):
             raise kering.ValidationError('Expected a V2 registry inception followed by updates')
         if Number(numh=event.sad['n']).num != len(events):
             raise kering.ValidationError('Registry response must contain a complete ordered chain')
@@ -47,13 +49,12 @@ def ingest(vault, regk, stream):
     for _, sn, said in accepted:
         if sn >= len(events) or said.qb64 != events[sn].said:
             raise kering.ValidationError(f'Conflicting registry history at sequence {sn}')
-    for event, (sn, said) in zip(events, state.anchors, strict=True):
-        store.putEvent(event)
-        store.putAnchor(event.said, Number(num=sn), Diger(qb64=said))
-        number = Number(numh=event.sad['n']).num
-        if store.seqSaider(regk, number) is None:
-            store.accept(regk, number, event)
-    store.baser.heads.pin(keys=regk, val=Saider(qb64=state.said))
+    # Legacy bare-TEL compatibility still preflights the whole chain. Only the
+    # common Rever may commit accepted ordinals, anchors and the head.
+    rever = evidence.processor(vault).rever
+    for event in events:
+        if not rever.processEvent(event):
+            raise kering.MissingAnchorError('Registry acceptance remains pending')
     return state
 
 
@@ -73,6 +74,10 @@ class RegistrySyncDoer(doing.DoDoer):
         self.vault, self.hab, self.regk = vault, hab, regk
         self.observer_url, self.registrar_url = observer_url, registrar_url
         self.result, self.error, self.manager = None, '', None
+        self.response_headers = {}
+        self.profile = (vault.hby.cf.get() or {}).get('registries', {}).get('profile', 'legacy')
+        if self.profile not in ('legacy', 'full-evidence'):
+            raise ValueError('Unknown registry service profile')
         self.querier = None
         super().__init__(doers=[doing.doify(self.sync_do)], **kwa)
 
@@ -124,6 +129,8 @@ class RegistrySyncDoer(doing.DoDoer):
                 raise kering.ValidationError(f'Registry service refused the request (HTTP {status})')
             if reply.bytesAvailable() > self.MaxResponse:
                 raise ValueError('Registry response exceeds the size limit')
+            self.response_headers = {bytes(key).decode().lower(): bytes(value).decode()
+                                     for key, value in reply.rawHeaderPairs()}
             return bytes(reply.readAll())
         finally:
             if not reply.isFinished():
@@ -136,6 +143,11 @@ class RegistrySyncDoer(doing.DoDoer):
         try:
             self._open()
             self.manager = QNetworkAccessManager()
+            if self.profile == 'full-evidence':
+                event = yield from evidence.sync(self)
+                if signals := getattr(self.vault, 'signals', None):
+                    signals.emit_doer_event('RegistrySync', event, {'registry': self.regk, 'success': True})
+                return True
             kel = b''.join(self.hab.db.clonePreIter(pre=self.hab.pre, gvrsn=kering.Vrsn_2_0))
             if self.registrar_url:
                 tel = self.vault.rgy.store.cloneTel(self.regk)
@@ -232,6 +244,7 @@ class RegistryEvidenceDoer(doing.DoDoer):
         config = (vault.hby.cf.get() or {}).get('registries', {})
         self.registrar_url = config.get('registrar')
         self.observer_url = config.get('observer')
+        self.profile = config.get('profile', 'legacy')
         self.errors = {}
         self._requests, self._fetched, self._published = {}, {}, {}
         self._active, self._retry = {}, {}
@@ -239,15 +252,15 @@ class RegistryEvidenceDoer(doing.DoDoer):
 
     def _configure(self):
         config = (self.vault.hby.cf.get() or {}).get('registries', {})
-        endpoints = config.get('registrar'), config.get('observer')
-        if endpoints != (self.registrar_url, self.observer_url):
+        endpoints = config.get('registrar'), config.get('observer'), config.get('profile', 'legacy')
+        if endpoints != (self.registrar_url, self.observer_url, self.profile):
             self.remove(list(self._active.values()))
             self._active.clear()
             self._fetched.clear()
             self._published.clear()
             self._retry.clear()
             self.errors.clear()
-            self.registrar_url, self.observer_url = endpoints
+            self.registrar_url, self.observer_url, self.profile = endpoints
 
     def ensure(self, regk, hab):
         """Queue a registry check and return whether its observer evidence is fresh."""

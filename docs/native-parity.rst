@@ -35,3 +35,30 @@ failures. The five invalid-relation fixtures and two revocation retry failures
 are repaired; the focused 118 tests pass. External-service integration,
 grant-specific disclosure selection, optional opening/derivation capabilities,
 headless end-to-end scenarios and actual UI qualification remain separate gates.
+
+Full-evidence service configuration
+-----------------------------------
+
+Set ``registries.profile`` to ``full-evidence`` alongside the registrar and
+observer base URLs. This profile targets the upgraded KF services' external
+listeners. Bootstrap their publisher/reader KELs and allowlists before running
+the wallet. The older bare-TEL/admin-JSON profile remains the default for
+existing deployments; it is not the qualified source-freshness profile.
+
+``core.evidence`` borrows KERIpy's ``EvidenceProcessor`` at ``7671c088`` and
+adapts signed requests and response verification from ``public_evidence.Request``.
+``RegistrySyncDoer`` retains the donor Qt network/cancellation lifecycle.
+``Vault`` owns one Kramer/pruner and one foreign native Rever, shared by mailbox
+and observer intake. There are no application writes to accepted TEL ordinals,
+anchors or heads. Legacy bare-TEL input is still preflighted before common Rever
+acceptance. Full evidence retains ordinary incomplete dependencies for retry.
+
+A full observer response must be fresh CESR, have a recent receiver observation
+time, and independently verify to exactly its advertised registry head. These
+are application observation facts, not proof of global wall-clock publication.
+Changing endpoint or profile clears wallet freshness/publication caches.
+
+Installed tests cover unknown-issuer KEL proof acquisition, public and blinded
+updates, signed full publication, stale/future/missing metadata, mismatched heads
+and retained missing dependencies. Real external binary scenarios remain a
+separate qualification gate.
