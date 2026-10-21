@@ -246,3 +246,14 @@ window and make a valid operator input fail. The hosted issuer scenario reproduc
 this at 15:26:29.963 UTC before a 15:26:30 request. The worker rejects mixed inputs
 and unknown witness IDs before authoring registry state. This local adapter
 correction preserves the hosted provider's existing authorization contract.
+
+Issuance state controls
+-----------------------
+
+The issuance dialog now exposes public state, individual blinded openings and
+explicit future-opening derivation. Its small ``StatePublicationOptions`` widget
+is local UI composition over the existing ``registry_authoring`` modes. Selecting
+a known designated discloser binds optional custody locally; the form clearly
+states that it sends no secret and creates no delegation. Anchor/signature
+credentials hide these inapplicable options. The established blinded default is
+preserved. Selection itself never opens custody.
