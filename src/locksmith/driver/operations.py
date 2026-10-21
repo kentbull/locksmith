@@ -156,7 +156,11 @@ def execute(app, request):
                 receipt = vault.db.receipts.get((hab.pre, request['prior']))
                 result['accepted'] = bool(receipt and receipt.status == 'accepted')
             return result
-        if record and record.status == 'failed':
+        # The application owns retries. A transient freshness miss can occur
+        # between composition and dispatch; do not report its retained work as
+        # terminal while the ordinary outbox still has an authorized retry.
+        if record and (record.status == 'blocked' or (record.status == 'failed'
+                and record.attempts > len(ipexing.SendIpexDoer.RetryDelays))):
             raise ValueError(f'Exchange {said}: {record.error}')
         if monotonic() >= deadline:
             raise TimeoutError(f'Exchange {said} retained; transport not yet submitted')

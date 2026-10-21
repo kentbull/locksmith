@@ -257,3 +257,31 @@ a known designated discloser binds optional custody locally; the form clearly
 states that it sends no secret and creates no delegation. Anchor/signature
 credentials hide these inapplicable options. The established blinded default is
 preserved. Selection itself never opens custody.
+
+Dedicated application-issuer story
+---------------------------------
+
+``scripts/scenarios/issuer-through-holder.sh`` adds issuer coverage without
+replacing the six role-specific stories. Run it in ``locksmith:scenarios`` with
+Linux named volumes at ``/tmp`` and ``/usr/local/var``; set
+``SCENARIO_REGISTRY_MODE`` to ``public`` (default), ``blinded`` or ``derived``.
+The image must include core b6ffa21a and Dolly 4dd76e8 or later. Identity/provider
+bootstrap and the initial signed registrar publication use the existing KLI
+harness. Credential issuance and the initial Grant use Locksmith's persistent
+application; holder admission and both negotiated presentations do too. The
+issuer stops before onward presentation. All three state modes pass with actual
+KF services, hosted witness processes, and two Dolly hooks. Exact earlier-view
+and hook hashes remain unchanged after fuller disclosure.
+
+``issuer-material.py`` is a local test adapter for public artifacts and explicit
+private operator inputs; it calls the application driver and never inserts
+accepted protocol rows. The scenario explicitly loads Dolly's pinned upstream
+ACM schema because the issuer references it by digest. The original six scenarios
+remain unchanged and independently useful. These are development-image results;
+final clean source/wheel manifests and the live UI pass remain open.
+
+The driver now respects the application's existing bounded outbox retry policy.
+A freshness check can expire between composition and dispatch. That transient
+failure leaves an authorized retry in the ordinary outbox; the driver waits for
+submission or its own deadline instead of treating the first retryable status as
+terminal. Blocked policy failures and exhausted send attempts still fail.

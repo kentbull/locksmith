@@ -3,6 +3,7 @@
 ARG LOCKSMITH_IMAGE=locksmith:parity
 FROM ${LOCKSMITH_IMAGE}
 COPY src /component/src
+COPY scripts/scenarios /component/scripts/scenarios
 RUN mkdir -p /artifacts && python -m pip wheel --no-deps --no-build-isolation /component -w /artifacts && python -m pip install --force-reinstall --no-deps /artifacts/locksmith*.whl
 COPY --from=core-src scripts/v2-e2e/scenarios /workspace/scripts/v2-e2e/scenarios
 COPY --from=dolly-src pyproject.toml README.md LICENSE NOTICE /opt/dolly/
