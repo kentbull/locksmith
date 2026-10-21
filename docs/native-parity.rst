@@ -387,3 +387,14 @@ requirements, source revisions and clean-build status. Development defaults stay
 unqualified. This local build contract replaces the earlier hard-coded dirty
 manifest; it is not a signed supply-chain attestation or proof of bit-reproducible
 wheel archives. Screenshots and protocol assertions remain separate evidence.
+
+Complete component test environment
+-----------------------------------
+
+The final wallet suite runs in the composed scenario image, with the actual
+observer installed. The wallet-only image skips three optional observer ingress
+cases; their absence is not a pass. Running them exposed the retained bare-TEL
+endpoint's missing KEL PUT support, repaired in KF observer ``4d15b8e``. These
+cases use 0, 4 and 32 rotations and real Qt transport. This older API profile is
+still native v2, so its signed queries continue to use KRAM. It is distinct from
+the full-evidence profile's bootstrap and freshness contract.

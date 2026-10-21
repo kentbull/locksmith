@@ -42,9 +42,10 @@ for component in kf-registrar kf-observer witness-hk; do
         -v "$RUN-$component-tests:/tmp" -v "$RUN-$component-state:/usr/local/var" \
         "$IMAGE" -c 'python -m pytest -q -o pythonpath= tests' > "$OUTPUT/$component-tests.log" 2>&1
 done
-docker run --rm --name "$RUN-wallet-tests" -v "$RUN-wallet-tests:/tmp" \
-    -v "$RUN-wallet-tests-state:/usr/local/var" "$WALLET_IMAGE" \
-    python -m pytest -q -o pythonpath= tests > "$OUTPUT/wallet-tests.log" 2>&1
+# The composed image includes the observer: optional wallet ingress tests must run.
+docker run --rm --name "$RUN-wallet-tests" -w /component -v "$RUN-wallet-tests:/tmp" \
+    -v "$RUN-wallet-tests-state:/usr/local/var" "$IMAGE" \
+    -c 'python -m pytest -q -o pythonpath= tests' > "$OUTPUT/wallet-tests.log" 2>&1
 
 # Preserve the original KLI/v1 oracle in addition to the new application profile.
 DOLLY_SOURCE="$DOLLY_SOURCE" SCENARIO_VOLUME="$RUN-baseline" \
