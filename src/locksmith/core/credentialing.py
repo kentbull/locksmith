@@ -414,7 +414,7 @@ class IssueCredentialDoer(CredentialUpdateDoer):
 
     def __init__(self, app, schema_said, recipient_pre, attributes, edges=None, rules=None,
                  codes=None, signal_bridge=None, authentication='registry', nonce=None,
-                 registry_mode='blinded', discloser=None, auths=None):
+                 registry_mode='blinded', discloser=None, auths=None, bound_event=None):
         """Configure issuance without opening optional custody.
 
         app owns the vault; schema_said/recipient_pre select issuer policy and
@@ -425,7 +425,8 @@ class IssueCredentialDoer(CredentialUpdateDoer):
         authentication selects registry, anchor or signature. nonce is optional
         credential entropy. registry_mode explicitly selects public, per-event
         blinded, or derived state; discloser binds newly provisioned derivation
-        custody in derived mode only. No salt is shared by issuance itself.
+        custody in derived mode only. bound_event selects an exact current issuee
+        KEL event for blinded state. No salt is shared by issuance itself.
         """
         self.vault = app.vault
         self.schema_said, self.recipient_pre = schema_said, recipient_pre
@@ -443,6 +444,9 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             raise ValueError('State capabilities require registry authentication')
         if discloser and registry_mode != 'derived':
             raise ValueError('A derivation discloser requires derived state')
+        if bound_event and (authentication != 'registry' or registry_mode == 'public'):
+            raise ValueError('Bound state requires blinded registry authentication')
+        self.bound_event = bound_event
         self.registry_mode, self.discloser = registry_mode, discloser
         self.signals = signal_bridge if signal_bridge is not None else self.vault.signals
         super().__init__(doers=[doing.doify(self.issue_credential_do)])
@@ -508,6 +512,7 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             acdc = acdcmap(israid=hab.pre, uuid=nonce, regid=registry.regk if registry else None, schema=self.schema_said,
                            **attributes, edge=edges, rule=rules)
             schemer = validate_schema(self.vault, acdc)
+            registry_authoring.bound_options(self.vault, acdc, self.bound_event)
             previous = self.vault.db.issued.get((acdc.said,))
             created_at = previous.created_at if previous else helping.nowIso8601()
             auths = dict(self.auths)
@@ -523,7 +528,7 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                 if self.registry_mode == 'derived':
                     disclosing.custody(self.vault).createCustody(registry.regk, self.discloser or hab.pre)
                 blinder, update, stream = registry_authoring.stage(
-                    self.vault, registry, acdc, 'issued', self.registry_mode)
+                    self.vault, registry, acdc, 'issued', self.registry_mode, bound_event=self.bound_event)
                 record = IssuedCredential(acdc.raw.decode(), blinder.qb64 if blinder else '',
                                           update.said, stream.decode(), created_at=created_at,
                                           registry_mode=self.registry_mode)
@@ -562,7 +567,14 @@ class IssueCredentialDoer(CredentialUpdateDoer):
 class RevokeCredentialDoer(CredentialUpdateDoer):
     """Retain and anchor one revocation, including retries after a vault close."""
 
-    def __init__(self, app, credential_said, codes=None):
+    def __init__(self, app, credential_said, codes=None, *, bound_event=None):
+        """Configure revocation of one issued record without changing its state.
+
+        app owns the current vault; credential_said identifies the retained
+        issuance; codes are transient witness OTPs. bound_event explicitly
+        replaces the prior bound coordinate when the issuee KEL has advanced.
+        """
+        self.bound_event = bound_event
         self.vault = app.vault
         self.credential_said = credential_said
         self.revocation_id = uuid.uuid4().hex
@@ -596,8 +608,9 @@ class RevokeCredentialDoer(CredentialUpdateDoer):
             else:
                 if credential(self.vault, acdc.said)['status']['et'] != 'issued':
                     raise kering.ValidationError('Wait for verified issuance before revoking')
+                selected = self.bound_event or (blinder.bd if blinder and blinder.clan == BoundState else None)
                 blinder, update, stream = registry_authoring.stage(
-                    self.vault, registry, acdc, 'revoked', record.registry_mode)
+                    self.vault, registry, acdc, 'revoked', record.registry_mode, bound_event=selected)
                 record.blinder = blinder.qb64 if blinder else ''
                 record.update = update.said
                 record.stream = stream.decode()

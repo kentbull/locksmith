@@ -15,7 +15,7 @@ def issue(app, request):
         app: Open application owning the vault and its running HIO scheduler.
         request: Operator input with alias, schema, recipient, attributes, and
             optional authentication, registry_mode, discloser, nonce, edges,
-            rules, witness codes or exact auth headers, and timeout. Authentication
+            rules, witness codes or exact auth headers, bound_event, and timeout. Authentication
             inputs are transient only.
 
     Yields while the worker runs. Returns public credential/proof metadata after
@@ -27,7 +27,7 @@ def issue(app, request):
     if hab is None or vault.db.issuers.get((request['schema'],)) != hab.pre:
         raise ValueError('Choose the configured local issuer for this schema')
     options = {key: request[key] for key in (
-        'edges', 'rules', 'codes', 'auths', 'authentication', 'nonce', 'registry_mode', 'discloser')
+        'edges', 'rules', 'codes', 'auths', 'authentication', 'nonce', 'registry_mode', 'discloser', 'bound_event')
         if key in request}
     worker = credentialing.IssueCredentialDoer(app, request['schema'],
         request['recipient'], request['attributes'], **options)

@@ -1,7 +1,7 @@
 """Explicit registry publication capability choices for the issuance form."""
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
-from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox
+from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, FloatingLabelLineEdit
 from locksmith.ui.vault.credentials.presentation import identifier_name
 
 
@@ -26,6 +26,9 @@ class StatePublicationOptions(QWidget):
         for prefix in vault.hby.kevers:
             self.discloser.addItem(identifier_name(vault, prefix), prefix)
         layout.addWidget(self.discloser)
+        self.bound_event = FloatingLabelLineEdit('Exact current issuee event (optional)')
+        self.bound_event.setToolTip('Binds the state opening to a verified current issuee KEL event; does not transfer authority.')
+        layout.addWidget(self.bound_event)
         self.help = QLabel()
         self.help.setWordWrap(True)
         layout.addWidget(self.help)
@@ -42,6 +45,7 @@ class StatePublicationOptions(QWidget):
         """Explain the selected capability without implying salt transfer or delegation."""
         mode = self.mode.currentData()
         self.discloser.setVisible(self.registry and mode == 'derived')
+        self.bound_event.setVisible(self.registry and mode != 'public')
         self.help.setText({
             'public': 'Registry status is public. No blinding secret is created.',
             'blinded': 'Presentations reveal the specific state opening they need.',
@@ -53,5 +57,8 @@ class StatePublicationOptions(QWidget):
         if not self.registry:
             return {}
         mode = self.mode.currentData()
-        return {'registry_mode': mode,
+        result = {'registry_mode': mode,
                 'discloser': self.discloser.currentData() if mode == 'derived' else None}
+        if mode != 'public' and (event := self.bound_event.text().strip()):
+            result['bound_event'] = event
+        return result

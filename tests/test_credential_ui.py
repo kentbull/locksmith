@@ -1991,5 +1991,8 @@ def test_issue_controls_select_state_capability(wallet, qapp, mode):
     options.mode.setCurrentIndex(options.mode.combo_box.findData('derived'))
     options.discloser.setCurrentIndex(options.discloser.combo_box.findData(recipient.pre))
     assert options.selection() == {'registry_mode': 'derived', 'discloser': recipient.pre}
+    options.bound_event.line_edit.setFocus()
+    QTest.keyClicks(options.bound_event.line_edit, recipient.kever.serder.said)
+    assert options.selection()['bound_event'] == recipient.kever.serder.said
     options.set_registry(False)
     assert options.selection() == {}

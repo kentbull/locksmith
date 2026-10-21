@@ -342,3 +342,22 @@ core zero/empty placeholder convention. Every resulting proof still passes
 existing BlindState and BoundState records rather than assuming every retained
 opening has the unbound layout. These controls grant no issuance authority and
 make no global wall-clock publication claim.
+
+
+Bound authoring and revocation
+------------------------------
+
+Issuance and revocation also accept explicit ``bound_event``. Public state and
+non-registry authentication reject that option. The authoring adapter shares the
+core event lookup, then enforces the existing KLI current-issuee-head requirement
+before creating a new bound update. Both individually blinded and derived modes
+use ordinary registry staging and witness receipt acceptance. The UI exposes the
+exact event field separately from the registry salt's designated discloser.
+
+Revocation reuses the prior bound event if still current. If the issuee has
+advanced, the operator must select its new current event; no silent unbinding or
+clock-based substitute occurs. Already retained revocations retry their original
+signed update. No database field or second authority state machine is introduced:
+the exact original opening already carries its bound coordinates. This local
+adapter follows ``NativeAuthor.update`` at aef3013d and the existing ``stage``
+composition; it does not establish independent publication-time evidence.
