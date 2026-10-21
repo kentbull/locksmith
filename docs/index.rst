@@ -13,3 +13,4 @@ interface, including the bundled KERI Foundation implementation.
    plugin-authoring
    kerifoundation-plugin
    native-parity
+   native-lineage
