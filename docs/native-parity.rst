@@ -428,3 +428,75 @@ This is a local scenario correction, using Dolly's existing configured projectio
 and required-field contract. The scenario stops and restarts its own Dolly
 process with the fixture-specific policy before the first grant. The protocol,
 application verifier and normal six-story reporting policy are unchanged.
+
+
+Qualified community workflow (2026-10-21)
+-----------------------------------------
+
+The additive community profile passed clean installed qualification with actual
+KF registrar, KF observer, three hosted witness processes (quorum two),
+Locksmith application actors and standalone Dolly. Existing KLI and Dolly v1
+paths remain separately qualified. This is the documented provisional native
+profile, not an unqualified specification-conformance or production claim.
+
+Fixed source inputs were:
+
+* KERIpy ``993b58266992b786d044fd3938e114a19d76f62f``;
+* Dolly ``4b4142dce4b07314d5a894053da7226b41df1fc3``;
+* KF registrar ``917767dfaf8d06387529c1663b027c656984d4c4``;
+* KF observer ``4d15b8efca69608e24590044d311c1bb491ab84f``;
+* witness-hk ``4b58bdb21862ba6ffda1b7e249f8de04b0eb2aaa``;
+* Locksmith ``a2885cb`` for the full suite/headless disclosure baseline,
+  ``d63a38f`` for corrected UI controls and issuer/headless/quorum qualification,
+  and ``92b1a11`` for the stronger issuer UI business-value assertion.
+
+The last wallet change affects the scenario and its documentation only; its
+application source is identical to ``d63a38f``. The observer's older bare-TEL
+introduction repair is explicit rather than hidden behind skipped tests. Each
+phase retains clean source checks before/after build, installed wheel hashes and
+image identities. A build hash identifies the produced artifact; it is not a
+claim of reproducible archive timestamps or a signed supply-chain attestation.
+
+Results:
+
+* 988 selected core regressions plus 12 shared integration cases passed.
+* Registrar 10, observer 17, hosted witness 43, and the complete composed wallet
+  374 cases passed. The composed wallet has no missing-observer skips. The
+  corrected UI artifact additionally passed 10 focused cases, dependency
+  consistency and Ruff checks.
+* Dolly passed 26 cases; its two optional released-peer cases ran separately
+  and passed against actual KERIpy 1.2.14/1.3.6. Both actual hosted-peer profiles
+  passed too.
+* Original v1 Bash and all six original v2 KLI stories passed.
+* All six community headless and six real-Qt disclosure stories passed,
+  alternating HTTP/TCP and requiring two accepted Dolly hooks per story.
+* Public, individually blinded and derived issuance each passed through the
+  headless issuer-to-holder workflow, with the issuer stopped before the
+  holder's independent partial/full presentation.
+* All three real IssueCredentialDialog modes passed actual issuance, holder
+  admission and an accepted Dolly hook containing exactly the entered
+  ``entitlement: authorized`` value with ``disclosed`` state.
+* The actual hosted-witness outage/restart story passed with the first
+  destination unavailable, refusal below quorum and successful retained retry
+  after a provider restart.
+
+The issuer UI fixture's original acceptance-only assertion was insufficient:
+its shared reporting policy projected another fixture's fields. ``92b1a11``
+selects the existing required-field projection before the first grant and checks
+the exact business result. Earlier weak runs are retained separately and do not
+count as passing that final gate.
+
+The actual UI driver uses Qt input events on ordinary dialogs. Bootstrap,
+service publication and the issuer UI story's final direct Grant use normal
+application/operator operations; they are not claimed as UI interactions.
+The six distinct UI disclosure stories separately cover negotiated responses.
+Public screenshots and annotated walkthroughs are external qualification
+artifacts, not generated files committed to this application repository.
+
+Reproduce with the clean-source ``qualify-community.sh`` entry point described
+above, using ``92b1a11`` or a documentation-only successor for this repository.
+The original run used explicit phase cutovers for the observer, checkbox and
+business-value corrections, retaining superseded evidence rather than calling
+an interrupted outer command successful. All final gates have their own passing
+results. Linux-owned named volumes hold private database/custody state; the
+public report excludes those files.
