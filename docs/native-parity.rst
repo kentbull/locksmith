@@ -193,3 +193,22 @@ current registry evidence and the exact valid opening. This follows the existing
 metadata-Offer/proof-bearing-Grant separation in KERIpy and the adopted PR 92
 composer; the wallet no longer makes a future Grant capability prerequisite to
 previewing an Offer. State-opening controls apply to Grant only.
+
+Community scenario adapter
+--------------------------
+
+The existing six separate KERIpy Bash stories accept
+``SCENARIO_WALLET_PROFILE=locksmith``. The explicit test adapter translates holder
+and designated-presenter commands into private application requests, starts one
+vault per actor, and uses signed controller endpoints for real outbox delivery.
+Issuer commands remain KLI in this profile; that is recorded in its manifest and
+must not be reported as Locksmith issuer end-to-end coverage. Individual issuer
+application doers have separate tests. The ordinary KLI profile remains intact.
+
+The adapter waits for queued input to pass protocol verification before a reply,
+exports only public proof artifacts, and enumerates each admitted view separately.
+A withheld field may fail earlier in Locksmith's Compactor than in KLI's protocol
+verification; both scenarios require refusal and no additional Dolly hook.
+``scripts/scenarios/Dockerfile`` composes installed actual component wheels on
+copied Linux source. Its current default manifest is deliberately marked as a
+development build; final clean-artifact qualification remains a separate gate.

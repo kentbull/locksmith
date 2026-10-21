@@ -65,7 +65,7 @@ def test_cesr_http_enters_mailbox_without_admission(ipex_vaults):
 def test_real_runtime_owns_and_closes_one_vault(qapp, tmp_path, monkeypatch):
     """Open initialized stores, run actual QtTask, then deterministically close."""
     monkeypatch.delenv('KLI_KEYSTORE_PASSCODE', raising=False)
-    name, base = 'driver-runtime', tmp_path.name
+    name, base = 'driver-runtime.with-dot', tmp_path.name
     with habbing.openHby(name=name, base=base, temp=False) as hby:
         hby.makeHab(name='holder')
     tmp_path.chmod(0o700)

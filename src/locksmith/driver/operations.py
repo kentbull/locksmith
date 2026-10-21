@@ -7,9 +7,10 @@ A yielded action keeps the Qt event loop free; it never owns another vault.
 from dataclasses import asdict
 from time import monotonic
 
-from keri.core import scheming
+from keri import kering
+from keri.core import scheming, SerderACDC
 from keri.peer import exchanging
-from locksmith.core import credentialing, disclosing, ipexing, registries
+from locksmith.core import credentialing, disclosing, evidence, ipexing, registries
 
 
 def execute(app, request):
@@ -52,17 +53,30 @@ def execute(app, request):
         return {'said': said, 'sad': exn.sad,
                 'credentials': [node.serder.sad for node in nodes]}
     if op == 'inventory':
-        return {'credentials': [dict(said=view['sad']['d'], sad=view['sad'],
-                                     status=view['status'], grant=view.get('grant'))
-                                for view in credentialing.credentials(vault)]}
+        result = []
+        for view in credentialing.credentials(vault):
+            said = view['sad']['d']
+            admissions = credentialing.admissions(vault, said)
+            views = ([credentialing.credential(vault, said, grant=entry.grant)
+                      for entry in admissions] if admissions else [view])
+            result.extend(dict(said=said, sad=item['sad'], status=item['status'],
+                               grant=item.get('grant')) for item in views)
+        return {'credentials': result}
     if op == 'custody-import':
         info = disclosing.custody(vault).importCustody(request['path'],
             regid=request['registry'], controller=request['controller'],
             discloser=request['discloser'], rewrap=request.get('rewrap', False))
         return {'custody': asdict(info)}
     if op == 'opening':
+        if ipexing.grant_credential(vault, request['from_grant']).said != request['credential']:
+            raise ValueError('admitted grant does not bind the requested credential')
+        credentialing.credential(vault, request['credential'], grant=request['from_grant'])
         opening = disclosing.custody(vault).derive(request['registry'], request['ordinal'],
                                                   request['credential'], request['state'])
+        from keri.acdc.regeventing import vetBlind
+        event = vault.rgy.store.seqEvent(request['registry'], request['ordinal'])
+        if event is None or vetBlind(opening, blid=event.sad.get('b')) != (request['credential'], request['state']):
+            raise ValueError('Opening does not match the selected accepted event')
         return {'opening': opening.qb64}
     hab = vault.hby.habByName(request['alias'])
     if hab is None:
@@ -76,9 +90,34 @@ def execute(app, request):
                 yield
             if worker.error:
                 raise ValueError(worker.error)
-            return {'registry': request['registry'], 'head': worker.result.said}
+            return {'registry': request['registry'], 'head': worker.result.said,
+                    'sn': worker.result.sn, 'stream': evidence.processor(vault).clone(
+                        [request['registry']]).decode()}
         finally:
             app.qtask.remove([worker])
+    # HTTP intake acknowledges queueing, not parser completion. Wait for the
+    # signed prior before asking the same application response operation as UI.
+    deadline = monotonic() + request.get('timeout', 60)
+    if prior := request.get('prior'):
+        while not vault.exc.complete(prior):
+            if monotonic() >= deadline:
+                raise TimeoutError('Prior exchange has not passed protocol verification')
+            yield
+    credential = None
+    if request.get('credential') and op in ('offer', 'grant'):
+        view = credentialing.credential(vault, request['credential'], grant=request.get('from_grant'))
+        credential = SerderACDC(sad=view['sad'])
+    elif op == 'admit':
+        credential = ipexing.grant_credential(vault, request['prior'])
+    if credential is not None:
+        while True:
+            try:
+                credentialing.require_registry_evidence(vault, credential, hab)
+                break
+            except kering.MissingChainError:
+                if monotonic() >= deadline:
+                    raise
+                yield
     selection = {key: request[key] for key in ('from_grant', 'refresh', 'openings', 'derive')
                  if key in request}
     if op in ('apply', 'offer') and not request.get('prior'):
@@ -99,7 +138,12 @@ def execute(app, request):
     while True:
         record = vault.db.outbox.get((said,))
         if record and record.status == 'submitted':
-            return {'said': said, 'transport': asdict(record)}
+            result = {'said': said, 'transport': asdict(record),
+                      'stream': exchanging.serializeMessage(vault.hby, said).decode()}
+            if op == 'admit':
+                receipt = vault.db.receipts.get((hab.pre, request['prior']))
+                result['accepted'] = bool(receipt and receipt.status == 'accepted')
+            return result
         if record and record.status == 'failed':
             raise ValueError(f'Exchange {said}: {record.error}')
         if monotonic() >= deadline:

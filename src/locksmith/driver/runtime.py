@@ -14,7 +14,7 @@ from hio.core import http
 from PySide6.QtCore import QObject, QTimer
 from PySide6.QtNetwork import QLocalServer
 from keri.acdc import Regery
-from keri.app import habbing
+from keri.app import habbing, configing
 from keri.app.httping import CESR_CONTENT_TYPE
 from locksmith.core.apping import LocksmithApplication
 from locksmith.core.tasking import run_qt_task
@@ -140,7 +140,12 @@ def open_runtime(name, base, alias, socket_path, port):
     KLI_KEYSTORE_PASSCODE. Return app/control; caller closes control then app.
     """
     app = LocksmithApplication()
-    hby = habbing.Habery(name=name, base=base, bran=os.environ.get('KLI_KEYSTORE_PASSCODE'))
+    # HIO treats a dot in the leaf name as an explicit extension. Preserve
+    # vault names while selecting a real JSON config filename deliberately.
+    config_name = name if name.endswith(('.json', '.mgpk', '.cbor')) else name + '.json'
+    cf = configing.Configer(name=config_name, base=base, reopen=True)
+    hby = habbing.Habery(name=name, base=base, cf=cf,
+                        bran=os.environ.get('KLI_KEYSTORE_PASSCODE'))
     rgy = Regery(hby=hby, name=name, base=base)
     try:
         if hby.habByName(alias) is None:
