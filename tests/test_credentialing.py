@@ -540,7 +540,7 @@ def test_retained_graph_rechecks_linked_issuer_evidence(ipex_vaults):
     receiver.hby.db.schema.pin((schema.said,), schema)
     source = _issue(sender, schema, holder, authentication='signature')
     origin = _issue(sender, schema, holder, authentication='anchor', edges={
-        'source': {'n': source, 's': schema.said}})
+        'source': {'n': source, 's': schema.said, 'o': 'NI2I'}})
     _deliver_ipex(sender.vault, identifier_introduction(holder))
     _deliver_ipex(receiver.vault, identifier_introduction(issuer))
     grants = []

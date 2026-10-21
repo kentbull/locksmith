@@ -1,0 +1,37 @@
+Native community parity profile
+===============================
+
+This fork adds the community-service profile while preserving the adopted
+Locksmith application. It is an R&D integration, not an unqualified conformance
+or production-readiness claim. The original KERIpy/Dolly KLI workflows remain
+independent acceptance oracles.
+
+Source lineage
+--------------
+
+* The application and negotiation UI derive from KERI Foundation Locksmith
+  PR 92, adopted at ``0c09cc03faeb04be6683c877a32869204f35aa3a`` by fast-forward.
+  Original commits, authors and license are retained. No claim is made that our
+  later changes were authored or endorsed by those contributors.
+* ``CredentialUpdateDoer.anchor`` adapts pending-anchor selection from Kent's
+  KERIpy ``NativeAuthor.anchor`` at ``9ca869f6``. Searching a locally signed seal
+  locates authoring work only. Receipt collection and registry acceptance still
+  authenticate that event. This prevents reopening a vault from creating a
+  duplicate anchor when the original is awaiting witness quorum.
+* Linked-credential fixtures explicitly use ``NI2I`` when their scenario links
+  credentials without an issuer-to-issuee relation. KERIpy enforces the pinned
+  ACDC default ``I2I`` for targeted far nodes; relaxing the verifier to preserve
+  an invalid fixture would misrepresent that relationship. This is a local
+  fixture correction, not a new wallet policy.
+* The exact KERIpy dependency pin and Linux Qt test image are local build
+  choices. Docker tests use copied source and named LMDB volumes. They do not
+  require host database mounts or imply that a headless test proves UI parity.
+
+Evidence and remaining gates
+----------------------------
+
+The initial installed donor baseline had 333 passes, three skips and seven
+failures. The five invalid-relation fixtures and two revocation retry failures
+are repaired; the focused 118 tests pass. External-service integration,
+grant-specific disclosure selection, optional opening/derivation capabilities,
+headless end-to-end scenarios and actual UI qualification remain separate gates.

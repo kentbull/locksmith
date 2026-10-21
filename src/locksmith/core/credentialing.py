@@ -286,14 +286,36 @@ class CredentialUpdateDoer(doing.DoDoer):
     """Anchor a native registry event and collect its witness receipts."""
 
     def anchor(self, registry, event, receiptor, auths):
+        """Reuse or author a seal, collect receipts, and verify TEL acceptance.
+
+        Args:
+            registry: Local issuer registry owning the already staged event.
+            event: Exact native TEL event to seal; never recreated on retry.
+            receiptor: Scheduled wallet receipt worker.
+            auths: Witness AID to short-lived authentication header mapping.
+
+        Yields:
+            float: Cooperative receipt progress. Missing quorum remains a failure.
+
+        The pending-anchor search adapts KERIpy NativeAuthor.anchor at 9ca869f6;
+        it selects authoring work, not evidence accepted on behalf of a verifier.
+        """
         hab = registry.hab
-        try:
-            sn, _ = regeventing.vetAnchor(event, db=self.vault.hby.db, issuer=hab.pre)
-            anchor = SerderKERI(raw=hab.msgOwnEvent(sn=sn))
-        except kering.MissingAnchorError:
-            seal = dict(i=registry.regk, s=event.sad['n'], d=event.said)
-            raw = hab.rotate(data=[seal]) if hab.kever.estOnly else hab.interact(data=[seal])
-            anchor = SerderKERI(raw=raw)
+        # A locally signed anchor can still lack receipts. vetAnchor verifies
+        # quorum and therefore cannot locate pending authoring work for retry.
+        # Reuse that exact event, then require normal receipt/TEL acceptance.
+        seal = dict(s=event.sad['n'], d=event.said)
+        anchor = None
+        for sn in range(hab.kever.sn + 1):
+            digest = hab.db.kels.getLast(keys=hab.pre, on=sn)
+            candidate = hab.db.evts.get(keys=(hab.pre, digest)) if digest else None
+            if candidate and any(item in candidate.sad.get('a', [])
+                                 for item in (seal, dict(i=registry.regk, **seal))):
+                anchor = candidate
+                break
+        if anchor is None:
+            author = hab.rotate if hab.kever.estOnly else hab.interact
+            anchor = SerderKERI(raw=author(data=[seal]))
         yield from self.receipt(hab, anchor, receiptor, auths)
         if not registry.anchorMsg(event.said):
             raise kering.ValidationError('Registry anchor is still pending')

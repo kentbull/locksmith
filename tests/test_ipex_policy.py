@@ -164,7 +164,7 @@ def test_admission_validates_linked_schema_and_nested_group_evidence(ipex_vaults
     source.vault.db.issued.pin((leaf.said,), IssuedCredential(
         leaf.raw.decode(), stream=issuer.endorse(leaf, gvrsn=kering.Vrsn_2_0).decode()))
     said = _issue(source, schema, holder, authentication='signature', edges={
-        'group': {'d': '', 'source': {'n': leaf.said, 's': leaf_schema.said}},
+        'group': {'d': '', 'source': {'n': leaf.said, 's': leaf_schema.said, 'o': 'NI2I'}},
     })
     _introduce(source, target)
     _introduce(target, source)
@@ -318,7 +318,7 @@ def test_queued_grant_rechecks_native_state_before_disclosure(ipex_vaults, monke
     _introduce(source, target)
     _introduce(target, source)
     linked = _issue(source, schema, holder)
-    said = _issue(source, schema, holder, edges={'source': {'n': linked, 's': schema.said}})
+    said = _issue(source, schema, holder, edges={'source': {'n': linked, 's': schema.said, 'o': 'NI2I'}})
     # This isolates current-proof policy. Registry HTTP acceptance and freshness
     # are tested independently; both heads here have completed that check.
     heads = {regk: head.qb64 for (regk,), head in source.vault.rgy.baser.heads.getTopItemIter()}

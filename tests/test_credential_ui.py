@@ -758,7 +758,7 @@ def test_disclosure_review_shows_linked_data_and_blocks_private_offers(wallet):
     source = _issue(app, schemer, holder, attributes={'LEI': '254900OPPU84GM83MG36'},
                     authentication='anchor', rules=terms)
     origin = _issue(app, schemer, holder, attributes={'LEI': '5493001KJTIIGC8Y1R12'},
-                    authentication='anchor', edges={'source': {'n': source, 's': schemer.said}})
+                    authentication='anchor', edges={'source': {'n': source, 's': schemer.said, 'o': 'NI2I'}})
     grant, atc = ipexing.grant(app.vault, issuer, origin, holder.pre)
     ipexing.prepare(app.vault, issuer, grant, atc)
     nodes = exchanging.loadParsedNestedSubstreams(app.hby, grant.said)

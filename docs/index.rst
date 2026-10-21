@@ -12,3 +12,4 @@ interface, including the bundled KERI Foundation implementation.
    credential-exchange
    plugin-authoring
    kerifoundation-plugin
+   native-parity
