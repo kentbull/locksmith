@@ -107,6 +107,10 @@ def test_runtime_issues_through_application_worker(qapp, tmp_path, monkeypatch, 
         assert not refusal['ok'] and 'configured local issuer' in refusal['error']
         configured = call(qapp, path, {'op': 'schema', 'schema': schema, 'issuer': 'issuer'})
         assert configured['ok']
+        invalid = call(qapp, path, dict(request, auths={'unknown-witness': '123456#timestamp'}))
+        assert not invalid['ok'] and 'outside the issuer witness set' in invalid['error']
+        assert app.vault.hby.habByName('issuer').kever.sn == 0
+        assert not app.vault.rgy.regs
         response = call(qapp, path, request)
         assert response['ok'], response
         result = response['result']

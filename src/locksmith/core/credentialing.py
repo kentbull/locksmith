@@ -414,12 +414,14 @@ class IssueCredentialDoer(CredentialUpdateDoer):
 
     def __init__(self, app, schema_said, recipient_pre, attributes, edges=None, rules=None,
                  codes=None, signal_bridge=None, authentication='registry', nonce=None,
-                 registry_mode='blinded', discloser=None):
+                 registry_mode='blinded', discloser=None, auths=None):
         """Configure issuance without opening optional custody.
 
         app owns the vault; schema_said/recipient_pre select issuer policy and
         recipient; attributes/edges/rules are the operator's credential data.
-        codes supply witness authentication; signal_bridge receives completion.
+        codes supply manually entered witness OTPs; auths instead supplies exact
+        precomputed OTP-and-timestamp headers. They are mutually exclusive and
+        remain transient. signal_bridge receives completion.
         authentication selects registry, anchor or signature. nonce is optional
         credential entropy. registry_mode explicitly selects public, per-event
         blinded, or derived state; discloser binds newly provisioned derivation
@@ -429,7 +431,9 @@ class IssueCredentialDoer(CredentialUpdateDoer):
         self.schema_said, self.recipient_pre = schema_said, recipient_pre
         self.issuance_id = uuid.uuid4().hex
         self.attributes, self.edges, self.rules = attributes, edges or {}, rules
-        self.codes = codes or []
+        if codes and auths:
+            raise ValueError('Choose witness codes or exact authorization headers')
+        self.codes, self.auths = codes or [], dict(auths or {})
         if authentication not in ('registry', 'anchor', 'signature'):
             raise ValueError('Select registry, anchor, or signature authentication')
         self.authentication, self.nonce = authentication, nonce
@@ -444,6 +448,12 @@ class IssueCredentialDoer(CredentialUpdateDoer):
         super().__init__(doers=[doing.doify(self.issue_credential_do)])
 
     def issue_credential_do(self, tymth, tock=0.0, **opts):
+        """Validate issuer inputs, author evidence, and report verified completion.
+
+        tymth and tock are HIO scheduler clock/interval inputs; opts are scheduler
+        extension arguments. Every registry anchor uses normal receipt collection.
+        Failures emit a correlated application event and retain authored state.
+        """
         self.wind(tymth)
         yield self.tock
         receiptor = None
@@ -452,6 +462,8 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             hab = self.vault.hby.habByPre(issuer)
             if hab is None or isinstance(hab, GroupHab):
                 raise ValueError('Select an individual local identifier for this schema')
+            if set(self.auths) - set(hab.kever.wits):
+                raise ValueError('Authorization names a witness outside the issuer witness set')
             schemer = self.vault.hby.db.schema.get(keys=(self.schema_said,))
             if schemer is None:
                 raise kering.ValidationError(f'Load credential schema {self.schema_said} before issuing it')
@@ -498,7 +510,7 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             schemer = validate_schema(self.vault, acdc)
             previous = self.vault.db.issued.get((acdc.said,))
             created_at = previous.created_at if previous else helping.nowIso8601()
-            auths = {}
+            auths = dict(self.auths)
             for entry in self.codes:
                 wit, code = entry.split(':', 1)
                 auths[wit] = f'{code}#{helping.nowIso8601()}'

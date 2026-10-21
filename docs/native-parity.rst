@@ -238,3 +238,11 @@ It does not invoke KLI or synthesize accepted state.
 and signal lifecycle, adapted from ``IssueCredentialDialog._complete_issuance``
 at c82b7ed. The schema policy assignment follows ``LoadSchemaDoer`` at that
 revision. These are operational adapters, not new protocol or delegation rules.
+
+Precomputed witness authorization headers may be supplied as ``auths`` instead
+of manually entered ``codes``. They retain the exact OTP generation timestamp;
+replacing that timestamp can pair a previous 30-second TOTP value with the next
+window and make a valid operator input fail. The hosted issuer scenario reproduced
+this at 15:26:29.963 UTC before a 15:26:30 request. The worker rejects mixed inputs
+and unknown witness IDs before authoring registry state. This local adapter
+correction preserves the hosted provider's existing authorization contract.
