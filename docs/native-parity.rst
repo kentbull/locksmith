@@ -64,7 +64,7 @@ and retained missing dependencies. Real external binary scenarios remain a
 separate qualification gate.
 
 Exact admitted disclosures
--------------------------
+--------------------------
 
 ``credentialing.admission`` and ``admissions`` validate per-grant consent and
 signed grant/admit linkage from existing receipt records. ``credential`` and
@@ -80,3 +80,37 @@ archive or automatic union of attributes is introduced. The regression exchanges
 real partial/full grants, admits both, reopens the vault and presents the earlier
 view. Assertions inspect parsed attributes as well as exact retained bytes;
 searching plaintext in CESR-encoded bytes alone would not prove nondisclosure.
+
+Graduation and optional opening capabilities
+--------------------------------------------
+
+``core.disclosing.material`` projects only the selected retained attribute map
+with KERIpy Compactor, preserving its commitment and proof attachments. The
+existing ``ipexing.start`` and ``respond`` operations now carry requested
+attribute paths through Apply/Offer/Agree/Grant. A field-selecting Offer discloses
+that selected view; the original whole-credential form keeps its metadata-only
+Offer. Previews must show the actual selection before UI submission.
+
+``refresh`` changes only opening evidence for already accepted current history.
+Supplied CESR event openings and ``derive`` are explicit, separate choices.
+Derivation borrows ``RegistryCustody`` over an optional table in the existing
+Locksmith database. Ordinary held-material presentation never loads that table.
+Encrypted per-registry provisioning uses the core adapter's documented R&D
+plaintext owner-only file exchange, not an interoperable IPEX provisioning
+message or complete key-rotation mechanism. Old-AEID or corrupt custody fails
+only operations needing derivation. Bound-opening derivation controls still need
+an explicit application design; supplied bound proofs use the common verifier.
+
+``set_presenter_policy`` adds a local per-credential allowance for a known AID.
+It does not claim issuer delegation, give the presenter missing data, or share
+any secret. The receiving wallet must separately allow that presenter. Default
+issuer/issuee restrictions remain in force when no allowance is configured.
+This is a documented local application profile for the separate-discloser
+scenario, not an additional KRAM rule or a new delegation protocol.
+
+These controls adapt KERIpy's ``ExchangeDoer`` at ``a6539208`` and shared
+``registryProof`` at ``8a86f16b``. The local composer/policy changes are Kent-fork
+work, not attributed to the donor authors. Sixty-eight composer/policy/UI tests
+pass, followed by five focused capability tests including real encrypted salt
+provisioning, derived event openings and corrupt/old-key failure isolation.
+Actual UI exposure and external end-to-end application qualification remain open.
