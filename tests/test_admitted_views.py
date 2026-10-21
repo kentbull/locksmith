@@ -11,7 +11,7 @@ from test_credentialing import _load_schema
 from test_keri_v2_compat import _deliver_ipex, ipex_vaults as ipex_vaults
 
 
-def test_explicit_admitted_view_survives_fuller_grant_and_reopen(ipex_vaults):
+def test_explicit_admitted_view_survives_fuller_grant_and_reopen(ipex_vaults, qapp):
     """Use real signed grants/admissions, then present the selected original bytes."""
     sender, receiver = ipex_vaults('view-sender'), ipex_vaults('view-receiver')
     issuer, holder = sender.hby.makeHab(name='issuer'), receiver.hby.makeHab(name='holder')
@@ -50,6 +50,31 @@ def test_explicit_admitted_view_survives_fuller_grant_and_reopen(ipex_vaults):
     assert credentialing.credential(receiver.vault, full.said, grant=first.said)['proof'] == retained
     assert isinstance(credentialing.credential(receiver.vault, full.said, grant=first.said)['sad']['a']['details'], str)
     assert credentialing.credential(receiver.vault, full.said, grant=later.said)['sad']['a']['details']['LEI'] == 'private-later-value'
+    # Actual selection controls must preserve the old view after a fuller grant.
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from locksmith.ui.vault.credentials.disclosure import DisclosureOptions
+    from locksmith.ui.vault.credentials.presentation import disclosed_credentials
+    options = DisclosureOptions(receiver.vault)
+    options.select(full.said)
+    options.show()
+    assert options.selection() == {'from_grant': first.said}
+    assert isinstance(disclosed_credentials(receiver.vault, full.said,
+        **options.selection())[0]['a']['details'], str)
+    options.grant.setFocus()
+    QTest.keyClick(options.grant, Qt.Key.Key_Down)
+    assert options.selection() == {'from_grant': later.said}
+    assert disclosed_credentials(receiver.vault, full.said,
+        **options.selection())[0]['a']['details']['LEI'] == 'private-later-value'
+    QTest.keyClick(options.grant, Qt.Key.Key_Up)
+    assert options.selection() == {'from_grant': first.said}
+    options.refresh.setChecked(True)
+    options.source.setCurrentIndex(options.source.findData('supplied'))
+    with pytest.raises(ValueError, match='Choose the event-specific opening'):
+        options.selection()
+    options.refresh.setChecked(False)
+    assert options.selection() == {'from_grant': first.said}
+    options.close()
     presented, atc = ipexing.grant(receiver.vault, holder, full.said, issuer.pre, from_grant=first.said)
     stream = ipexing.prepare(receiver.vault, holder, presented, atc)
     nested, = exchanging.loadParsedNestedSubstreams(receiver.hby, presented.said)

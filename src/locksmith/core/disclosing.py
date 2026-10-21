@@ -78,6 +78,19 @@ def material(vault, view, *, paths=(), refresh=False, openings=(), derive=False)
         raw = registryProof(vault.hby, vault.rgy, credential, regid, retained=retained,
                             derive=derive_opening if provider else None)
         node = Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(raw), processive=False)
+    node = replace(node, serder=select(credential, paths))
+    from locksmith.core.credentialing import authentication
+    return dict(view, sad=node.serder.sad, proof=exchanging.serializeParsedSubstream(node),
+                status=authentication(vault, node))
+
+
+def select(credential, paths=()):
+    """Select committed attributes without making a registry-state claim.
+
+    credential is the exact retained SerderACDC; paths are supported a/ paths.
+    This pure operation is shared by Offer previews and authenticated Grant
+    composition. It cannot recover withheld values or change the original SAID.
+    """
     if paths and list(paths) not in ([''],):
         if (not isinstance(credential.sad.get('a'), dict)
                 or any(not path.startswith('a/') for path in paths)):
@@ -88,7 +101,5 @@ def material(vault, view, *, paths=(), refresh=False, openings=(), derive=False)
         selected = SerderACDC(sad=sad, kind=credential.kind, makify=True)
         if selected.said != credential.said:
             raise kering.ValidationError('Disclosure changed the credential commitment')
-        node = replace(node, serder=selected)
-    from locksmith.core.credentialing import authentication
-    return dict(view, sad=node.serder.sad, proof=exchanging.serializeParsedSubstream(node),
-                status=authentication(vault, node))
+        return selected
+    return credential

@@ -65,9 +65,16 @@ def rules_text(rules):
     return values or 'Rule text has not been disclosed.'
 
 
-def disclosed_credentials(vault, said, *, metadata=False):
-    """Read the same retained nodes that the Grant builder will send."""
-    _, _, _, nodes = ipexing._credential_evidence(vault, said)
+def disclosed_credentials(vault, said, *, metadata=False, **selection):
+    """Read exact composer nodes for display, without expanding a selected grant.
+
+    vault/said select inventory; metadata hides credential attributes in the
+    established metadata Offer form. selection carries explicit from_grant,
+    disclose, preview and optional Grant state-opening controls to the composer.
+    Return disclosed SADs or propagate the same missing-capability error as send.
+    """
+    selection.setdefault('preview', metadata)
+    _, _, _, nodes = ipexing._credential_evidence(vault, said, **selection)
     if metadata:
         return [ipexing._offer_preview(nodes[said]).sad]
     return list(nodes.values())

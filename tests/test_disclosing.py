@@ -96,6 +96,11 @@ def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaul
     result = evidence.processor(target.vault).ingest(evidence.processor(source.vault).clone([acdc.regid]))
     assert not result['pending'] and not result['rejected']
     view = credentialing.credential(target.vault, said, grant=held)
+    offer = ipexing.start(target.vault, holder, issuer.pre, 'Offer',
+                         credential_said=said, from_grant=held)
+    assert target.vault.exc.complete(offer)
+    with pytest.raises(kering.ValidationError, match='verified issued state'):
+        ipexing.grant(target.vault, holder, said, issuer.pre, from_grant=held)
     for proofs in ((), [old.qb64b], [Blinder.blind(acdc='').qb64b]):
         with pytest.raises(kering.ConfigurationError, match='current registry opening unavailable'):
             disclosing.material(target.vault, view, refresh=True, openings=proofs)
@@ -166,3 +171,56 @@ def test_optional_custody_derives_without_gating_held_proofs(ipex_vaults, tmp_pa
     # loads the damaged salt record and still passes native verification.
     grant, atc = ipexing.grant(target.vault, holder, acdc.said, issuer.pre, from_grant=current)
     assert ipexing.prepare(target.vault, holder, grant, atc)
+
+
+def test_graduated_offer_dialog_previews_exact_sent_fields(ipex_vaults, qapp):
+    """Click the actual Offer dialog, compare its preview and signed disclosure."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QLabel, QWidget
+    from locksmith.ui.vault.credentials.activity import CredentialActivityPage
+    source, target = ipex_vaults('ui-graduate-source'), ipex_vaults('ui-graduate-target')
+    issuer, holder = source.hby.makeHab(name='issuer'), target.hby.makeHab(name='holder')
+    schema = _load_schema(source, issuer)
+    target.hby.db.schema.pin((schema.said,), schema)
+    _introduce(source, target)
+    _introduce(target, source)
+    said = _issue(source, schema, holder, authentication='anchor', attributes={
+        'status': {'d': '', 'u': Noncer().qb64, 'value': 'authorized-visible'},
+        'private': {'d': '', 'u': Noncer().qb64, 'value': 'private-not-shared'}})
+    _introduce(source, target)
+    apply = ipexing.start(target.vault, holder, issuer.pre, 'Apply', schema=schema.said,
+                         disclose=['a/status/'])
+    _send(target, source, apply)
+    parent = QWidget()
+    parent.app = source
+    page = CredentialActivityPage(parent)
+    page.set_vault_name(source.name)
+    row = next(row for row in page.tables[0]._static_data if row['root'] == apply)
+    page._on_row_action(row, 'Offer')
+    dialog = page._response_dialog
+    dialog.credential.setCurrentIndex(dialog.credential.findData(said))
+    dialog.response.setCurrentIndex(dialog.response.combo_box.findData('Offer'))
+    qapp.processEvents()
+    labels = [label.text() for label in dialog.preview.findChildren(QLabel)]
+    assert any('authorized-visible' in label for label in labels)
+    assert not any('private-not-shared' in label for label in labels)
+    assert 'before agreement' in dialog.explanation.text()
+    assert dialog.send_button.isEnabled()
+    QTest.mouseClick(dialog.send_button, Qt.MouseButton.LeftButton)
+    offer, = [exn for _, exn in source.hby.db.exns.getTopItemIter()
+              if exn.route == '/ipex/offer']
+    _send(source, target, offer.said)
+    node, = exchanging.loadParsedNestedSubstreams(target.hby, offer.said)
+    assert node.serder.sad['a']['status']['value'] == 'authorized-visible'
+    assert isinstance(node.serder.sad['a']['private'], str)
+    receiver_parent = QWidget()
+    receiver_parent.app = target
+    receiver_page = CredentialActivityPage(receiver_parent)
+    receiver_page.set_vault_name(target.name)
+    row = next(row for row in receiver_page.tables[1]._static_data if row['root'] == apply)
+    receiver_page._on_row_action(row, 'Agree')
+    review = receiver_page._response_dialog
+    labels = [label.text() for label in review.offer_review.findChildren(QLabel)]
+    assert any('authorized-visible' in label for label in labels)
+    assert not any('private-not-shared' in label for label in labels)

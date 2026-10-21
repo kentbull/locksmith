@@ -168,3 +168,28 @@ The wallet caches only the remaining portion of its 15-second observation-age
 policy, using a monotonic deadline bound to the configured source and exact head.
 Receiving a nearly expired observation does not restart a 60-second wallet cache.
 The older bare-TEL profile retains its existing refresh cadence.
+
+Disclosure review controls
+--------------------------
+
+The response dialog lets the operator select an exact admitted grant. A later
+fuller admission is listed separately and never silently enriches the earlier
+selection. State refresh is optional: retain a known opening, select an
+explicit event-opening file, or deliberately use provisioned local custody.
+These controls neither import salts nor establish cryptographic delegation.
+The normal held-material path leaves them disabled.
+
+Offer and Grant previews apply the requested disclosure paths and selected
+admission using the same application composer options as sending. A partial
+Offer can already reveal values: both sending and agreement dialogs display
+those values and explain that they are disclosed before agreement. Metadata-only
+Offers keep their existing behavior. Separate-presenter eligibility consults the
+explicit per-credential local policy; receipt alone grants no such policy.
+
+An Offer preview is a signed disclosure of already-held content, not a current
+registry-state assertion. It uses pure commitment-preserving selection and needs
+no new state opening. Grant composition still requires independently checked
+current registry evidence and the exact valid opening. This follows the existing
+metadata-Offer/proof-bearing-Grant separation in KERIpy and the adopted PR 92
+composer; the wallet no longer makes a future Grant capability prerequisite to
+previewing an Offer. State-opening controls apply to Grant only.

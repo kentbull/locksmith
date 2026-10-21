@@ -258,13 +258,25 @@ def _disclosure_plan(origin, nodes):
 
 
 def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
-                         disclose=(), refresh=False, openings=(), derive=False):
-    """Load the retained origin and its linked credentials."""
+                         disclose=(), refresh=False, openings=(), derive=False, preview=False):
+    """Load exact selected material and its native disclosure plan.
+
+    vault/credential_said identify inventory; hab optionally enforces current
+    observer policy. from_grant selects one admission. disclose chooses held
+    attribute paths; refresh/openings/derive select explicit Grant proof sources.
+    preview selects content only for Offer and refuses state-opening options.
+    Return view, serialized artifacts, native plan and disclosed SADs. Grant
+    mode verifies every node's authentication; Offer makes no current-state claim.
+    """
     view = credentialing.credential(vault, credential_said, grant=from_grant)
-    if disclose or refresh or openings or derive:
+    if preview:
+        if refresh or openings or derive:
+            raise ValueError('State opening selection belongs to Grant, not Offer preview')
+        view = dict(view, sad=disclosing.select(SerderACDC(sad=view['sad']), disclose).sad)
+    elif disclose or refresh or openings or derive:
         view = disclosing.material(vault, view, paths=disclose, refresh=refresh,
                                    openings=openings, derive=derive)
-    if view['status']['et'] not in ('issued', 'authenticated'):
+    if not preview and view['status']['et'] not in ('issued', 'authenticated'):
         raise kering.ValidationError('Credential does not have a verified issued state or issuer authentication')
     if hab is not None:
         credentialing.require_registry_evidence(vault, SerderACDC(sad=view['sad']), hab)
@@ -279,7 +291,7 @@ def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
             source = credentialing.credential(vault, said)
             if hab is not None:
                 credentialing.require_registry_evidence(vault, SerderACDC(sad=source['sad']), hab)
-            if source['status']['et'] not in ('issued', 'authenticated'):
+            if not preview and source['status']['et'] not in ('issued', 'authenticated'):
                 raise kering.ValidationError(f'Source credential {said} is not issued')
             artifacts[said] = source['proof']
             artifacts.update(source['artifacts'])
@@ -293,8 +305,8 @@ def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
             raise kering.ValidationError('Invalid retained credential evidence')
         if hab is not None:
             credentialing.require_registry_evidence(vault, parsed[0].serder, hab)
-        state = credentialing.authentication(vault, parsed[0])
-        if state['et'] not in ('issued', 'authenticated'):
+        state = credentialing.authentication(vault, parsed[0]) if not preview else None
+        if not preview and state['et'] not in ('issued', 'authenticated'):
             raise kering.ValidationError('Source credential does not have a verified issued state')
         nodes[parsed[0].serder.said] = parsed[0].serder.sad
     plan = _disclosure_plan(credential_said, nodes)
@@ -400,7 +412,7 @@ def start(vault, hab, recipient, action, message='', *, schema=None, credential_
                                  kind=kering.Kinds.json)
     elif action == 'Offer':
         view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
-            from_grant=from_grant, disclose=disclose)
+            from_grant=from_grant, disclose=disclose, preview=True)
         _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient, vault=vault)
         preview = SerderACDC(sad=view['sad']) if disclose else _offer_preview(view['sad'])
         exn, atc = ipexing.offer(hab, message, preview, recp=recipient,
@@ -499,7 +511,7 @@ def respond(vault, said, action, message='', credential_said=None, *, from_grant
         fields = requested[0][0][2] if requested and requested[0] else []
         view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
             from_grant=from_grant, disclose=fields, refresh=refresh,
-            openings=openings, derive=derive)
+            openings=openings, derive=derive, preview=action == 'Offer')
         _require_presenter(SerderACDC(sad=view['sad']), hab.pre, prior.pre, vault=vault)
         schema = request_schema(request)
         if request.sad['q'].get('dp') not in (None, [[]]) and schema is None:
