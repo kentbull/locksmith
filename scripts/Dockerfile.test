@@ -1,0 +1,16 @@
+ARG CORE_IMAGE=keripy-community:observations
+FROM ${CORE_IMAGE}
+RUN apt-get update && apt-get install -y --no-install-recommends libegl1 libgl1 libxkbcommon0 libdbus-1-3 libxcb-cursor0 libfontconfig1 && rm -rf /var/lib/apt/lists/*
+RUN python -m pip install uv==0.9.18
+WORKDIR /component
+COPY pyproject.toml uv.lock README.md LICENSE ./
+RUN uv export --frozen --no-emit-project --no-emit-package keri --format requirements-txt > /tmp/locksmith-requirements.txt && python -m pip install -r /tmp/locksmith-requirements.txt
+COPY src ./src
+COPY assets ./assets
+COPY resources.qrc ./resources.qrc
+RUN python -m pip install --no-deps --no-build-isolation .
+COPY tests ./tests
+COPY docs ./docs
+RUN apt-get update && apt-get install -y --no-install-recommends libglib2.0-0t64 && rm -rf /var/lib/apt/lists/*
+ENV QT_QPA_PLATFORM=offscreen
+CMD ["python", "-m", "pytest", "-q", "-o", "pythonpath=", "tests"]
