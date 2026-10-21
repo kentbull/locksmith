@@ -47,6 +47,16 @@ docker run --rm --name "$RUN-wallet-tests" -w /component -v "$RUN-wallet-tests:/
     -v "$RUN-wallet-tests-state:/usr/local/var" "$IMAGE" \
     -c 'python -m pytest -q -o pythonpath= tests' > "$OUTPUT/wallet-tests.log" 2>&1
 
+# Cover shared-core integration changes not selected by the older baseline list.
+docker run --rm --name "$RUN-core-integration-tests" --entrypoint python -w /workspace \
+    -v "$RUN-core-integration-tests:/tmp" -v "$RUN-core-integration-state:/usr/local/var" \
+    "$CORE_IMAGE" -m pytest -q -o pythonpath= \
+    tests/app/test_evidence_processor.py tests/app/test_httping.py \
+    tests/app/test_agenting.py::test_receiptor_v2_propagates_witness_receipts \
+    tests/app/test_agenting.py::test_receiptor_propagates_only_verified_receipts \
+    tests/app/test_agenting.py::test_receiptor_collects_past_offline_first_witness \
+    > "$OUTPUT/core-integration-tests.log" 2>&1
+
 # Preserve the original KLI/v1 oracle in addition to the new application profile.
 DOLLY_SOURCE="$DOLLY_SOURCE" SCENARIO_VOLUME="$RUN-baseline" \
     "$KERI_SOURCE/scripts/v2-e2e/qualify.sh" > "$OUTPUT/baseline.log" 2>&1
