@@ -114,11 +114,13 @@ def test_registry_ingest_failure_leaves_store_unchanged(wallets, failure):
 
 @pytest.fixture
 def service(qapp):
+    """Yield a loopback Qt HTTP fixture with configurable replies; this is not a KF service."""
     server = QTcpServer()
     assert server.listen(QHostAddress.SpecialAddress.LocalHost, 0)
     connections, buffers, requests = [], {}, []
     state = {'respond': lambda method, path, body: (200, b'{}')}
     def read(connection):
+        """Buffer complete Content-Length requests and reply through the configured fixture callback."""
         buffers[connection].extend(bytes(connection.readAll()))
         raw = buffers[connection]
         while b'\r\n\r\n' in raw:
@@ -627,6 +629,7 @@ def test_full_profile_publishes_signed_complete_evidence(wallets, service, qapp)
     sender.hby.cf.put(config)
     url, state, requests = service
     def accept(method, path, raw):
+        """Verify the signed publication envelope and pass its stream through real shared intake."""
         parsed = Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(raw), processive=False)
         assert parsed.serder.route == 'tels/publish'
         assert parsed.serder.pre == hab.pre and parsed.sigers is not None

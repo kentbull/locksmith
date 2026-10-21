@@ -532,6 +532,7 @@ def test_declared_authentication_cannot_fall_back_to_valid_signature(ipex_vaults
 
 
 def test_retained_graph_rechecks_linked_issuer_evidence(ipex_vaults):
+    """Recheck each linked proof on reuse; use explicit NI2I for these independent credentials."""
     from keri.peer import exchanging
 
     sender, receiver = ipex_vaults('graph-sender'), ipex_vaults('graph-receiver')

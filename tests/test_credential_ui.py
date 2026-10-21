@@ -748,6 +748,7 @@ def test_grant_notification_and_file_acceptance_use_verified_native_evidence(
 
 
 def test_disclosure_review_shows_linked_data_and_blocks_private_offers(wallet):
+    """Require the real dialogs to show linked data and refuse unsupported private Offers."""
     from test_credentialing import _load_schema, _issue
     from locksmith.core import credentialing
 
