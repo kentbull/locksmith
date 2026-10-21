@@ -66,6 +66,7 @@ class IssuedCredential:
     stream: str = ''
     witness_threshold: int = 0
     created_at: str = ''
+    registry_mode: str = 'blinded'
 
 
 @dataclass

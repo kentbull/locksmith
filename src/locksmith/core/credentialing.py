@@ -18,6 +18,7 @@ from keri.help import helping
 from keri.peer import exchanging
 
 from locksmith.core.receipting import LocksmithReceiptor
+from locksmith.core import registry_authoring, disclosing
 from locksmith.db.basing import IssuedCredential
 
 logger = help.ogler.getLogger(__name__)
@@ -412,7 +413,18 @@ class IssueCredentialDoer(CredentialUpdateDoer):
     """Issue a native credential with the selected issuer authentication factor."""
 
     def __init__(self, app, schema_said, recipient_pre, attributes, edges=None, rules=None,
-                 codes=None, signal_bridge=None, authentication='registry', nonce=None):
+                 codes=None, signal_bridge=None, authentication='registry', nonce=None,
+                 registry_mode='blinded', discloser=None):
+        """Configure issuance without opening optional custody.
+
+        app owns the vault; schema_said/recipient_pre select issuer policy and
+        recipient; attributes/edges/rules are the operator's credential data.
+        codes supply witness authentication; signal_bridge receives completion.
+        authentication selects registry, anchor or signature. nonce is optional
+        credential entropy. registry_mode explicitly selects public, per-event
+        blinded, or derived state; discloser binds newly provisioned derivation
+        custody in derived mode only. No salt is shared by issuance itself.
+        """
         self.vault = app.vault
         self.schema_said, self.recipient_pre = schema_said, recipient_pre
         self.issuance_id = uuid.uuid4().hex
@@ -421,6 +433,13 @@ class IssueCredentialDoer(CredentialUpdateDoer):
         if authentication not in ('registry', 'anchor', 'signature'):
             raise ValueError('Select registry, anchor, or signature authentication')
         self.authentication, self.nonce = authentication, nonce
+        if registry_mode not in registry_authoring.MODES:
+            raise ValueError('Choose public, blinded or derived registry state')
+        if authentication != 'registry' and (registry_mode != 'blinded' or discloser):
+            raise ValueError('State capabilities require registry authentication')
+        if discloser and registry_mode != 'derived':
+            raise ValueError('A derivation discloser requires derived state')
+        self.registry_mode, self.discloser = registry_mode, discloser
         self.signals = signal_bridge if signal_bridge is not None else self.vault.signals
         super().__init__(doers=[doing.doify(self.issue_credential_do)])
 
@@ -489,10 +508,13 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             if registry is not None:
                 rip = self.vault.rgy.store.event(registry.regk)
                 yield from self.anchor(registry, rip, receiptor, auths)
-                blinder, update = registrar.issue(registry, acdc=acdc, state='issued')
-                stream = messagize(serder=acdc, bonds=[blinder.data], framed=False)
-                record = IssuedCredential(acdc.raw.decode(), blinder.qb64, update.said, stream.decode(),
-                                          created_at=created_at)
+                if self.registry_mode == 'derived':
+                    disclosing.custody(self.vault).createCustody(registry.regk, self.discloser or hab.pre)
+                blinder, update, stream = registry_authoring.stage(
+                    self.vault, registry, acdc, 'issued', self.registry_mode)
+                record = IssuedCredential(acdc.raw.decode(), blinder.qb64 if blinder else '',
+                                          update.said, stream.decode(), created_at=created_at,
+                                          registry_mode=self.registry_mode)
                 self.vault.db.issued.pin(keys=(acdc.said,), val=record)
                 yield from self.anchor(registry, update, receiptor, auths)
             elif self.authentication == 'anchor':
@@ -548,20 +570,25 @@ class RevokeCredentialDoer(CredentialUpdateDoer):
             if hab is None or isinstance(hab, GroupHab):
                 raise ValueError('Revocation requires the individual local issuer')
             registry = self.vault.rgy.regs.get(acdc.regid)
-            if registry is None or not record.blinder:
+            if registry is None:
                 raise ValueError('This credential has no local revocable registry')
-            blinder = Blinder(clan=BlindState, qb64=record.blinder)
-            if blinder.state == 'revoked':
+            blinder = Blinder(clan=BlindState, qb64=record.blinder) if record.blinder else None
+            retained_update = self.vault.rgy.store.event(record.update)
+            revoked = (blinder is not None and blinder.state == 'revoked'
+                       or record.registry_mode == 'public' and retained_update is not None
+                       and retained_update.sad.get('ts') == 'revoked')
+            if revoked:
                 update = self.vault.rgy.store.event(record.update)
                 if update is None:
                     raise kering.MissingChainError('The retained revocation update is missing')
             else:
                 if credential(self.vault, acdc.said)['status']['et'] != 'issued':
                     raise kering.ValidationError('Wait for verified issuance before revoking')
-                blinder, update = Registrar(rgy=self.vault.rgy).issue(registry, acdc, state='revoked')
-                record.blinder = blinder.qb64
+                blinder, update, stream = registry_authoring.stage(
+                    self.vault, registry, acdc, 'revoked', record.registry_mode)
+                record.blinder = blinder.qb64 if blinder else ''
                 record.update = update.said
-                record.stream = messagize(serder=acdc, bonds=[blinder.data], framed=False).decode()
+                record.stream = stream.decode()
                 # Keep the new private proof before any asynchronous receipt work.
                 self.vault.db.issued.pin(keys=(acdc.said,), val=record)
             auths = {}

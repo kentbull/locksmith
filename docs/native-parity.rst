@@ -114,3 +114,21 @@ work, not attributed to the donor authors. Sixty-eight composer/policy/UI tests
 pass, followed by five focused capability tests including real encrypted salt
 provisioning, derived event openings and corrupt/old-key failure isolation.
 Actual UI exposure and external end-to-end application qualification remain open.
+
+Issuer state publication modes
+------------------------------
+
+``IssueCredentialDoer`` retains the donor's per-event ``blinded`` default and
+adds explicit ``public`` and ``derived`` modes. Public issuance/revocation uses
+native ``upd`` and never creates custody. Derived issuance provisions one
+per-registry encrypted salt for the selected discloser, then uses it for later
+state openings. Provisioning to another process is a separate explicit action.
+``registry_authoring.stage`` adapts native KERIpy authoring at ``a6539208``;
+protocol event construction and acceptance remain in KERIpy.
+
+``IssuedCredential.registry_mode`` persists that operational choice with a
+backward-compatible blinded default. Reopened revocation reuses its retained
+update and anchor; missing derivation custody never silently changes the mode.
+Twelve installed authoring, revocation and disclosure tests pass, including all
+three modes across reopen and repeat revocation. UI mode selection and real
+hosted-service authoring still require end-to-end qualification.
