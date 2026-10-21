@@ -603,6 +603,12 @@ def exchanges(vault):
 
 
 def _validate_credential(vault, credential, grant_said):
+    """Validate a parsed credential against its exact received grant.
+
+    ``vault`` supplies authenticated exchange/KEL/TEL evidence; ``credential``
+    is the parsed ACDC and ``grant_said`` names its signed Grant. Require the
+    negotiated schema, allowed presenter and valid disclosed nested proofs.
+    Raise on missing, stale or invalid evidence; never admit a credential here."""
     grant = vault.hby.db.exns.get((grant_said,))
     prior = vault.hby.db.exns.get((grant.sad['p'],)) if grant.sad['p'] else None
     if prior and prior.route == '/ipex/agree':

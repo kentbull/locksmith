@@ -1147,6 +1147,11 @@ class IssueCredentialDialog(LocksmithDialog):
             self.show_error(f"Failed to issue credential: {error_msg}")
 
     def _complete_issuance(self, codes=None):
+        """Schedule issuance from the reviewed form and optional witness ``codes``.
+
+        Recheck an originating Apply before authoring. Read the schema, target,
+        attributes, edges and explicit registry-state options from controls;
+        the vault owns the resulting doer and reports its completion by signal."""
         if not self._current_vault():
             return
         if self.request_said:

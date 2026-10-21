@@ -18,6 +18,11 @@ class StartExchangeDialog(LocksmithDialog):
     submitted = Signal(str)
 
     def __init__(self, app, parent, action, *, schema=None, credential_said=None, received=False):
+        """Prepare an Apply or Offer for the current ``app`` vault.
+
+        ``parent`` owns the dialog; ``action`` selects the IPEX verb. ``schema``
+        or ``credential_said`` can fix the initial selection. ``received``
+        restricts an Offer to held inventory, retaining exact grant selection."""
         self.app, self.vault, self.action = app, app.vault, action
         self.received = received
         self._offer_error = ''
@@ -117,6 +122,10 @@ class StartExchangeDialog(LocksmithDialog):
         self._check_route()
 
     def _select_sender(self, *_):
+        """Match the sender and preview to the selected credential and admitted grant.
+
+        Ignore Qt signal arguments. Recompute chosen fields without merging
+        other admissions, and expose projection errors before submission."""
         if self.action == 'Offer' and self.selection.currentData():
             said = self.selection.currentData()
             with QSignalBlocker(self.disclosure):
@@ -181,6 +190,10 @@ class StartExchangeDialog(LocksmithDialog):
             self.open()
 
     def _send(self):
+        """Submit the reviewed request/offer and emit its signed exchange SAID.
+
+        Refuse a closed or replaced vault. Offer parameters carry the exact
+        grant and field selection; errors stay visible and permit correction."""
         if self.app.vault is not self.vault or getattr(self.vault, 'closed', False):
             self.error.setText('This vault is closed.')
             self.error.show()

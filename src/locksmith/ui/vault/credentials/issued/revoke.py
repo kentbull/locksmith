@@ -10,7 +10,13 @@ from locksmith.ui.vault.shared.witness_auth_mixin import WitnessAuthenticationPa
 
 
 class RevokeCredentialDialog(LocksmithDialog):
+    """Confirm issuer revocation without conflating it with holder presentation."""
     def __init__(self, app, credential_said, credential_schema, parent=None):
+        """Bind confirmation to ``app``'s current vault and ``credential_said``.
+
+        ``credential_schema`` labels the confirmation, and ``parent`` owns the
+        Qt dialog. Show current issuee-event selection only for blinded state;
+        witness authentication remains an independent requirement."""
         self.app, self.vault = app, app.vault
         self.credential_said = credential_said
         self._revocation_id = None
@@ -49,6 +55,10 @@ class RevokeCredentialDialog(LocksmithDialog):
             self.show_error('This credential has no local revocable registry')
 
     def _revoke(self):
+        """Validate controls and schedule one revocation in the original open vault.
+
+        Pass an explicitly selected bound event and witness codes to the domain
+        doer; disable repeat clicks until its matching completion signal arrives."""
         if self._closed or self.app.vault is not self.vault or self.vault.closed:
             self.show_error('This vault is closed. Open the credential in the current vault.')
             return

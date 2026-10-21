@@ -60,6 +60,12 @@ class BrowserPluginSettings:
 
 @dataclass
 class IssuedCredential:
+    """Retain exact issuer bytes and the current authoring/proof reference.
+
+    ``raw`` is the issued ACDC; ``update``/``stream`` identify its retained TEL
+    work. ``blinder`` is an event-specific opening, not a registry derivation
+    salt. ``registry_mode`` selects public, random blinded or derived updates;
+    the legacy default preserves records created before that field existed."""
     raw: str
     blinder: str = ''
     update: str = ''
@@ -102,6 +108,10 @@ class MailboxFrame:
 
 
 class LocksmithBaser(dbing.LMDBer):
+    """Store wallet metadata, explicit grant consent and pending application work.
+
+    KERIpy owns authenticated protocol records. These application subdatabases
+    reference those records and must not replace core acceptance decisions."""
     TailDirPath = "keri/rt"
     AltTailDirPath = ".keri/rt"
     TempPrefix = "rt"

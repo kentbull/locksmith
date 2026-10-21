@@ -642,6 +642,11 @@ class ExchangeResponseDialog(LocksmithDialog):
             'Spurn': 'This ends the exchange.'}
 
     def __init__(self, page, row, action):
+        """Build a response preview for ``row`` in the current activity ``page``.
+
+        ``action`` is an allowed IPEX verb, or None to select the row default.
+        Retain the page's vault identity so later vault changes cannot submit
+        this dialog's stale choices. Credential/opening selection is explicit."""
         self._default_response = action is None
         action = action or row['_actions'][0]
         self.page, self.vault, self.row, self.action = page, page.vault, row, action
@@ -772,6 +777,11 @@ class ExchangeResponseDialog(LocksmithDialog):
         self._send()
 
     def _select_response(self, *_):
+        """Refresh available credentials and capabilities for the selected IPEX verb.
+
+        Ignore Qt signal arguments. Offers cannot refresh state proofs; grants
+        can opt into that capability. Preserve valid selections and expose
+        anchoring consequences before enabling submission."""
         self.action = self.response.currentData()
         self.send_button.setText(self.Labels[self.action])
         self.explanation.setText(self.Help[self.action])
@@ -859,6 +869,10 @@ class ExchangeResponseDialog(LocksmithDialog):
             self._preview()
 
     def _preview(self, *_):
+        """Recompute the exact outbound view and disable submission on any error.
+
+        Ignore signal arguments. Expiry, unavailable proofs and absent eligible
+        credentials are reflected in the dialog before the user can send."""
         expired = ipexing.expiry_error(self.vault, self.row['messages'][-1])
         disclose = self.action in ('Offer', 'Grant')
         self._needs_creation = self._can_create and self.credential.currentIndex() < 0
@@ -891,6 +905,10 @@ class ExchangeResponseDialog(LocksmithDialog):
             self.show_error(error)
 
     def _show_offer(self):
+        """Render already disclosed Offer material when the response is Agree.
+
+        A reference-only offer cannot imply disclosed values or authenticated
+        admission. Clear the previous widgets before presenting this view."""
         layout = self.offer_review.layout()
         while layout.count():
             widget = layout.takeAt(0).widget()
@@ -923,6 +941,11 @@ class ExchangeResponseDialog(LocksmithDialog):
         layout.addWidget(note)
 
     def _show_credential(self, sad):
+        """Render the selected ``sad`` using the same projection as submission.
+
+        Read requested fields and the exact admitted grant from the dialog.
+        Return an explanatory error if projection fails; never substitute a
+        fuller retained view. A metadata-only Offer remains explicitly labeled."""
         layout = self.preview.layout()
         while layout.count():
             widget = layout.takeAt(0).widget()
@@ -954,6 +977,10 @@ class ExchangeResponseDialog(LocksmithDialog):
             layout.addWidget(credential_details(self.vault, node))
 
     def _send(self):
+        """Submit the reviewed response only while its vault and exchange are current.
+
+        Pass explicit view/opening choices to the application operation, which
+        validates again. Keep failures visible and re-enable valid retry choices."""
         if self.page.app.vault is not self.vault or not self.page._current_vault():
             self.show_error('This vault is closed.')
             return

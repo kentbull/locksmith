@@ -582,6 +582,13 @@ class RevokeCredentialDoer(CredentialUpdateDoer):
         super().__init__(doers=[doing.doify(self.revoke_do)])
 
     def revoke_do(self, tymth, tock=0.0, **opts):
+        """Publish or retry this credential's revocation with one retained update.
+
+        ``tymth`` and ``tock`` are HIO scheduler inputs; ``opts`` are reserved
+        scheduler options. Yield while collecting witness receipts. A bound
+        update requires the selected current issuee event before authoring;
+        retrying a retained update preserves its original coordinates. Report
+        success/failure through vault signals and always remove the receiptor."""
         self.wind(tymth)
         yield self.tock
         receiptor = None
