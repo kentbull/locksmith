@@ -6,6 +6,7 @@ rows nor owns stores, a Kramer, or a pruning task.
 """
 import json
 from math import isfinite
+from time import monotonic
 
 from keri import kering
 from keri.acdc.regeventing import Rever
@@ -58,12 +59,7 @@ def receive(vault, regk, raw, headers, *, maximum_age=15.0):
     if (headers.get('observer-evidence-state') != 'fresh'
             or headers.get('content-type', '').split(';')[0] != CESR_CONTENT_TYPE):
         raise kering.ValidationError('Observer evidence is not fresh CESR')
-    try:
-        age = (helping.nowUTC() - helping.fromIso8601(headers['observer-observed-at'])).total_seconds()
-    except (KeyError, TypeError, ValueError) as ex:
-        raise kering.ValidationError('Observer observation time is invalid') from ex
-    if not 0 <= age <= maximum_age:
-        raise kering.ValidationError('Observer observation is stale or in the future')
+    remaining(headers, maximum_age=maximum_age)
     result = processor(vault).ingest(raw)
     head = vault.rgy.store.headEvent(regk)
     if (result['pending'] or result['rejected'] or head is None
@@ -71,6 +67,23 @@ def receive(vault, regk, raw, headers, *, maximum_age=15.0):
             or result['heads'].get(regk) != head.said):
         raise kering.ValidationError('Observer evidence failed independent verification')
     return head
+
+
+def remaining(headers, *, maximum_age=15.0):
+    """Return usable observation lifetime without restarting its freshness clock.
+
+    headers contain the configured observer's verified response metadata;
+    maximum_age is the receiver policy in seconds. Invalid, future or stale
+    observations raise ValidationError. Cache callers convert the remainder to
+    a monotonic deadline, retaining the exact source and head independently.
+    """
+    try:
+        age = (helping.nowUTC() - helping.fromIso8601(headers['observer-observed-at'])).total_seconds()
+    except (KeyError, TypeError, ValueError) as ex:
+        raise kering.ValidationError('Observer observation time is invalid') from ex
+    if not 0 <= age <= maximum_age:
+        raise kering.ValidationError('Observer observation is stale or in the future')
+    return maximum_age - age
 
 
 def sync(worker):
@@ -107,4 +120,5 @@ def sync(worker):
     raw = yield from worker._request(worker.observer_url.rstrip('/') + '/',
                                      signedQuery(hab, 'tels', {'i': regk}), CESR_CONTENT_TYPE)
     worker.result = receive(vault, regk, raw, worker.response_headers)
+    worker.fresh_until = monotonic() + remaining(worker.response_headers)
     return 'registry_loaded'

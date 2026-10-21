@@ -638,3 +638,26 @@ def test_full_profile_publishes_signed_complete_evidence(wallets, service, qapp)
     assert doer.error == ''
     assert receiver.rgy.store.head(registry.regk).qb64 == sender.rgy.store.head(registry.regk).qb64
     assert [(method, path) for method, path, _ in requests] == [('POST', '/ingest')]
+
+
+def test_full_observation_cache_does_not_restart_age(wallets, service, qapp, monkeypatch):
+    """A nearly expired observation gets only its remaining lifetime locally."""
+    from datetime import timedelta
+    from keri.help import helping
+    sender, receiver = wallets
+    _, _, registry, _ = _issue(sender)
+    holder = receiver.hby.makeHab(name='holder')
+    url, state, requests = service
+    receiver.hby.cf.put({'registries': {'profile': 'full-evidence', 'observer': url}})
+    stream, headers = _full_reply(sender, registry)
+    headers['observer-observed-at'] = helping.toIso8601(helping.nowUTC() - timedelta(seconds=14))
+    state['respond'] = lambda method, path, body: (200, stream, headers)
+    worker = registries.RegistrySyncDoer(receiver, holder, registry.regk, observer_url=url)
+    _run(worker, qapp)
+    assert not worker.error
+    assert 0 < worker.fresh_until - monotonic() < 1
+    cache = registries.RegistryEvidenceDoer(receiver)
+    cache._fetched[registry.regk] = (worker.result.said, worker.fresh_until)
+    assert cache.ensure(registry.regk, holder)
+    monkeypatch.setattr(registries, 'monotonic', lambda: worker.fresh_until + .01)
+    assert not cache.ensure(registry.regk, holder)

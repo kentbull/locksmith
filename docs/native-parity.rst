@@ -162,3 +162,9 @@ This adapter follows the existing vault-open/QtTask lifecycle. Its socket access
 uses `Qt QLocalServer UserAccessOption
 <https://doc.qt.io/qtforpython-6/PySide6/QtNetwork/QLocalServer.html>`_ plus the
 private parent directory; this local mechanism adds no KERI authorization rule.
+
+Full-profile freshness is bounded by the observer's original observation time.
+The wallet caches only the remaining portion of its 15-second observation-age
+policy, using a monotonic deadline bound to the configured source and exact head.
+Receiving a nearly expired observation does not restart a 60-second wallet cache.
+The older bare-TEL profile retains its existing refresh cadence.

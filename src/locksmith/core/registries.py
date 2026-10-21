@@ -75,6 +75,7 @@ class RegistrySyncDoer(doing.DoDoer):
         self.observer_url, self.registrar_url = observer_url, registrar_url
         self.result, self.error, self.manager = None, '', None
         self.response_headers = {}
+        self.fresh_until = None
         self.profile = (vault.hby.cf.get() or {}).get('registries', {}).get('profile', 'legacy')
         if self.profile not in ('legacy', 'full-evidence'):
             raise ValueError('Unknown registry service profile')
@@ -274,7 +275,7 @@ class RegistryEvidenceDoer(doing.DoDoer):
         fetched = self._fetched.get(regk)
         head = self.vault.rgy.store.head(regk)
         return bool(fetched and head and fetched[0] == head.qb64
-                    and monotonic() - fetched[1] < self.Refresh)
+                    and monotonic() < fetched[1])
 
     def published(self, regk):
         """Return whether the registrar accepted the current local registry head."""
@@ -323,7 +324,11 @@ class RegistryEvidenceDoer(doing.DoDoer):
                         self.errors.pop(regk, None)
                         self._retry.pop(key, None)
                         if operation == 'fetch':
-                            self._fetched[regk] = (worker.result.said, now)
+                            # Full evidence retains the observer observation deadline;
+                            # receiving it does not create another freshness window.
+                            deadline = (worker.fresh_until if worker.profile == 'full-evidence'
+                                        else now + self.Refresh)
+                            self._fetched[regk] = (worker.result.said, deadline)
                         else:
                             self._published[regk] = worker.published_head
                     if signals := getattr(self.vault, 'signals', None):
