@@ -322,3 +322,23 @@ initial Locksmith port, ``ea50b93``; our composition and live-test fixes do not
 imply his authorship or endorsement. Rendering review exposed the original black
 native selectors. The corrected controls retain exact-view selection semantics
 and their existing real-crypto keyboard regression.
+
+
+Explicit issuee-bound derivation
+--------------------------------
+
+Optional ``bound_event`` on Grant composition, negotiated responses and the
+opening driver selects an exact accepted issuee KEL digest. It requires explicit
+``derive`` and ``refresh`` for presentation. The advanced UI field appears only
+for the derivation source. It does not silently substitute today's issuee head:
+an existing opening may name an earlier accepted, fully witnessed event. A wrong
+or unknown event fails. Per-event supplied proofs remain usable without custody.
+
+This adapts KERIpy ``ExchangeDoer.registryOrigin`` at aef3013d and shares
+``credential_disclosing.boundEvent`` from 993b5826. Original issued proofs may
+supply their exact retained coordinates; vacuous bound candidates retain the
+core zero/empty placeholder convention. Every resulting proof still passes
+``registryProof``/``vetBound``. Inventory/revocation decoding recognizes both
+existing BlindState and BoundState records rather than assuming every retained
+opening has the unbound layout. These controls grant no issuance authority and
+make no global wall-clock publication claim.

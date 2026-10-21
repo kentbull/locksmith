@@ -10,7 +10,7 @@ from PySide6.QtCore import Signal, QSignalBlocker
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QCheckBox, QFileDialog, QLabel
 from locksmith.core import credentialing
 from locksmith.ui.toolkit.widgets import LocksmithInvertedButton
-from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox
+from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, FloatingLabelLineEdit
 
 
 class DisclosureOptions(QWidget):
@@ -37,6 +37,10 @@ class DisclosureOptions(QWidget):
         self.source.addItem('Use a supplied event opening', 'supplied')
         self.source.addItem('Derive with provisioned registry custody', 'derive')
         layout.addWidget(self.source_field)
+        self.bound_event = FloatingLabelLineEdit('Exact issuee event (optional)')
+        self.bound_event.setToolTip('Select the accepted issuee KEL digest used by this bound opening; blank derives unbound state.')
+        self.bound_event.line_edit.textChanged.connect(lambda *_: self.changed.emit())
+        layout.addWidget(self.bound_event)
         self.choose = LocksmithInvertedButton('Choose event-opening file…')
         self.choose.clicked.connect(self._choose)
         layout.addWidget(self.choose)
@@ -65,6 +69,7 @@ class DisclosureOptions(QWidget):
         self.refresh.setChecked(False)
         self.source.setCurrentIndex(0)
         self.opening = None
+        self.bound_event.line_edit.clear()
         self.choose.setText('Choose event-opening file…')
         self.choose.setToolTip('')
 
@@ -72,6 +77,7 @@ class DisclosureOptions(QWidget):
         """Show advanced opening controls only when state refresh is selected."""
         enabled = self.refresh.isChecked()
         self.source_field.setVisible(enabled)
+        self.bound_event.setVisible(enabled and self.source.currentData() == 'derive')
         self.note.setVisible(enabled)
         self.choose.setVisible(enabled and self.source.currentData() == 'supplied')
         self.changed.emit()
@@ -93,6 +99,8 @@ class DisclosureOptions(QWidget):
             source = self.source.currentData()
             if source == 'derive':
                 result['derive'] = True
+                if event := self.bound_event.text().strip():
+                    result['bound_event'] = event
             elif source == 'supplied':
                 if not self.opening:
                     raise ValueError('Choose the event-specific opening to disclose')

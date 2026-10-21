@@ -239,7 +239,7 @@ def credential(vault, said, received=False, *, grant=None):
         if record.stream:
             proof = record.stream.encode()
         else:  # Persisted registry issuances from before native stream retention.
-            blinder = Blinder(clan=BlindState, qb64=record.blinder)
+            blinder = regeventing._blindCandidates(record.blinder)[0]
             proof = messagize(serder=acdc, bonds=[blinder.data], framed=False)
         ims = bytearray(proof)
         parsed = parsing.Parser().parse(ims=ims, processive=False, version=kering.Vrsn_2_0)
@@ -584,7 +584,7 @@ class RevokeCredentialDoer(CredentialUpdateDoer):
             registry = self.vault.rgy.regs.get(acdc.regid)
             if registry is None:
                 raise ValueError('This credential has no local revocable registry')
-            blinder = Blinder(clan=BlindState, qb64=record.blinder) if record.blinder else None
+            blinder = regeventing._blindCandidates(record.blinder)[0] if record.blinder else None
             retained_update = self.vault.rgy.store.event(record.update)
             revoked = (blinder is not None and blinder.state == 'revoked'
                        or record.registry_mode == 'public' and retained_update is not None

@@ -82,13 +82,17 @@ def execute(app, request):
     if op == 'opening':
         if ipexing.grant_credential(vault, request['from_grant']).said != request['credential']:
             raise ValueError('admitted grant does not bind the requested credential')
-        credentialing.credential(vault, request['credential'], grant=request['from_grant'])
+        view = credentialing.credential(vault, request['credential'], grant=request['from_grant'])
+        acdc = SerderACDC(sad=view['sad'])
+        coordinates = (disclosing.boundEvent(vault.hby, acdc, request['bound_event'])
+                       if request.get('bound_event') else {})
         opening = disclosing.custody(vault).derive(request['registry'], request['ordinal'],
-                                                  request['credential'], request['state'])
-        from keri.acdc.regeventing import vetBlind
+                                                  request['credential'], request['state'], **coordinates)
+        from keri.acdc.regeventing import vetBlind, vetBound
         event = vault.rgy.store.seqEvent(request['registry'], request['ordinal'])
         if event is None or vetBlind(opening, blid=event.sad.get('b')) != (request['credential'], request['state']):
             raise ValueError('Opening does not match the selected accepted event')
+        vetBound(opening, acdc=acdc, db=vault.hby.db)
         return {'opening': opening.qb64}
     hab = vault.hby.habByName(request['alias'])
     if hab is None:
@@ -130,7 +134,7 @@ def execute(app, request):
                 if monotonic() >= deadline:
                     raise
                 yield
-    selection = {key: request[key] for key in ('from_grant', 'refresh', 'openings', 'derive')
+    selection = {key: request[key] for key in ('from_grant', 'refresh', 'openings', 'derive', 'bound_event')
                  if key in request}
     if op in ('apply', 'offer') and not request.get('prior'):
         # Start has no state-refresh capability; Offer preview uses held material.

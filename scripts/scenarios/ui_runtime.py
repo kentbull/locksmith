@@ -153,6 +153,11 @@ def execute(app, request):
                 click(dialog.disclosure.refresh, dialog)
                 select(dialog.disclosure.source, 'derive' if request.get('derive') else
                        'supplied' if request.get('openings') else 'retained')
+                if request.get('bound_event'):
+                    field = dialog.disclosure.bound_event.line_edit
+                    dialog.scroll_area.ensureWidgetVisible(field)
+                    field.setFocus()
+                    QTest.keyClicks(field, request['bound_event'])
                 if request.get('openings'):
                     path = folder / ('opening-' + prior + '.cesr')
                     folder.mkdir(parents=True, exist_ok=True)

@@ -50,7 +50,7 @@ def main():
     for short, long in (('-a', '--alias'), ('-r', '--recipient'), ('-s', '--said')):
         parser.add_argument(short, long)
     for flag in ('prior', 'from-grant', 'endpoint', 'output', 'plan', 'registry',
-                 'controller', 'discloser', 'file', 'ordinal'):
+                 'controller', 'discloser', 'file', 'ordinal', 'bound-event'):
         parser.add_argument('--' + flag)
     parser.add_argument('--disclose', action='append', default=[])
     parser.add_argument('--opening', action='append', default=[])
@@ -83,6 +83,8 @@ def main():
                     from_grant=args.from_grant, ordinal=int(args.ordinal), state='issued')
     else:
         raise ValueError('Unsupported Locksmith scenario operation')
+    if args.bound_event:
+        body['bound_event'] = args.bound_event
     result = request(root, role, body)
     if args.output:
         material = result.pop('stream', None) or result.get('opening')

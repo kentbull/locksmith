@@ -113,7 +113,8 @@ def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaul
 
 
 @pytest.mark.parametrize('damage', ['corrupt', 'old-aeid'])
-def test_optional_custody_derives_without_gating_held_proofs(ipex_vaults, tmp_path, damage):
+@pytest.mark.parametrize('bound', [False, True])
+def test_optional_custody_derives_without_gating_held_proofs(ipex_vaults, tmp_path, damage, bound):
     """Provision real encrypted per-registry custody, then isolate its failure."""
     from keri.acdc import acdcmap, blindate
     from keri.app.registry_custody import EncryptedCustody
@@ -136,10 +137,13 @@ def test_optional_custody_derives_without_gating_held_proofs(ipex_vaults, tmp_pa
     acdc = acdcmap(israid=issuer.pre, regid=registry.regk, schema=schema.said,
                    attribute={'d': '', 'i': holder.pre, 'LEI': 'retained-content'})
 
+    selected = holder.kever.serder
+
     def advance(ordinal):
         """Author a genuine blinded update and acquire its ordinary verified proof."""
         prior = source.vault.rgy.store.headEvent(registry.regk)
-        opening = provider.derive(registry.regk, ordinal, acdc.said, 'issued')
+        coordinates = dict(bound=True, bsn=selected.sn, bd=selected.said) if bound else {}
+        opening = provider.derive(registry.regk, ordinal, acdc.said, 'issued', **coordinates)
         event = blindate(registry.regk, prior.said, opening.said, sn=ordinal)
         registry.processEvent(event)
         issuer.interact(data=[dict(s=event.sad['n'], d=event.said)])
@@ -157,16 +161,45 @@ def test_optional_custody_derives_without_gating_held_proofs(ipex_vaults, tmp_pa
     provider.exportCustody(registry.regk, transfer)
     disclosing.custody(target.vault).importCustody(transfer, regid=registry.regk,
                                                  controller=issuer.pre, discloser=holder.pre)
+    if bound:
+        holder.rotate()
+        selected = holder.kever.serder
+        _introduce(target, source)
     advance(2)
+    options = dict(bound_event=selected.said) if bound else {}
+    if bound:
+        # Existing openings must keep their exact historical coordinates after rotation.
+        holder.rotate()
+        _introduce(target, source)
     earlier = credentialing.credential(target.vault, acdc.said, grant=held)
-    assert disclosing.material(target.vault, earlier, refresh=True, derive=True)['status']['et'] == 'issued'
+    if bound:
+        with pytest.raises(kering.ValidationError, match='accepted witnessed issuee'):
+            disclosing.material(target.vault, earlier, refresh=True, derive=True, bound_event=Noncer().qb64)
+        with pytest.raises(kering.ConfigurationError, match='current registry opening unavailable'):
+            disclosing.material(target.vault, earlier, refresh=True, derive=True,
+                                 bound_event=holder.kever.serder.said)
+    assert disclosing.material(target.vault, earlier, refresh=True, derive=True, **options)['status']['et'] == 'issued'
+    if bound:
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from locksmith.ui.vault.credentials.disclosure import DisclosureOptions
+        controls = DisclosureOptions(target.vault)
+        controls.select(acdc.said)
+        controls.show()
+        controls.refresh.setChecked(True)
+        controls.source.setCurrentIndex(controls.source.findData('derive'))
+        controls.bound_event.line_edit.setFocus()
+        QTest.keyClicks(controls.bound_event.line_edit, selected.said)
+        # The UI's exact selection must survive the actual signed onward Grant.
+        _grant(target, source, holder, issuer, acdc.said, **controls.selection())
+        controls.close()
     current = _grant(source, target, issuer, holder, acdc.said, message='Current opening')
     stored = target.vault.db.custody.get((registry.regk,))
     damaged = (EncryptedCustody(stored.aeid, 'invalid ciphertext') if damage == 'corrupt'
                else EncryptedCustody(Signer(transferable=False).verfer.qb64, stored.cipher))
     target.vault.db.custody.pin((registry.regk,), damaged)
     with pytest.raises(kering.AuthError):
-        disclosing.material(target.vault, earlier, refresh=True, derive=True)
+        disclosing.material(target.vault, earlier, refresh=True, derive=True, **options)
     # This retained event-2 opening is sufficient; ordinary presentation never
     # loads the damaged salt record and still passes native verification.
     grant, atc = ipexing.grant(target.vault, holder, acdc.said, issuer.pre, from_grant=current)

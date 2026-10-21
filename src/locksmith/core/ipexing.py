@@ -258,7 +258,7 @@ def _disclosure_plan(origin, nodes):
 
 
 def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
-                         disclose=(), refresh=False, openings=(), derive=False, preview=False):
+                         disclose=(), refresh=False, openings=(), derive=False, bound_event=None, preview=False):
     """Load exact selected material and its native disclosure plan.
 
     vault/credential_said identify inventory; hab optionally enforces current
@@ -270,12 +270,12 @@ def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
     """
     view = credentialing.credential(vault, credential_said, grant=from_grant)
     if preview:
-        if refresh or openings or derive:
+        if refresh or openings or derive or bound_event:
             raise ValueError('State opening selection belongs to Grant, not Offer preview')
         view = dict(view, sad=disclosing.select(SerderACDC(sad=view['sad']), disclose).sad)
-    elif disclose or refresh or openings or derive:
+    elif disclose or refresh or openings or derive or bound_event:
         view = disclosing.material(vault, view, paths=disclose, refresh=refresh,
-                                   openings=openings, derive=derive)
+                                   openings=openings, derive=derive, bound_event=bound_event)
     if not preview and view['status']['et'] not in ('issued', 'authenticated'):
         raise kering.ValidationError('Credential does not have a verified issued state or issuer authentication')
     if hab is not None:
@@ -316,7 +316,7 @@ def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
 
 
 def grant(vault, hab, credential_said, recipient, message='', *, from_grant=None,
-          disclose=(), refresh=False, openings=(), derive=False):
+          disclose=(), refresh=False, openings=(), derive=False, bound_event=None):
     """Build a grant using the selected local disclosure and optional opening.
 
     Args:
@@ -330,13 +330,14 @@ def grant(vault, hab, credential_said, recipient, message='', *, from_grant=None
         refresh: Rebuild only the registry proof against accepted current history.
         openings: Explicit event-specific CESR proof bytes.
         derive: Enable provisioned per-registry derivation for this operation.
+        bound_event: Optional exact accepted issuee event for derived bound state.
 
     Returns:
         tuple: Native signed exchange and attachments, still requiring prepare/submit.
     """
     _require_vault(vault, hab)
     view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
-        from_grant=from_grant, disclose=disclose, refresh=refresh, openings=openings, derive=derive)
+        from_grant=from_grant, disclose=disclose, refresh=refresh, openings=openings, derive=derive, bound_event=bound_event)
     _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient, vault=vault)
     return ipexing.grant(hab, recipient, message, origin=view['proof'], artifacts=artifacts,
                          modifiers={'dp': plan}, kind=kering.Kinds.json)
@@ -479,12 +480,12 @@ def anchor_error(hab):
 
 
 def respond(vault, said, action, message='', credential_said=None, *, from_grant=None,
-            refresh=False, openings=(), derive=False):
+            refresh=False, openings=(), derive=False, bound_event=None):
     """Validate and queue one response using the prior's agreed disclosure paths.
 
     vault owns evidence; said names the prior; action and message express the
     operator decision. credential_said/from_grant select exact retained material.
-    refresh/openings/derive have the same explicit capability meanings as grant.
+    refresh/openings/derive/bound_event have the same capability meanings as grant.
     Return the signed response identifier. The builder cannot renegotiate fields
     at Grant time or enrich a prior admission from another inventory view.
     """
@@ -511,7 +512,7 @@ def respond(vault, said, action, message='', credential_said=None, *, from_grant
         fields = requested[0][0][2] if requested and requested[0] else []
         view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
             from_grant=from_grant, disclose=fields, refresh=refresh,
-            openings=openings, derive=derive, preview=action == 'Offer')
+            openings=openings, derive=derive, bound_event=bound_event, preview=action == 'Offer')
         _require_presenter(SerderACDC(sad=view['sad']), hab.pre, prior.pre, vault=vault)
         schema = request_schema(request)
         if request.sad['q'].get('dp') not in (None, [[]]) and schema is None:

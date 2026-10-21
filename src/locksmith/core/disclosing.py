@@ -9,7 +9,7 @@ from copy import deepcopy
 
 from keri import kering
 from keri.acdc.regeventing import issuerRegistry, _blindCandidates
-from keri.app.credential_disclosing import registryProof
+from keri.app.credential_disclosing import registryProof, boundEvent
 from keri.app.registry_custody import RegistryCustody
 from keri.core import Blinder, BlindState, BoundState, Compactor, Parser, SerderACDC
 from keri.peer import exchanging
@@ -28,7 +28,7 @@ def custody(vault):
     return RegistryCustody(vault.hby, vault.rgy, db=vault.db)
 
 
-def material(vault, view, *, paths=(), refresh=False, openings=(), derive=False):
+def material(vault, view, *, paths=(), refresh=False, openings=(), derive=False, bound_event=None):
     """Transform one retained view without reading fuller inventory or sections.
 
     Args:
@@ -38,6 +38,8 @@ def material(vault, view, *, paths=(), refresh=False, openings=(), derive=False)
         refresh: Select proofs for current accepted history, retaining the content.
         openings: Explicit event-specific CESR Blinder bytes, never registry salts.
         derive: Explicit authorization to use provisioned per-registry custody.
+        bound_event: Exact accepted issuee event for bound derivation; never an
+            implicit current-head substitution or a registry timestamp.
 
     Returns:
         dict: New view with exact selected proof and freshly checked authentication.
@@ -47,6 +49,8 @@ def material(vault, view, *, paths=(), refresh=False, openings=(), derive=False)
         KeriError: Missing/wrong opening, custody failure or authentication failure.
             Unrelated ordinary presentations remain usable.
     """
+    if bound_event and not derive:
+        raise ValueError('A bound event requires explicit derivation')
     if (openings or derive) and not refresh:
         raise ValueError('New openings or derivation require explicit state refresh')
     raw = bytearray(view['proof'])
@@ -71,10 +75,19 @@ def material(vault, view, *, paths=(), refresh=False, openings=(), derive=False)
             if len(candidates) != 1:
                 raise kering.ValidationError('Supply exactly one CESR opening per value')
             retained.append(candidates[0])
+        explicit = boundEvent(vault.hby, credential, bound_event) if bound_event else {}
+        issued = vault.db.issued.get((credential.said,))
         provider = custody(vault) if derive else None
         def derive_opening(update, target, state):
             """Derive only this selected registry's event-specific candidate."""
-            return provider.derive(regid, update.sn, target, state)
+            parameters = explicit
+            if not parameters and issued and issued.update == update.said and issued.blinder:
+                original, = _blindCandidates(issued.blinder)
+                if original.clan == BoundState:
+                    parameters = dict(bound=True, bsn=original.bsn, bd=original.bd)
+            if parameters and not target:
+                parameters = dict(bound=True, bsn=0, bd='')
+            return provider.derive(regid, update.sn, target, state, **parameters)
         raw = registryProof(vault.hby, vault.rgy, credential, regid, retained=retained,
                             derive=derive_opening if provider else None)
         node = Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(raw), processive=False)
