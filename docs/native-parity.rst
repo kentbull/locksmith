@@ -220,3 +220,21 @@ metadata-only Offer remains the default. The selection control lists only
 material in the selected view; it cannot select a withheld section from another
 admission. Schemas without independently committed sections retain their existing
 whole-credential negotiation behavior.
+
+Explicit operator issuance
+--------------------------
+
+The private driver accepts ``schema`` with an optional local ``issuer`` alias,
+matching the UI schema-load issuer policy. ``issue`` invokes the existing
+``IssueCredentialDoer`` through the vault scheduler; it requires that same issuer
+policy and takes recipient, attributes and optional authentication, state mode,
+witness codes and designated derivation discloser. Public, event-blinded and
+explicit derived modes retain their existing application semantics. The driver
+returns public credential/proof metadata only after the worker's normal success
+signal. Cancellation removes the worker and preserves signed authoring records.
+It does not invoke KLI or synthesize accepted state.
+
+``driver.authoring.issue`` is local orchestration around the existing worker
+and signal lifecycle, adapted from ``IssueCredentialDialog._complete_issuance``
+at c82b7ed. The schema policy assignment follows ``LoadSchemaDoer`` at that
+revision. These are operational adapters, not new protocol or delegation rules.

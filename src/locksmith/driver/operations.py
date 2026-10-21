@@ -36,9 +36,21 @@ def execute(app, request):
         config['registries'] = dict(request['registries'])
         vault.hby.cf.put(config)
         return {'configured': True}
+    if op == 'issue':
+        from locksmith.driver.authoring import issue
+        return (yield from issue(app, request))
     if op == 'schema':
         schema = scheming.Schemer(sed=request['schema'])
+        issuer = None
+        if request.get('issuer'):
+            issuer = vault.hby.habByName(request['issuer'])
+            if issuer is None:
+                raise ValueError('Choose a local schema issuer')
         vault.hby.db.schema.pin((schema.said,), schema)
+        if issuer is not None:
+            # Same explicit issuer policy as LoadSchemaDoer; this is not an
+            # accepted credential or a delegation of protocol authority.
+            vault.db.issuers.pin((schema.said,), issuer.pre)
         return {'schema': schema.said}
     if op == 'policy':
         ipexing.set_presenter_policy(vault, request['credential'], request['presenter'],

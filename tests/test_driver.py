@@ -80,3 +80,41 @@ def test_real_runtime_owns_and_closes_one_vault(qapp, tmp_path, monkeypatch):
         control.close()
         app.close_vault()
     assert vault.closed and not vault.db.opened and not vault.hby.db.opened
+
+
+@pytest.mark.parametrize('mode', ['public', 'blinded'])
+def test_runtime_issues_through_application_worker(qapp, tmp_path, monkeypatch, mode):
+    """Real local control, QtTask and issuance verify state without KLI or DB injection."""
+    from keri.acdc.messaging import acmSchemaDefault
+    from locksmith.core import credentialing
+
+    monkeypatch.delenv('KLI_KEYSTORE_PASSCODE', raising=False)
+    name, base = 'driver-issuer-' + mode, tmp_path.name
+    with habbing.openHby(name=name, base=base, temp=False) as hby:
+        hby.makeHab(name='issuer')
+        recipient = hby.makeHab(name='recipient').pre
+    tmp_path.chmod(0o700)
+    path = tmp_path / 'issuer.sock'
+    app, control = open_runtime(name, base, 'issuer', path, 0)
+    try:
+        _, schema = acmSchemaDefault()
+        loaded = call(qapp, path, {'op': 'schema', 'schema': schema})
+        said = loaded['result']['schema']
+        request = {'op': 'issue', 'alias': 'issuer', 'schema': said,
+                   'recipient': recipient, 'attributes': {'LEI': 'example'},
+                   'registry_mode': mode}
+        refusal = call(qapp, path, request)
+        assert not refusal['ok'] and 'configured local issuer' in refusal['error']
+        configured = call(qapp, path, {'op': 'schema', 'schema': schema, 'issuer': 'issuer'})
+        assert configured['ok']
+        response = call(qapp, path, request)
+        assert response['ok'], response
+        result = response['result']
+        assert result['accepted'] and result['stream'] and result['registry_evidence']
+        view = credentialing.credential(app.vault, result['credential'])
+        assert view['status']['et'] == 'issued'
+        assert app.vault.rgy.store.headEvent(result['registry']).said == result['update']
+        assert not list(app.vault.db.custody.getTopItemIter())
+    finally:
+        control.close()
+        app.close_vault()
