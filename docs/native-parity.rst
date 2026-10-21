@@ -411,3 +411,20 @@ visible while retaining the same toggled signals and disclosure decisions.
 This is a local UI integration correction, not a protocol requirement. The
 widget and its styling already exist in the community donor ``0c09cc03``; no
 new control framework or selection semantics were introduced.
+
+
+Issuer UI business-value assertion
+----------------------------------
+
+The entitlement issuer UI story configures Dolly's existing projection to
+``a/entitlement`` and makes that field required before sending any grant. Its
+result now requires both the exact ``authorized`` value and ``disclosed`` state.
+The earlier shared fixture mapped ``status/private/note`` instead; that proved
+credential acceptance and hook delivery but did not prove delivery of the value
+entered in this form. Those earlier issuer UI passes do not close this stronger
+acceptance gate.
+
+This is a local scenario correction, using Dolly's existing configured projection
+and required-field contract. The scenario stops and restarts its own Dolly
+process with the fixture-specific policy before the first grant. The protocol,
+application verifier and normal six-story reporting policy are unchanged.

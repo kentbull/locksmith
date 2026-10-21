@@ -31,6 +31,24 @@ stop issuer-app
 # Service bootstrapping and initial signed publication retain the KLI adapter.
 # Actual issuance and IPEX grant are exclusively the Locksmith application.
 services
+# This fixture has a scalar entitlement, unlike the six compacted-field stories.
+# Select its reporting policy before any grant arrives; keep Dolly's normal
+# configured projection and required-field enforcement as the only owner.
+stop dolly
+python - "$RUN_DIR/dolly-policy.json" <<'PY_POLICY'
+import json
+from pathlib import Path
+import sys
+path = Path(sys.argv[1])
+policy = json.loads(path.read_text())
+policy['fields'] = {'entitlement': 'a/entitlement'}
+policy['required'] = ['entitlement']
+path.write_text(json.dumps(policy))
+PY_POLICY
+spawn dolly dolly server start --direct --name "${NAMES[dolly]}" --base "$STORE_BASE" -a dolly \
+    --config "$RUN_DIR/dolly-policy.json" --kel "$RUN_DIR/bootstrap.cesr" \
+    --packaged-schema entitlement-v2 --http "${PORTS[dolly]}" --tcp "${PORTS[dollytcp]}" --no-prompt
+python "$JSON" ready "http://127.0.0.1:${PORTS[dolly]}/health" 15
 stop issuer-intake
 start_issuer
 python -m locksmith.driver.scenario "$RUN_DIR" issuer setup --observer "$OBSERVER_URL"
@@ -63,6 +81,8 @@ hooks = [json.loads(line) for line in (root / 'hooks.jsonl').read_text().splitli
 assert len(hooks) == 1 and hooks[0]['credential'] == sys.argv[2]
 assert hooks[0]['grant'] == sys.argv[3] and hooks[0]['decision'] == 'accepted'
 assert hooks[0]['protocol'] == 2
+assert hooks[0]['business'] == {'entitlement': 'authorized'}
+assert hooks[0]['disclosure'] == {'entitlement': 'disclosed'}
 (root / 'ui-issuer-result.json').write_text(json.dumps({
     'result': 'passed', 'issuer': 'Locksmith IssueCredentialDialog',
     'holderAdmission': 'Locksmith AcceptGrantDialog', 'hook': hooks[0]}, indent=2))
