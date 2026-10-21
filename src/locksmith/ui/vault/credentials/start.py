@@ -3,6 +3,7 @@ from PySide6.QtCore import Qt, Signal, QSignalBlocker
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 
 from locksmith.core import credentialing, ipexing
+from locksmith.ui.vault.credentials.disclosure import DisclosureOptions, DisclosureFields
 from locksmith.core.habbing import list_eligible_local_identifiers
 from locksmith.ui.toolkit.widgets import LocksmithButton, LocksmithDialog, LocksmithInvertedButton
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox
@@ -25,8 +26,9 @@ class StartExchangeDialog(LocksmithDialog):
         layout.setContentsMargins(0, 12, 0, 0)
         layout.setSpacing(16)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        self.explanation = None
         if action == 'Offer':
-            explanation = QLabel('Shares the issuer, credential type, and terms below. '
+            explanation = self.explanation = QLabel('Shares the issuer, credential type, and terms below. '
                                  'Credential values are sent after agreement.')
             explanation.setWordWrap(True)
             layout.addWidget(explanation)
@@ -46,8 +48,7 @@ class StartExchangeDialog(LocksmithDialog):
                 self.selection.addItem(credential_name(schemer.sed), said)
         else:
             for view in credentialing.credentials(self.vault, received=True if received else None):
-                if (view['status']['et'] in ('issued', 'authenticated') and
-                        (view['held'] or view['sad']['i'] in self.vault.hby.prefixes)):
+                if view['status']['et'] != 'revoked':
                     self.selection.addItem(credential_name(view['schema']) + ' · ' + view['sad']['d'][:8] + '…',
                                            view['sad']['d'])
         selected = schema if action == 'Apply' else credential_said
@@ -55,6 +56,13 @@ class StartExchangeDialog(LocksmithDialog):
             self.selection.setCurrentIndex(self.selection.combo_box.findData(selected))
             self.selection.setEnabled(False)
         layout.addWidget(self.selection)
+        self.disclosure = DisclosureOptions(self.vault)
+        self.disclosure.refresh.hide()
+        self.fields = DisclosureFields()
+        layout.addWidget(self.disclosure)
+        layout.addWidget(self.fields)
+        self.disclosure.setVisible(action == 'Offer')
+        self.fields.setVisible(action == 'Offer')
         self.preview = QWidget()
         preview_layout = QVBoxLayout(self.preview)
         preview_layout.setContentsMargins(0, 0, 0, 0)
@@ -83,6 +91,8 @@ class StartExchangeDialog(LocksmithDialog):
         self.sender.currentIndexChanged.connect(self._update_recipients)
         self.recipient.currentIndexChanged.connect(self._check_route)
         self.selection.currentIndexChanged.connect(self._select_sender)
+        self.disclosure.changed.connect(self._select_sender)
+        self.fields.changed.connect(self._select_sender)
         self._select_sender()
         self._update_recipients()
 
@@ -109,9 +119,13 @@ class StartExchangeDialog(LocksmithDialog):
     def _select_sender(self, *_):
         if self.action == 'Offer' and self.selection.currentData():
             said = self.selection.currentData()
-            view = credentialing.credential(self.vault, said, received=self.received)
-            pre = (view['sad']['i'] if not self.received and self.vault.db.issued.get((said,))
-                   else view['subject'])
+            with QSignalBlocker(self.disclosure):
+                self.disclosure.select(said)
+            view = credentialing.credential(self.vault, said, received=self.received,
+                                            grant=self.disclosure.grant.currentData())
+            self.fields.select((said, view['grant']), view['sad'])
+            pre = (view['sad']['i'] if not view['grant'] and self.vault.db.issued.get((said,))
+                   else view['recipient'])
             self.sender.setCurrentIndex(self.sender.combo_box.findData(pre))
         if self.action == 'Offer':
             layout = self.preview.layout()
@@ -122,10 +136,14 @@ class StartExchangeDialog(LocksmithDialog):
             self._offer_error = ''
             try:
                 if self.selection.currentData():
-                    for node in disclosed_credentials(self.vault, self.selection.currentData(), metadata=True):
+                    for node in disclosed_credentials(self.vault, self.selection.currentData(),
+                            metadata=not self.fields.paths(), preview=True, disclose=self.fields.paths(),
+                            **self.disclosure.selection()):
                         layout.addWidget(credential_details(self.vault, node))
             except Exception as error:
                 self._offer_error = str(error)
+            self.explanation.setText('This offer reveals the selected values shown below before agreement.'
+                if self.fields.paths() else 'Shares issuer, credential type and terms. Values follow agreement.')
             self.fit_content(540)
         self._check_route()
 
@@ -173,6 +191,8 @@ class StartExchangeDialog(LocksmithDialog):
             if hab is None:
                 raise ValueError('Choose your identifier')
             selection = {'schema' if self.action == 'Apply' else 'credential_said': self.selection.currentData()}
+            if self.action == 'Offer':
+                selection.update(self.disclosure.selection(), disclose=self.fields.paths())
             said = ipexing.start(self.vault, hab, self.recipient.currentData(), self.action, **selection)
             self.accept()
             self.submitted.emit(said)

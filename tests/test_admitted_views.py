@@ -52,7 +52,7 @@ def test_explicit_admitted_view_survives_fuller_grant_and_reopen(ipex_vaults, qa
     assert credentialing.credential(receiver.vault, full.said, grant=later.said)['sad']['a']['details']['LEI'] == 'private-later-value'
     # Actual selection controls must preserve the old view after a fuller grant.
     from PySide6.QtCore import Qt
-    from PySide6.QtTest import QTest
+    from PySide6.QtTest import QTest, QSignalSpy
     from locksmith.ui.vault.credentials.disclosure import DisclosureOptions
     from locksmith.ui.vault.credentials.presentation import disclosed_credentials
     options = DisclosureOptions(receiver.vault)
@@ -61,8 +61,10 @@ def test_explicit_admitted_view_survives_fuller_grant_and_reopen(ipex_vaults, qa
     assert options.selection() == {'from_grant': first.said}
     assert isinstance(disclosed_credentials(receiver.vault, full.said,
         **options.selection())[0]['a']['details'], str)
+    changed = QSignalSpy(options.changed)
     options.grant.setFocus()
     QTest.keyClick(options.grant, Qt.Key.Key_Down)
+    assert changed.count() == 1
     assert options.selection() == {'from_grant': later.said}
     assert disclosed_credentials(receiver.vault, full.said,
         **options.selection())[0]['a']['details']['LEI'] == 'private-later-value'

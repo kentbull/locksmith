@@ -41,7 +41,7 @@ class DisclosureOptions(QWidget):
                            'Derivation uses local custody; it does not send the salt.')
         self.note.setWordWrap(True)
         layout.addWidget(self.note)
-        self.grant.currentIndexChanged.connect(self.changed.emit)
+        self.grant.currentIndexChanged.connect(lambda *_: self.changed.emit())
         self.refresh.toggled.connect(self._update)
         self.source.currentIndexChanged.connect(self._update)
         self._update()
@@ -97,3 +97,44 @@ class DisclosureOptions(QWidget):
                     raise ValueError('Choose a bounded CESR event opening')
                 result['openings'] = [raw]
         return result
+
+
+class DisclosureFields(QWidget):
+    """Choose supported committed attribute sections already present in a view."""
+
+    changed = Signal()
+
+    def __init__(self, parent=None):
+        """Start with metadata-only Offer; each checked section reveals its values."""
+        super().__init__(parent)
+        self.key, self.fields = None, []
+        self.body = QVBoxLayout(self)
+        self.body.setContentsMargins(0, 0, 0, 0)
+
+    def select(self, key, sad):
+        """Populate from one exact view, never from fuller cached attributes.
+
+        key identifies the selected credential/admission pair; sad is its retained
+        body. Only expanded committed sections can be independently selected by
+        this control. Empty selection preserves the existing metadata Offer.
+        """
+        if key == self.key:
+            return
+        self.key, self.fields = key, []
+        while self.body.count():
+            self.body.takeAt(0).widget().deleteLater()
+        label = QLabel('Reveal these held sections in the offer (optional)')
+        self.body.addWidget(label)
+        attrs = sad.get('a', {})
+        for name, value in attrs.items() if isinstance(attrs, dict) else ():
+            if isinstance(value, dict) and 'd' in value and 'u' in value:
+                field = QCheckBox(name)
+                field.setAccessibleName('Disclose ' + name)
+                field.toggled.connect(lambda *_: self.changed.emit())
+                self.body.addWidget(field)
+                self.fields.append((f'a/{name}/', field))
+        self.setVisible(bool(self.fields))
+
+    def paths(self):
+        """Return only the sections explicitly checked in the current view."""
+        return [path for path, field in self.fields if field.isChecked()]

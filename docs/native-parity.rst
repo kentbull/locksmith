@@ -212,3 +212,11 @@ verification; both scenarios require refusal and no additional Dolly hook.
 ``scripts/scenarios/Dockerfile`` composes installed actual component wheels on
 copied Linux source. Its current default manifest is deliberately marked as a
 development build; final clean-artifact qualification remains a separate gate.
+
+An operator starting an Offer can now choose an admitted view and check which
+expanded committed attribute sections to reveal before agreement. Unchecked
+sections remain compact commitments. With no sections checked the established
+metadata-only Offer remains the default. The selection control lists only
+material in the selected view; it cannot select a withheld section from another
+admission. Schemas without independently committed sections retain their existing
+whole-credential negotiation behavior.

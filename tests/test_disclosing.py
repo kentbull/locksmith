@@ -224,3 +224,35 @@ def test_graduated_offer_dialog_previews_exact_sent_fields(ipex_vaults, qapp):
     labels = [label.text() for label in review.offer_review.findChildren(QLabel)]
     assert any('authorized-visible' in label for label in labels)
     assert not any('private-not-shared' in label for label in labels)
+
+
+def test_offer_start_selects_sections_with_real_controls(ipex_vaults, qapp):
+    """Check one section and send; the actual Offer omits the other held value."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QWidget
+    from locksmith.ui.vault.credentials.start import StartExchangeDialog
+    app = ipex_vaults('ui-offer-start')
+    issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
+    schema = _load_schema(app, issuer)
+    said = _issue(app, schema, holder, authentication='anchor', attributes={
+        'status': {'d': '', 'u': Noncer().qb64, 'value': 'selected'},
+        'private': {'d': '', 'u': Noncer().qb64, 'value': 'not-selected'}})
+    parent = QWidget()
+    dialog = StartExchangeDialog(app, parent, 'Offer', credential_said=said)
+    dialog.open()
+    dialog.recipient.setCurrentIndex(dialog.recipient.combo_box.findData(holder.pre))
+    field = next(field for path, field in dialog.fields.fields if path == 'a/status/')
+    dialog.scroll_area.ensureWidgetVisible(field)
+    field.setFocus()
+    qapp.processEvents()
+    QTest.keyClick(field, Qt.Key.Key_Space)
+    qapp.processEvents()
+    assert dialog.fields.paths() == ['a/status/']
+    assert 'before agreement' in dialog.explanation.text()
+    assert dialog.send_button.isEnabled()
+    QTest.mouseClick(dialog.send_button, Qt.MouseButton.LeftButton)
+    offer, = [exn for _, exn in app.hby.db.exns.getTopItemIter() if exn.route == '/ipex/offer']
+    node, = exchanging.loadParsedNestedSubstreams(app.hby, offer.said)
+    assert node.serder.sad['a']['status']['value'] == 'selected'
+    assert isinstance(node.serder.sad['a']['private'], str)
