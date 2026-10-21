@@ -361,3 +361,29 @@ signed update. No database field or second authority state machine is introduced
 the exact original opening already carries its bound coordinates. This local
 adapter follows ``NativeAuthor.update`` at aef3013d and the existing ``stage``
 composition; it does not establish independent publication-time evidence.
+
+
+Clean published-source qualification
+------------------------------------
+
+``scripts/scenarios/qualify-community.sh`` takes clean source locations through
+``KERI_SOURCE``, ``DOLLY_SOURCE``, ``REGISTRAR_SOURCE``, ``OBSERVER_SOURCE`` and
+``WITNESS_SOURCE``; its own checkout supplies Locksmith. Use fresh clones at
+explicit commits. ``check-sources.py`` refuses dirty inputs, verifies publication
+on each authorized Kent branch, and requires every package to pin the same core
+commit. The check repeats after image construction. It never pushes or merges.
+
+The runner builds the core, wallet and community images from those inputs, checks
+installed wheel requirements/revisions, runs component suites and the original
+KLI/v1 qualification, then runs six separate headless and six real-UI stories,
+three issuer state modes in each launcher, actual released hosted peers, and the
+hosted quorum/restart case. Linux state uses named volumes only. Set
+``QUALIFICATION_RUN`` and ``QUALIFICATION_OUTPUT`` for an explicit volume prefix
+and external log directory. A failed command stops the run and leaves evidence.
+The terminal success line is emitted only after every command exits successfully.
+
+``artifacts.py`` records the six wheel hashes, installed package locations and
+requirements, source revisions and clean-build status. Development defaults stay
+unqualified. This local build contract replaces the earlier hard-coded dirty
+manifest; it is not a signed supply-chain attestation or proof of bit-reproducible
+wheel archives. Screenshots and protocol assertions remain separate evidence.
