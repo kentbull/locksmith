@@ -7,8 +7,10 @@ never adds credential attributes or shares a derivation salt with the recipient.
 from pathlib import Path
 
 from PySide6.QtCore import Signal, QSignalBlocker
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QComboBox, QCheckBox, QPushButton, QFileDialog, QLabel
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QCheckBox, QFileDialog, QLabel
 from locksmith.core import credentialing
+from locksmith.ui.toolkit.widgets import LocksmithInvertedButton
+from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox
 
 
 class DisclosureOptions(QWidget):
@@ -22,26 +24,27 @@ class DisclosureOptions(QWidget):
         self.vault, self.said, self.opening = vault, None, None
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.addWidget(QLabel('Material to present'))
-        self.grant = QComboBox()
+        self.grant_field = FloatingLabelComboBox('Material to present')
+        self.grant = self.grant_field.combo_box
         self.grant.setAccessibleName('Received disclosure')
-        layout.addWidget(self.grant)
+        layout.addWidget(self.grant_field)
         self.refresh = QCheckBox('Use current registry-state evidence')
         layout.addWidget(self.refresh)
-        self.source = QComboBox()
+        self.source_field = FloatingLabelComboBox('Registry-state opening source')
+        self.source = self.source_field.combo_box
         self.source.setAccessibleName('Registry-state opening source')
         self.source.addItem('Use an opening already held', 'retained')
         self.source.addItem('Use a supplied event opening', 'supplied')
         self.source.addItem('Derive with provisioned registry custody', 'derive')
-        layout.addWidget(self.source)
-        self.choose = QPushButton('Choose event-opening file…')
+        layout.addWidget(self.source_field)
+        self.choose = LocksmithInvertedButton('Choose event-opening file…')
         self.choose.clicked.connect(self._choose)
         layout.addWidget(self.choose)
         self.note = QLabel('Registry-state proof does not reveal withheld credential fields. '
                            'Derivation uses local custody; it does not send the salt.')
         self.note.setWordWrap(True)
         layout.addWidget(self.note)
-        self.grant.currentIndexChanged.connect(lambda *_: self.changed.emit())
+        self.grant_field.currentIndexChanged.connect(lambda *_: self.changed.emit())
         self.refresh.toggled.connect(self._update)
         self.source.currentIndexChanged.connect(self._update)
         self._update()
@@ -51,7 +54,7 @@ class DisclosureOptions(QWidget):
         if said == self.said:
             return
         self.said = said
-        with QSignalBlocker(self.grant):
+        with QSignalBlocker(self.grant_field):
             self.grant.clear()
             if said:
                 if self.vault.db.issued.get((said,)):
@@ -63,11 +66,12 @@ class DisclosureOptions(QWidget):
         self.source.setCurrentIndex(0)
         self.opening = None
         self.choose.setText('Choose event-opening file…')
+        self.choose.setToolTip('')
 
     def _update(self, *_):
         """Show advanced opening controls only when state refresh is selected."""
         enabled = self.refresh.isChecked()
-        self.source.setVisible(enabled)
+        self.source_field.setVisible(enabled)
         self.note.setVisible(enabled)
         self.choose.setVisible(enabled and self.source.currentData() == 'supplied')
         self.changed.emit()
@@ -77,7 +81,8 @@ class DisclosureOptions(QWidget):
         path, _ = QFileDialog.getOpenFileName(self, 'Choose event-specific opening', '', 'CESR files (*.cesr);;All files (*)')
         if path:
             self.opening = path
-            self.choose.setText(Path(path).name)
+            self.choose.setText('Event-opening file selected')
+            self.choose.setToolTip(Path(path).name)
             self.changed.emit()
 
     def selection(self):

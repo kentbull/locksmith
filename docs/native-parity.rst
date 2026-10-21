@@ -285,3 +285,40 @@ A freshness check can expire between composition and dispatch. That transient
 failure leaves an authorized retry in the ordinary outbox; the driver waits for
 submission or its own deadline instead of treating the first retryable status as
 terminal. Blocked policy failures and exhausted send attempts still fail.
+
+Live controls and public UI evidence
+------------------------------------
+
+``SCENARIO_LOCKSMITH_UI=1`` selects ``scripts/scenarios/ui_runtime.py`` in the
+community scenario image. This local qualification adapter opens the real
+``LocksmithWindow`` over the driver's already open application owner, navigates
+Credentials/Activity, activates row Review buttons, selects an exact admission
+and optional opening source, and submits through the ordinary dialogs. The
+window's optional ``app`` parameter preserves one vault/scheduler owner; its
+normal constructor remains unchanged for regular launches. No protocol messages
+or accepted-state rows are constructed by the UI adapter. Setup, provisioning,
+direct Grants and negative driver commands are explicitly outside its UI claim.
+
+The supplied-opening path uses the real file picker. Qt's modal activation must
+run on its event queue after the cooperative driver yields; nested generator
+execution is not a valid substitute. Dialogs retain their normal animated close
+lifecycle. ``ui/*/actions.jsonl`` identifies actual controls and delivered actions;
+PNG captures contain public credential/proof views only. No authentication panel
+or custody material is captured. Ordinary scenario assertions still verify Dolly
+hooks and exact earlier disclosures independently of UI labels.
+
+``scripts/scenarios/issuer-ui.sh`` is an additional dedicated issuance gate. It
+uses Dolly's pinned ``entitlement-v2`` fixture, the actual Issue Credential form,
+manual hosted-witness OTP fields, real holder admission and one onward Dolly hook.
+``SCENARIO_REGISTRY_MODE`` selects the issuance mode. Recipient naming is explicit
+local address-book bootstrap over an already verified KEL; contact onboarding is
+not claimed as UI coverage. ``ui_issuance.py`` never records private OTP inputs.
+The six graduated stories remain distinct and retain their original assertions.
+
+The UI harness, owner injection and capability controls are local R&D choices.
+Disclosure selectors and the opening button reuse the existing toolkit rather
+than native unstyled controls. ``FloatingLabelComboBox`` traces to Evan Asakawa's
+initial Locksmith port, ``ea50b93``; our composition and live-test fixes do not
+imply his authorship or endorsement. Rendering review exposed the original black
+native selectors. The corrected controls retain exact-view selection semantics
+and their existing real-crypto keyboard regression.

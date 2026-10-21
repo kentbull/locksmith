@@ -1,5 +1,6 @@
 """Public artifacts and explicit local inputs for the Locksmith issuer story."""
 import json
+import os
 from pathlib import Path
 import sys
 
@@ -13,7 +14,11 @@ def issue(root, mode):
     root owns the scenario's private control socket and ephemeral TOTP headers.
     mode selects public, blinded or derived state; no custody is exported here.
     """
-    _, schema = acmSchemaDefault()
+    if name := os.environ.get('SCENARIO_ISSUER_SCHEMA'):
+        from dolly.schemas import load
+        schema = load(name).sed
+    else:
+        _, schema = acmSchemaDefault()
     loaded = request(root, 'issuer', {'op': 'schema', 'schema': schema, 'issuer': 'issuer'})
     auths = json.loads((root / 'private/issuer-auth.json').read_text())
     result = request(root, 'issuer', {'op': 'issue', 'alias': 'issuer',
