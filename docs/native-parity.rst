@@ -132,3 +132,33 @@ update and anchor; missing derivation custody never silently changes the mode.
 Twelve installed authoring, revocation and disclosure tests pass, including all
 three modes across reopen and repeat revocation. UI mode selection and real
 hosted-service authoring still require end-to-end qualification.
+
+Private operator driver
+-----------------------
+
+``python -m locksmith.driver run --name NAME --base BASE --alias ALIAS
+--socket PRIVATE_DIR/operator.sock --port PORT`` opens one initialized vault,
+its actual application, QtTask, mailbox parser and durable IPEX outbox. The
+passcode is read from ``KLI_KEYSTORE_PASSCODE``. Use an owner-only directory for
+the Unix socket. A second operator request is refused while one is running.
+
+``python -m locksmith.driver call --socket PRIVATE_DIR/operator.sock`` reads one
+JSON object from stdin and returns one JSON outcome. For example,
+``{"op": "status"}`` checks readiness. Domain actions include schema loading,
+registry-service configuration/query, inventory/inspection, Apply/Offer/Agree/
+Grant/Admit, explicit presenter policy, and optional custody import/opening.
+They call the same application operations as the dialogs. No KLI subprocess or
+alternate protocol composer is used. The driver is a local R&D adapter, not an
+interoperable administration or salt-provisioning API.
+
+The HTTP listener accepts bounded CESR with POST or PUT at ``/`` or ``/ingest``.
+A 202 response means queued for the existing mailbox parser, never user consent.
+Likewise ``submitted`` means outbox transport completion; scenarios must inspect
+receiver acceptance and Dolly hooks separately. Disconnect cancels the local
+wait while already authorized outbox work remains durable. Shutdown closes
+operator work before the application closes its vault and dependent stores.
+
+This adapter follows the existing vault-open/QtTask lifecycle. Its socket access
+uses `Qt QLocalServer UserAccessOption
+<https://doc.qt.io/qtforpython-6/PySide6/QtNetwork/QLocalServer.html>`_ plus the
+private parent directory; this local mechanism adds no KERI authorization rule.
