@@ -259,7 +259,7 @@ credentials hide these inapplicable options. The established blinded default is
 preserved. Selection itself never opens custody.
 
 Dedicated application-issuer story
----------------------------------
+----------------------------------
 
 ``scripts/scenarios/issuer-through-holder.sh`` adds issuer coverage without
 replacing the six role-specific stories. Run it in ``locksmith:scenarios`` with
