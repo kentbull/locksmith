@@ -7,9 +7,9 @@ never adds credential attributes or shares a derivation salt with the recipient.
 from pathlib import Path
 
 from PySide6.QtCore import Signal, QSignalBlocker
-from PySide6.QtWidgets import QWidget, QVBoxLayout, QCheckBox, QFileDialog, QLabel
+from PySide6.QtWidgets import QWidget, QVBoxLayout, QFileDialog, QLabel
 from locksmith.core import credentialing
-from locksmith.ui.toolkit.widgets import LocksmithInvertedButton
+from locksmith.ui.toolkit.widgets import LocksmithInvertedButton, LocksmithCheckbox
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, FloatingLabelLineEdit
 
 
@@ -28,7 +28,7 @@ class DisclosureOptions(QWidget):
         self.grant = self.grant_field.combo_box
         self.grant.setAccessibleName('Received disclosure')
         layout.addWidget(self.grant_field)
-        self.refresh = QCheckBox('Use current registry-state evidence')
+        self.refresh = LocksmithCheckbox('Use current registry-state evidence')
         layout.addWidget(self.refresh)
         self.source_field = FloatingLabelComboBox('Registry-state opening source')
         self.source = self.source_field.combo_box
@@ -141,7 +141,7 @@ class DisclosureFields(QWidget):
         attrs = sad.get('a', {})
         for name, value in attrs.items() if isinstance(attrs, dict) else ():
             if isinstance(value, dict) and 'd' in value and 'u' in value:
-                field = QCheckBox(name)
+                field = LocksmithCheckbox(name)
                 field.setAccessibleName('Disclose ' + name)
                 field.toggled.connect(lambda *_: self.changed.emit())
                 self.body.addWidget(field)

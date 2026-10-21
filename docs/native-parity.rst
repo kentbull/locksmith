@@ -398,3 +398,16 @@ endpoint's missing KEL PUT support, repaired in KF observer ``4d15b8e``. These
 cases use 0, 4 and 32 rotations and real Qt transport. This older API profile is
 still native v2, so its signed queries continue to use KRAM. It is distinct from
 the full-evidence profile's bootstrap and freshness contract.
+
+
+Visible disclosure selections
+-----------------------------
+
+Disclosure field selection and the optional current-state toggle reuse the
+existing ``LocksmithCheckbox`` toolkit widget. Screenshot review of the real
+themed dialogs found that plain Qt checkboxes rendered labels without a clear
+unchecked indicator. Reusing the existing bordered indicator makes both states
+visible while retaining the same toggled signals and disclosure decisions.
+This is a local UI integration correction, not a protocol requirement. The
+widget and its styling already exist in the community donor ``0c09cc03``; no
+new control framework or selection semantics were introduced.
