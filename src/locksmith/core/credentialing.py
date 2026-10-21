@@ -155,12 +155,83 @@ def authentication(vault, nest):
     return {'et': 'authenticated', 'dt': stamp, 'auth': 'anchor' if anchored else 'signature'}
 
 
-def credential(vault, said, received=False):
-    """Build a wallet view from local issuance or retained grant evidence."""
+def admission(vault, said, grant):
+    """Resolve explicit consent to one retained grant, never a later disclosure.
+
+    Args:
+        vault: Open wallet with receipt, inventory and exchange stores.
+        said: Exact credential identifier expected in the selected grant.
+        grant: Previously admitted native grant identifier.
+
+    Returns:
+        AcceptedCredential: Exact grant/admit reference and local consent time.
+
+    Raises:
+        ValidationError: Missing inventory membership, receipt, or signed linkage.
+
+    Earlier vaults may have only the original inventory admission. Deleting the
+    inventory entry still hides all its views until explicit restoration.
+    """
+    from locksmith.db.basing import AcceptedCredential
+    original = vault.db.accepted.get((said,))
+    exn = vault.hby.db.exns.get((grant,))
+    if original is None or exn is None or exn.route != '/ipex/grant':
+        raise kering.ValidationError('Selected grant is not admitted in this wallet')
+    receipt = vault.db.receipts.get((exn.sad['ri'], grant))
+    if receipt is not None and receipt.status == 'accepted' and receipt.credential == said:
+        selected = AcceptedCredential(grant, receipt.admit, receipt.accepted_at)
+    elif original.grant == grant and receipt is None:
+        selected = original
+    else:
+        raise kering.ValidationError('Selected grant is not admitted in this wallet')
+    admit = vault.hby.db.exns.get((selected.admit,))
+    if (admit is None or admit.route != '/ipex/admit' or admit.sad['p'] != grant
+            or admit.pre != exn.sad['ri'] or admit.sad['ri'] != exn.pre
+            or admit.pre not in vault.hby.prefixes or exn.sad['a'].get('o') != [said]):
+        raise kering.ValidationError('Selected admission has inconsistent exchange evidence')
+    exchanging.verify(vault.hby, exn)
+    exchanging.verify(vault.hby, admit)
+    return selected
+
+
+def admissions(vault, said):
+    """List independently admitted views of an inventory member, without merging.
+
+    Args:
+        vault: Open wallet owning retained consent references.
+        said: Credential identifier to enumerate.
+
+    Returns:
+        list[AcceptedCredential]: Validated grant/admit references, original first.
+    """
+    original = vault.db.accepted.get((said,))
+    if original is None:
+        return []
+    grants = dict.fromkeys([original.grant] + [grant for (_, grant), record
+                           in vault.db.receipts.getTopItemIter()
+                           if record.credential == said and record.status == 'accepted'])
+    return [admission(vault, said, grant) for grant in grants]
+
+
+def credential(vault, said, received=False, *, grant=None):
+    """Build a view from local issuance or one exact admitted grant.
+
+    Args:
+        vault: Open wallet owning the retained evidence.
+        said: Credential identifier to inspect.
+        received: Prefer the original admitted view over a local issuance.
+        grant: Explicit admitted disclosure reference; overrides issuance selection.
+
+    Returns:
+        dict: Exact disclosure, proofs, status and provenance. No fuller cached
+            attributes are substituted for a selected grant's retained bytes.
+    """
     artifacts = {}
     pending = False
     created_at, accepted_at, sender = '', '', ''
-    if not received and (record := vault.db.issued.get(keys=(said,))):
+    selected_grant = grant or ''
+    selected = admission(vault, said, grant) if grant else None
+    if not received and not grant and (record := vault.db.issued.get(keys=(said,))):
         created_at = record.created_at
         acdc = SerderACDC(raw=record.raw.encode())
         recipient = acdc.iseaid
@@ -183,7 +254,8 @@ def credential(vault, said, received=False):
         # Locally created anchors remain pending until their witness quorum arrives.
         for _, diger in nest.sscs:
             pending |= len(vault.hby.db.wigs.get(keys=(acdc.israid, diger.qb64))) < record.witness_threshold
-    elif record := vault.db.accepted.get(keys=(said,)):
+    elif record := (selected or vault.db.accepted.get(keys=(said,))):
+        selected_grant = record.grant
         accepted_at = record.accepted_at
         sender = vault.hby.db.exns.get(keys=(record.grant,)).pre
         recipient = vault.hby.db.exns.get(keys=(record.grant,)).sad['ri']
@@ -209,6 +281,7 @@ def credential(vault, said, received=False):
     return {'sad': acdc.sad, 'schema': schemer.sed if schemer else {}, 'recipient': recipient,
             'subject': acdc.iseaid, 'held': acdc.iseaid in vault.hby.prefixes,
             'created_at': created_at, 'accepted_at': accepted_at, 'sender': sender,
+            'grant': selected_grant,
             'status': status, 'proof': proof, 'artifacts': artifacts}
 
 

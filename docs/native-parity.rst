@@ -62,3 +62,21 @@ Installed tests cover unknown-issuer KEL proof acquisition, public and blinded
 updates, signed full publication, stale/future/missing metadata, mismatched heads
 and retained missing dependencies. Real external binary scenarios remain a
 separate qualification gate.
+
+Exact admitted disclosures
+-------------------------
+
+``credentialing.admission`` and ``admissions`` validate per-grant consent and
+signed grant/admit linkage from existing receipt records. ``credential`` and
+``ipexing.grant`` accept an explicit grant selection. Defaults preserve the
+original inventory view; a new fuller admission never changes an earlier view.
+Deleting inventory membership still hides all views until explicit restoration.
+``GrantReceipt.accepted_at`` records local consent completion, with an empty
+legacy default rather than inventing a historical observation time.
+
+This is a local application design extending the donor's existing receipts,
+informed by KERIpy Wallet's exact-grant model at ``64e14e08``. No second credential
+archive or automatic union of attributes is introduced. The regression exchanges
+real partial/full grants, admits both, reopens the vault and presents the earlier
+view. Assertions inspect parsed attributes as well as exact retained bytes;
+searching plaintext in CESR-encoded bytes alone would not prove nondisclosure.

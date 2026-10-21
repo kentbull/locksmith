@@ -220,16 +220,16 @@ def _disclosure_plan(origin, nodes):
     return [plan]
 
 
-def _credential_evidence(vault, credential_said, hab=None):
+def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None):
     """Load the retained origin and its linked credentials."""
-    view = credentialing.credential(vault, credential_said)
+    view = credentialing.credential(vault, credential_said, grant=from_grant)
     if view['status']['et'] not in ('issued', 'authenticated'):
         raise kering.ValidationError('Credential does not have a verified issued state or issuer authentication')
     if hab is not None:
         credentialing.require_registry_evidence(vault, SerderACDC(sad=view['sad']), hab)
     artifacts = dict(view['artifacts'])
     # Received credentials already retain the native Grant's complete evidence.
-    pending = [view] if vault.db.issued.get((credential_said,)) else []
+    pending = [view] if not from_grant and vault.db.issued.get((credential_said,)) else []
     while pending:
         current = pending.pop()
         for said, _ in _edge_nodes(current['sad']):
@@ -259,10 +259,10 @@ def _credential_evidence(vault, credential_said, hab=None):
     return view, list(artifacts.values()), _disclosure_plan(credential_said, nodes), nodes
 
 
-def grant(vault, hab, credential_said, recipient, message=''):
+def grant(vault, hab, credential_said, recipient, message='', *, from_grant=None):
     """Build a grant from the wallet's retained issuance or received evidence."""
     _require_vault(vault, hab)
-    view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab)
+    view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab, from_grant=from_grant)
     _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient)
     return ipexing.grant(hab, recipient, message, origin=view['proof'], artifacts=artifacts,
                          modifiers={'dp': plan}, kind=kering.Kinds.json)
@@ -571,6 +571,7 @@ def _finish_receipt(vault, pre, grant_said, receipt, restore=False):
         # Keep the original inventory provenance when another grant contains C.
         vault.db.accepted.put((credential.said,), AcceptedCredential(grant_said, exn.said,
                                                                     helping.nowIso8601()))
+    receipt.accepted_at = receipt.accepted_at or helping.nowIso8601()
     receipt.status, receipt.error = 'accepted', ''
     vault.db.receipts.pin((pre, grant_said), receipt)
     return exn, stream[exn.size:]

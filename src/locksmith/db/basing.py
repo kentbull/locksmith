@@ -77,11 +77,13 @@ class AcceptedCredential:
 
 @dataclass
 class GrantReceipt:
+    """Consent to one exact grant; accepted_at is local time, not publication."""
     credential: str
     admit: str = ''
     send: bool = False
     status: str = 'preparing'
     error: str = ''
+    accepted_at: str = ''
 
 
 @dataclass
