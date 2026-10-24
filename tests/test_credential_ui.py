@@ -1997,3 +1997,61 @@ def test_issue_controls_select_state_capability(wallet, qapp, mode):
     assert options.selection()['bound_event'] == recipient.kever.serder.said
     options.set_registry(False)
     assert options.selection() == {}
+
+
+@pytest.mark.parametrize('cancel', [False, True])
+def test_response_waits_for_evidence_without_changing_consent(wallet, monkeypatch, qapp, cancel):
+    """A clicked Grant waits before construction and resumes only that selection."""
+    from locksmith.core import credentialing
+    from locksmith.ui.vault.credentials.activity import ExchangeResponseDialog
+
+    app = wallet('response-readiness')
+    issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
+    acdc, _, schemer = issue(app, issuer, holder.pre, authentication='anchor')
+    request, atc = native_ipexing.apply(holder, issuer.pre, 'Full disclosure',
+        modifiers={'dp': [[[schemer.said, '/', []]]]})
+    ipexing.prepare(app.vault, holder, request, atc)
+    parent = QWidget()
+    parent.app = app
+    page = CredentialActivityPage(parent)
+    page.set_vault_name('response-readiness')
+    row = next(row for row in page._rows if row['messages'][-1].said == request.said)
+    app.vault.ipex_outbox = doing.DoDoer()
+    runner = doing.Doist(doers=[app.vault.ipex_outbox], tock=0.03125)
+    runner.enter()
+    ready = False
+
+    def check(*args):
+        if not ready:
+            raise credentialing.RegistryEvidencePending('Waiting for a current observer status check')
+
+    monkeypatch.setattr(credentialing, 'require_registry_evidence', check)
+    dialog = ExchangeResponseDialog(page, row, 'Grant')
+    dialog.show()
+    try:
+        dialog.send_button.click()
+        operation = dialog._approved_response
+        assert operation is not None
+        assert not dialog.credential_field.isEnabled()
+        assert not dialog.send_button.isEnabled()
+        assert app.hby.db.erpy.get((request.said,)) is None
+        assert not list(app.vault.db.outbox.getTopItemIter())
+        dialog._send()  # Repeated clicks cannot replace the frozen decision.
+        assert dialog._approved_response is operation
+        if cancel:
+            dialog.reject()
+        ready = True
+        for _ in range(32):
+            runner.recur()
+            qapp.processEvents()
+        if cancel:
+            assert app.hby.db.erpy.get((request.said,)) is None
+            assert not list(app.vault.db.outbox.getTopItemIter())
+        else:
+            reply = app.hby.db.erpy.get((request.said,)).qb64
+            assert app.hby.db.exns.get((reply,)).sad['a']['o'] == [acdc.said]
+            assert app.vault.db.outbox.get((reply,)).status == 'pending'
+            assert not dialog.isVisible()
+    finally:
+        dialog.reject()
+        runner.exit()

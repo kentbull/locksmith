@@ -332,7 +332,7 @@ class CredentialActivityPage(BaseListPage):
             self.refresh()
 
     def _on_doer_event(self, doer_name, event_type, data):
-        if doer_name == 'Ipex':
+        if doer_name in ('Ipex', 'RegistryEvidence'):
             self.refresh()
 
     def _current_vault(self):
@@ -444,7 +444,8 @@ class CredentialActivityPage(BaseListPage):
             return 'Acceptance needs to be resumed.'
         if record and local and record.status != 'submitted':
             label = {'pending': 'Queued', 'sending': 'Sending', 'failed': 'Send failed',
-                     'blocked': 'Sending blocked'}.get(record.status, record.status)
+                     'blocked': 'Sending blocked',
+                     'waiting_evidence': 'Waiting for observer evidence'}.get(record.status, record.status)
             if record.status == 'blocked' and record.missing_route:
                 label = 'Delivery details needed'
             if record.status == 'failed' and record.attempts <= len(ipexing.SendIpexDoer.RetryDelays):
@@ -647,6 +648,7 @@ class ExchangeResponseDialog(LocksmithDialog):
         ``action`` is an allowed IPEX verb, or None to select the row default.
         Retain the page's vault identity so later vault changes cannot submit
         this dialog's stale choices. Credential/opening selection is explicit."""
+        self._approved_response = None
         self._default_response = action is None
         action = action or row['_actions'][0]
         self.page, self.vault, self.row, self.action = page, page.vault, row, action
@@ -735,6 +737,39 @@ class ExchangeResponseDialog(LocksmithDialog):
         self.disclosure.changed.connect(self._preview)
         self._select_response()
         self._choose_default_response()
+        self.vault.signals.doer_event.connect(
+            self._preparation_event, Qt.ConnectionType.QueuedConnection)
+        self.finished.connect(self._cancel_preparation)
+
+    def _cancel_preparation(self, *_):
+        """Release this dialog's vault-owned wait and its signal subscription."""
+        if self._approved_response is not None:
+            self.vault.ipex_outbox.remove([self._approved_response])
+            self._approved_response = None
+        try:
+            self.vault.signals.doer_event.disconnect(self._preparation_event)
+        except (RuntimeError, TypeError):
+            pass
+
+    def _preparation_event(self, doer_name, event_type, data):
+        """Render domain progress without changing the approved selection."""
+        operation = self._approved_response
+        if operation is None or doer_name not in ('Ipex', 'RegistryEvidence'):
+            return
+        if operation.result:
+            self.accept()
+        elif operation.error:
+            self.show_error(operation.error)
+            if not operation.waiting:
+                self.vault.ipex_outbox.remove([operation])
+                self._approved_response = None
+                self.credential_field.setEnabled(True)
+                self.disclosure.setEnabled(True)
+                self.response.setEnabled(True)
+                self.decline_button.setEnabled(True)
+                self.create_button.setEnabled(True)
+                self.send_button.setEnabled(bool(ipexing.responses(self.vault, self.row['messages'][-1])))
+                self.page.refresh()
 
     def show_error(self, message):
         previous_height = self._current_banner_height if self._base_height is not None else 0
@@ -873,6 +908,8 @@ class ExchangeResponseDialog(LocksmithDialog):
 
         Ignore signal arguments. Expiry, unavailable proofs and absent eligible
         credentials are reflected in the dialog before the user can send."""
+        if self._approved_response is not None:
+            return
         expired = ipexing.expiry_error(self.vault, self.row['messages'][-1])
         disclose = self.action in ('Offer', 'Grant')
         self._needs_creation = self._can_create and self.credential.currentIndex() < 0
@@ -981,6 +1018,8 @@ class ExchangeResponseDialog(LocksmithDialog):
 
         Pass explicit view/opening choices to the application operation, which
         validates again. Keep failures visible and re-enable valid retry choices."""
+        if self._approved_response is not None:
+            return
         if self.page.app.vault is not self.vault or not self.page._current_vault():
             self.show_error('This vault is closed.')
             return
@@ -997,6 +1036,20 @@ class ExchangeResponseDialog(LocksmithDialog):
                             credential_said=self.credential.currentData(),
                             **(self.disclosure.selection() if self.action in ('Offer', 'Grant') else {}))
             self.accept()
+        except credentialing.RegistryEvidencePending as error:
+            # Consent belongs to the exact selection captured by the domain
+            # operation; widgets stay frozen until completion or cancellation.
+            self._approved_response = ipexing.ApprovedResponse(
+                self.vault, self.row['messages'][-1].said, self.action,
+                credential_said=self.credential.currentData(),
+                **(self.disclosure.selection() if self.action in ('Offer', 'Grant') else {}))
+            self.credential_field.setEnabled(False)
+            self.disclosure.setEnabled(False)
+            self.response.setEnabled(False)
+            self.decline_button.setEnabled(False)
+            self.create_button.setEnabled(False)
+            self.show_error(str(error))
+            self.vault.ipex_outbox.extend([self._approved_response])
         except Exception as error:
             self.show_error(str(error))
             self.page.refresh()
