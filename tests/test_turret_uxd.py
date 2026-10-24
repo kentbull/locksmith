@@ -17,7 +17,7 @@ import tempfile
 
 import pytest
 
-from locksmith.turret.uxd.serving import Acceptor
+from locksmith.turret.uxd.serving import Acceptor, Remoter, Server
 
 
 # ---------------------------------------------------------------------------
@@ -82,3 +82,34 @@ def test_acceptor_open_and_close():
         assert acceptor.opened is False
         if os.path.exists(sock_path):
             os.remove(sock_path)
+
+
+def test_server_validates_and_retains_explicit_budgets():
+    """The local CLI bridge has finite sessions and receive work per turn."""
+    server = Server(path="unused", maxConnections=8, acceptsPerTurn=4,
+                    rxbsLimit=1024, rxbsPerTurn=64, tymeout=30.0)
+    assert server.maxConnections == 8
+    assert server.acceptsPerTurn == 4
+    assert server.rxbsLimit == 1024
+    assert server.rxbsPerTurn == 64
+    assert server.tymeout == 30.0
+    with pytest.raises(ValueError):
+        Server(path="unused", maxConnections=-1)
+
+
+def test_remoter_closes_on_unread_receive_overflow():
+    """A peer cannot grow the UXD parser buffer past its configured ceiling."""
+    local, peer = socket.socketpair()
+    remoter = Remoter(ha="local", ca="peer", cs=local,
+                      rxbsLimit=4, rxbsPerTurn=4)
+    try:
+        peer.sendall(b"12345")
+        remoter.serviceReceives()
+        assert bytes(remoter.rxbs) == b"1234"
+        remoter.serviceReceives()
+        assert remoter.rxbsOverflowed
+        assert remoter.cutoff
+        assert remoter.cs is None
+    finally:
+        remoter.close()
+        peer.close()
