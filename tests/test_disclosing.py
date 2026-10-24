@@ -2,6 +2,7 @@
 import pytest
 from keri import kering
 from keri.acdc import Registrar
+from keri.acdc.messaging import acmSchemaDefault
 from keri.core import Blinder, BlindState, Noncer, SerderACDC
 from keri.peer import exchanging
 
@@ -33,7 +34,19 @@ def test_application_graduates_one_held_view_without_custody(ipex_vaults, separa
     issuer, holder, discloser, reviewer = [app.hby.makeHab(name=role)
         for app, role in zip((issuer_app, holder_app, delegate_app, verifier),
                              ('issuer', 'holder', 'discloser', 'verifier'), strict=True)]
-    schema = _load_schema(issuer_app, issuer)
+    _, schema = acmSchemaDefault()
+    # A whole-subtree request needs a schema that proves recursive closure.
+    # Retain compact-or-expanded blocks so the first admission can hide private.
+    block = {'type': 'object', 'properties': {
+        key: {'type': 'string'} for key in ('d', 'u', 'value')},
+        'additionalProperties': False}
+    schema['properties']['a'] = {'type': 'object', 'properties': {
+        'd': {'type': 'string'}, 'i': {'type': 'string'},
+        'dt': {'type': 'string'},
+        'status': {'oneOf': [{'type': 'string'}, block]},
+        'private': {'oneOf': [{'type': 'string'}, block]}},
+        'additionalProperties': False}
+    schema = _load_schema(issuer_app, issuer, schema)
     apps = (issuer_app, holder_app, delegate_app, verifier)
     for app in apps:
         app.hby.db.schema.pin((schema.said,), schema)

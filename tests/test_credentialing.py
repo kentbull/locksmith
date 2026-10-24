@@ -108,8 +108,9 @@ def test_schema_url_loading_and_cleanup(ipex_vaults, schema_server, qapp, monkey
         assert not events
 
 
-def _load_schema(app, issuer):
-    _, schema = acmSchemaDefault()
+def _load_schema(app, issuer, schema=None):
+    if schema is None:
+        _, schema = acmSchemaDefault()
     schemer = scheming.Schemer(sed=schema)
     doer = credentialing.LoadSchemaDoer(
         app, file_content=schemer.raw, enable_issuance=True, issuer_aid=issuer.pre)
@@ -176,13 +177,13 @@ def test_grant_collects_shared_sources_without_hiding_inventory_after_deletion(i
         'sibling': {'n': sibling, 's': schema.said},
     })
     grant, atc = ipexing.grant(app.vault, hab, child, hab.pre)
-    assert grant.sad['q']['dp'] == [[
+    assert grant.sad['q']['dp'] == [
         [schema.said, '/', []],
         [schema.said, '/e/source_a/_/', []],
         [schema.said, '/e/sibling/_/', []],
         [schema.said, '/e/source_a/_/e/leaf/_/', []],
         [schema.said, '/e/sibling/_/e/leaf/_/', []],
-    ]]
+    ]
     ipexing.prepare(app.vault, hab, grant, atc)
     assert app.vault.exc.complete(grant.said)
     nested = exchanging.loadParsedNestedSubstreams(app.hby, grant.said)
@@ -242,7 +243,7 @@ def test_grant_preserves_compacted_retained_disclosure(ipex_vaults, hidden_issue
         # holds the credential when its entire issuee block remains hidden.
         from keri.acdc import ipexing as acdc_v2_ipexing
         grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Hidden subject', proof,
-                                  modifiers={'dp': [[[schema.said, '/', []]]]})
+                                  modifiers={'dp': [[schema.said, '/', []]]})
         _deliver_ipex(receiver.vault, grant.raw + atc)
         assert receiver.vault.exc.complete(grant.said)
         with pytest.raises(kering.ValidationError, match='Disclose the issuee block'):
@@ -250,7 +251,7 @@ def test_grant_preserves_compacted_retained_disclosure(ipex_vaults, hidden_issue
         assert receiver.vault.db.accepted.get((said,)) is None
         return
     grant, atc = ipexing.grant(sender.vault, issuer, said, holder.pre)
-    assert grant.sad['q']['dp'] == [[[schema.said, '/', []]]]
+    assert grant.sad['q']['dp'] == [[schema.said, '/', []]]
     _deliver_ipex(receiver.vault, ipexing.prepare(sender.vault, issuer, grant, atc))
     ipexing.admit(receiver.vault, holder, grant.said)
     presentation, atc = ipexing.grant(receiver.vault, holder, said, issuer.pre)
@@ -270,7 +271,7 @@ def test_acdc_v2_grant_requires_evidence_schema_and_consent_before_inventory(ipe
     _deliver_ipex(receiver.vault, issuer.replay(gvrsn=kering.Vrsn_2_0))
     _deliver_ipex(sender.vault, holder.replay(gvrsn=kering.Vrsn_2_0))
     grant, attachment = ipexing.grant(sender.vault, issuer, said, holder.pre)
-    assert grant.sad['q']['dp'] == [[[schema.said, '/', []]]]
+    assert grant.sad['q']['dp'] == [[schema.said, '/', []]]
     stream = ipexing.prepare(sender.vault, issuer, grant, attachment)
     _deliver_ipex(receiver.vault, stream)
     assert not receiver.vault.exc.complete(grant.said)
@@ -352,7 +353,7 @@ def test_registry_free_exchange_uses_mailbox_and_retains_presentation_evidence(
         return exn
 
     request = send(receiver, sender, holder, acdc_v2_ipexing.apply(
-        holder, issuer.pre, 'Request', modifiers={'dp': [[[schema.said, '/', []]]]}, ax=[True]))
+        holder, issuer.pre, 'Request', modifiers={'dp': [[schema.said, '/', []]]}, ax=[True]))
     offer = send(sender, receiver, issuer, ipexing.respond(
         sender.vault, request.said, 'Offer', credential_said=said))
     agree = send(receiver, sender, holder, ipexing.respond(receiver.vault, offer.said, 'Agree'))
@@ -547,8 +548,8 @@ def test_retained_graph_rechecks_linked_issuer_evidence(ipex_vaults):
     grants = []
     for message in ('Accept now', 'Review later'):
         grant, atc = ipexing.grant(sender.vault, issuer, origin, holder.pre, message)
-        assert grant.sad['q']['dp'] == [[
-            [schema.said, '/', []], [schema.said, '/e/source/_/', []]]]
+        assert grant.sad['q']['dp'] == [
+            [schema.said, '/', []], [schema.said, '/e/source/_/', []]]
         _deliver_ipex(receiver.vault, ipexing.prepare(sender.vault, issuer, grant, atc))
         grants.append(grant)
     ipexing.admit(receiver.vault, holder, grants[0].said)
@@ -1182,7 +1183,7 @@ def test_registry_exchange_requires_observer_even_with_valid_local_evidence(ipex
     view = credentialing.credential(sender.vault, said)
     assert view['status']['et'] == 'issued'
     assert sender.vault.registry_evidence is not None
-    with pytest.raises(kering.MissingChainError, match='Configure an observer'):
+    with pytest.raises(kering.ConfigurationError, match='Configure an observer'):
         ipexing.grant(sender.vault, issuer, said, holder.pre)
 
     # Valid local TEL fixture evidence does not stand in for an observer check.
@@ -1193,10 +1194,10 @@ def test_registry_exchange_requires_observer_even_with_valid_local_evidence(ipex
     for sn in (0, 1):
         receiver.vault.rgy.store.accept(regk, sn, sender.vault.rgy.store.seqEvent(regk, sn))
     grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Registry credential', origin=view['proof'],
-                              modifiers={'dp': [[[schema.said, '/', []]]]})
+                              modifiers={'dp': [[schema.said, '/', []]]})
     _deliver_ipex(receiver.vault, grant.raw + atc)
     assert receiver.vault.exc.complete(grant.said)
-    with pytest.raises(kering.MissingChainError, match='Configure an observer'):
+    with pytest.raises(kering.ConfigurationError, match='Configure an observer'):
         ipexing.admit(receiver.vault, holder, grant.said)
     assert receiver.vault.db.receipts.get((holder.pre, grant.said)) is None
     assert receiver.vault.db.accepted.get((said,)) is None

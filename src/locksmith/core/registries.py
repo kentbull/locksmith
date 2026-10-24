@@ -262,6 +262,9 @@ class RegistryEvidenceDoer(doing.DoDoer):
 
     Refresh = 60.0
     Retry = 5.0
+    MaxRetry = 300.0
+    MaxActive = 8
+    LaunchesPerTurn = 4
 
     def __init__(self, vault, **kwa):
         """Own refresh workers and empty session caches for ``vault``.
@@ -275,7 +278,8 @@ class RegistryEvidenceDoer(doing.DoDoer):
         self.profile = config.get('profile', 'legacy')
         self.errors = {}
         self._requests, self._fetched, self._published = {}, {}, {}
-        self._active, self._retry = {}, {}
+        self._active, self._retry, self._failures = {}, {}, {}
+        self._launch_cursor = None
         super().__init__(doers=[doing.doify(self.sync_do)], **kwa)
 
     def _configure(self):
@@ -288,6 +292,7 @@ class RegistryEvidenceDoer(doing.DoDoer):
             self._fetched.clear()
             self._published.clear()
             self._retry.clear()
+            self._failures.clear()
             self.errors.clear()
             self.registrar_url, self.observer_url, self.profile = endpoints
 
@@ -357,10 +362,15 @@ class RegistryEvidenceDoer(doing.DoDoer):
                     del self._active[key]
                     if worker.error:
                         self.errors[regk] = worker.error
-                        self._retry[key] = now + self.Retry
+                        failures = self._failures.get(key, 0) + 1
+                        self._failures[key] = failures
+                        exponent = min(failures - 1, 6)
+                        self._retry[key] = now + min(
+                            self.Retry * (2 ** exponent), self.MaxRetry)
                     else:
                         self.errors.pop(regk, None)
                         self._retry.pop(key, None)
+                        self._failures.pop(key, None)
                         if operation == 'fetch':
                             # Full evidence retains the observer observation deadline;
                             # receiving it does not create another freshness window.
@@ -384,16 +394,14 @@ class RegistryEvidenceDoer(doing.DoDoer):
                         cues.append(cue)
                 # Saved messages already notify the UI through IpexHandler.handle.
                 # Proof escrows persist, so retrieval can resume after configuration.
+                candidates = []
                 if self.observer_url:
                     self._discover(proofs)
                     for regk, hab in list(self._requests.items()):
                         key = ('fetch', regk)
                         if (not self.ensure(regk, hab) and key not in self._active
                                 and now >= self._retry.get(key, 0)):
-                            worker = RegistrySyncDoer(self.vault, hab, regk,
-                                                      observer_url=self.observer_url)
-                            self._active[key] = worker
-                            self.extend([worker])
+                            candidates.append((key, hab, self.observer_url))
                 if self.registrar_url:
                     for (regk,), head in self.vault.rgy.baser.heads.getTopItemIter():
                         rip = self.vault.rgy.store.seqEvent(regk, 0)
@@ -403,11 +411,26 @@ class RegistryEvidenceDoer(doing.DoDoer):
                         key = ('publish', regk)
                         if (head is not None and not self.published(regk) and key not in self._active
                                 and now >= self._retry.get(key, 0)):
-                            worker = RegistrySyncDoer(self.vault, hab, regk,
-                                                      registrar_url=self.registrar_url)
-                            worker.published_head = head.qb64
-                            self._active[key] = worker
-                            self.extend([worker])
+                            candidates.append((key, hab, self.registrar_url))
+
+                candidates.sort(key=lambda item: item[0])
+                if self._launch_cursor is not None:
+                    later = [item for item in candidates if item[0] > self._launch_cursor]
+                    earlier = [item for item in candidates if item[0] <= self._launch_cursor]
+                    candidates = later + earlier
+                available = max(0, self.MaxActive - len(self._active))
+                for key, hab, url in candidates[:min(available, self.LaunchesPerTurn)]:
+                    operation, regk = key
+                    if operation == 'fetch':
+                        worker = RegistrySyncDoer(self.vault, hab, regk,
+                                                  observer_url=url)
+                    else:
+                        worker = RegistrySyncDoer(self.vault, hab, regk,
+                                                  registrar_url=url)
+                        worker.published_head = self.vault.rgy.store.head(regk).qb64
+                    self._active[key] = worker
+                    self.extend([worker])
+                    self._launch_cursor = key
                 yield 1.0
         finally:
             self.remove(list(self._active.values()))

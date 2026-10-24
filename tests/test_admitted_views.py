@@ -32,7 +32,7 @@ def test_explicit_admitted_view_survives_fuller_grant_and_reopen(ipex_vaults, qa
     assert partial.said == full.said
     first, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Partial',
         origin=messagize(partial, bonds=[SealSource(s=anchor.snh, d=anchor.said)]),
-        modifiers={'dp': [[[schema.said, '/', []]]]})
+        modifiers={'dp': [[schema.said, '/', []]]})
     _deliver_ipex(receiver.vault, ipexing.prepare(sender.vault, issuer, first, atc))
     with pytest.raises(kering.ValidationError, match='not admitted'):
         credentialing.credential(receiver.vault, full.said, grant=first.said)

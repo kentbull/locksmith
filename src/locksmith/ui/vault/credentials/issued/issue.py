@@ -196,7 +196,7 @@ class IssueCredentialDialog(LocksmithDialog):
         self.finished.connect(self._on_dialog_finished)
         if request_said:
             request = self.vault.hby.db.exns.get((request_said,))
-            schema = ipexing.request_schema(request)
+            schema = ipexing.request_schema(request, self.vault)
             self.schema_dropdown.setCurrentIndex(self.schema_dropdown.combo_box.findData(schema))
             self.schema_dropdown.setEnabled(False)
             self.local_radio.setChecked(request.pre in self.vault.hby.prefixes)
@@ -1157,7 +1157,7 @@ class IssueCredentialDialog(LocksmithDialog):
         if self.request_said:
             request = self.vault.hby.db.exns.get((self.request_said,))
             if ('Offer' not in ipexing.responses(self.vault, request)
-                    or self.vault.db.issuers.get((ipexing.request_schema(request),)) != request.sad['ri']):
+                    or self.vault.db.issuers.get((ipexing.request_schema(request, self.vault),)) != request.sad['ri']):
                 self._set_primary_button_idle()
                 self.show_error(ipexing.expiry_error(self.vault, request)
                                 or 'This request has changed. Return to Activity to review it.')

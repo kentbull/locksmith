@@ -355,7 +355,7 @@ class NotificationToastDoer(doing.Doer):
                         title = 'Credential exchange'
                         tip = exn
                         while tip is not None:
-                            requested = ipexing.request_schema(tip)
+                            requested = ipexing.request_schema(tip, self.vault)
                             cached = self.vault.hby.db.schema.get((requested,)) if requested else None
                             if cached:
                                 title = cached.sed.get('title', title)

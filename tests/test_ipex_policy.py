@@ -4,7 +4,7 @@ from copy import deepcopy
 import pytest
 from keri import kering
 from keri.acdc import acdcmap, ipexing as acdc_v2_ipexing
-from keri.core import Noncer, scheming
+from keri.core import Noncer, eventing, scheming
 from keri.peer import exchanging
 
 from locksmith.core import credentialing, ipexing
@@ -18,6 +18,23 @@ from test_keri_v2_compat import ipex_vaults as ipex_vaults
 def _introduce(source, target):
     for hab in source.hby.habs.values():
         _deliver_ipex(target.vault, identifier_introduction(hab))
+
+
+def test_historical_nested_disclosure_plan_is_not_reinterpreted(ipex_vaults):
+    """Keep exact signed history readable as bytes while refusing old q.dp semantics."""
+    app = ipex_vaults('historical-nested-plan')
+    sender, recipient = app.hby.makeHab(name='sender'), app.hby.makeHab(name='recipient')
+    schema = _load_schema(app, sender)
+    legacy = eventing.exchange(sender=sender.pre, receiver=recipient.pre,
+        route='/ipex/apply', modifiers={'dp': [[[schema.said, '/', []]]]},
+        attributes={'m': 'historical'}, kind=kering.Kinds.json)
+    signed = sender.endorse(legacy, last=True, framed=False, gvrsn=kering.Vrsn_2_0)
+    exact = bytes(signed)
+    with pytest.raises(ipexing.UnsupportedDisclosurePlan, match='Historical nested q.dp'):
+        ipexing.request_schema(legacy)
+    with pytest.raises(ipexing.UnsupportedDisclosurePlan, match='Historical nested q.dp'):
+        ipexing._validate_plan([[]])
+    assert bytes(signed) == exact and legacy.sad['q']['dp'] == [[[schema.said, '/', []]]]
 
 
 def test_only_issuee_can_represent_targeted_credential(ipex_vaults):
@@ -52,7 +69,7 @@ def test_only_issuee_can_represent_targeted_credential(ipex_vaults):
     # authorize a different presenter at the receiving wallet's admission step.
     proof = credentialing.credential(verifier.vault, said)['proof']
     replay, atc = acdc_v2_ipexing.grant(reviewer, holder.pre, 'Replay', origin=proof,
-                                modifiers={'dp': [[[schema.said, '/', []]]]}, kind=kering.Kinds.json)
+                                modifiers={'dp': [[schema.said, '/', []]]}, kind=kering.Kinds.json)
     _deliver_ipex(holder_app.vault, replay.raw + atc)
     assert holder_app.vault.exc.complete(replay.said)
     with pytest.raises(kering.ValidationError, match='issuee or original issuer'):
@@ -72,7 +89,7 @@ def test_metadata_offer_binds_rules_before_admission(ipex_vaults, substitute):
     original = credentialing.credential(source.vault, said)
     metadata = acdcmap(israid=issuer.pre, uuid='', schema=schema.said, attribute='', rule=original['sad']['r'])
     offer, atc = acdc_v2_ipexing.offer(issuer, 'Terms', metadata, recp=holder.pre, artifacts=[],
-                              modifiers={'dp': [[[schema.said, '/', []]]]}, kind=kering.Kinds.json)
+                              modifiers={'dp': [[schema.said, '/', []]]}, kind=kering.Kinds.json)
     _deliver_ipex(target.vault, ipexing.prepare(source.vault, issuer, offer, atc))
     agree, atc = acdc_v2_ipexing.agree(holder, 'Agree', offer, kind=kering.Kinds.json)
     _deliver_ipex(source.vault, ipexing.prepare(target.vault, holder, agree, atc))
@@ -84,7 +101,7 @@ def test_metadata_offer_binds_rules_before_admission(ipex_vaults, substitute):
         said = _issue(source, schema, holder, authentication='signature', rules={'d': '', 'terms': 'Agreed terms'})
         _introduce(source, target)
     grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Grant', origin=credentialing.credential(source.vault, said)['proof'],
-                              agree=agree, modifiers={'dp': [[]]}, kind=kering.Kinds.json)
+                              agree=agree, modifiers={'dp': []}, kind=kering.Kinds.json)
     previews = exchanging.loadParsedNestedSubstreams(target.hby, offer.said)
     assert previews, 'Missing retained offer preview'
     assert previews[0].serder.sad['r']['terms'] == 'Agreed terms'
@@ -131,7 +148,7 @@ def test_legacy_linked_offer_can_be_declined_after_reopen(ipex_vaults):
     view, artifacts, _, _ = ipexing._credential_evidence(source.vault, said)
     grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, '', view['proof'], artifacts=artifacts,
                               agree=source.hby.db.exns.get((agree,)),
-                              modifiers={'dp': [[]]}, kind=kering.Kinds.json)
+                              modifiers={'dp': []}, kind=kering.Kinds.json)
     _deliver_ipex(target.vault, grant.raw + atc)
     assert not target.vault.exc.complete(grant.said)
     assert target.vault.db.receipts.get((holder.pre, grant.said)) is None
@@ -170,7 +187,7 @@ def test_admission_validates_linked_schema_and_nested_group_evidence(ipex_vaults
     _introduce(source, target)
     _introduce(target, source)
     grant, atc = ipexing.grant(source.vault, issuer, said, holder.pre)
-    assert grant.sad['q']['dp'][0][1][1] == '/e/group/source/_/'
+    assert grant.sad['q']['dp'][1][1] == '/e/group/source/_/'
     if invalid:
         with pytest.raises(kering.ValidationError, match='protocol verification'):
             ipexing.prepare(source.vault, issuer, grant, atc)

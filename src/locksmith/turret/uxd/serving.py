@@ -25,6 +25,14 @@ from hio.base import tyming, doing
 logger = help.ogler.getLogger()
 
 
+def _validateLimit(name, value):
+    """Validate an optional non-negative integer transport budget."""
+    if value is not None and (isinstance(value, bool) or
+                              not isinstance(value, int) or value < 0):
+        raise ValueError(f"{name} must be a non-negative integer or None")
+    return value
+
+
 @contextmanager
 def openServer(cls=None, **kwa):
     """
@@ -75,7 +83,8 @@ class Acceptor(tyming.Tymee):
         .opened is boolean, True if listen socket .ss opened. False otherwise
     """
 
-    def __init__(self, path, bs=8096, bl=128, **kwa):
+    def __init__(self, path, bs=8096, bl=128, maxConnections=None,
+                 acceptsPerTurn=None, **kwa):
         """
         Initialization method for instance.
         ha is host address duple (host, port) listen interfaces
@@ -89,6 +98,8 @@ class Acceptor(tyming.Tymee):
         self.eha = (path, "0")
         self.bs = bs
         self.bl = bl
+        self.maxConnections = _validateLimit("maxConnections", maxConnections)
+        self.acceptsPerTurn = _validateLimit("acceptsPerTurn", acceptsPerTurn)
         self.ss = None  # listen socket for accepts
         self.axes = deque()  # deque of duple (ca, cs) accepted connections
         self.opened = False
@@ -191,11 +202,19 @@ class Acceptor(tyming.Tymee):
         Service any accept requests
         Adds to .cxes dict key by ca
         """
-        while True:
+        accepted = 0
+        while ((self.acceptsPerTurn is None or accepted < self.acceptsPerTurn)
+               and (self.maxConnections is None
+                    or self.connectionCount() < self.maxConnections)):
             cs, ca = self.accept()
             if not cs:
                 break
             self.axes.append((cs, ca))
+            accepted += 1
+
+    def connectionCount(self):
+        """Return accepted connections awaiting promotion."""
+        return len(self.axes)
 
 
 class Server(Acceptor):
@@ -229,6 +248,8 @@ class Server(Acceptor):
                  host="",
                  port=56000,
                  tymeout=None,
+                 rxbsLimit=None,
+                 rxbsPerTurn=None,
                  wl=None,
                  **kwa):
         """
@@ -244,8 +265,14 @@ class Server(Acceptor):
         ha = ha or (host, port)
         super(Server, self).__init__(ha=ha, **kwa)
         self.tymeout = tymeout if tymeout is not None else self.Tymeout
+        self.rxbsLimit = _validateLimit("rxbsLimit", rxbsLimit)
+        self.rxbsPerTurn = _validateLimit("rxbsPerTurn", rxbsPerTurn)
         self.wl = wl
         self.ixes = dict()  # ready to rx tx incoming connections, Remoter instances
+
+    def connectionCount(self):
+        """Return accepted and active UXD connections."""
+        return len(self.axes) + len(self.ixes)
 
     def wind(self, tymth):
         """
@@ -272,8 +299,10 @@ class Server(Acceptor):
                               ca=ca,
                               cs=cs,
                               bs=self.bs,
+                              rxbsLimit=self.rxbsLimit,
+                              rxbsPerTurn=self.rxbsPerTurn,
                               wl=self.wl,
-                              timeout=self.tymeout)
+                              tymeout=self.tymeout)
             if ca in self.ixes and self.ixes[ca] is not remoter:
                 self.shutdownIx(ca)
             self.ixes[ca] = remoter
@@ -366,6 +395,8 @@ class Server(Acceptor):
         for ca, ix in list(self.ixes.items()):  # list so can remove while iterating
             try:
                 ix.serviceReceives()
+                if ix.rxbsOverflowed:
+                    self.removeIx(ca=ca)
             except OSError as ex:
                 logger.error("Closing incoming socket on %s.\n%s\n", ix.cs.getpeername(), ex)
                 self.removeIx(ca=ca)  # also closes ix
@@ -519,6 +550,10 @@ class ServerTls(Server):
                                          cafilepath=cafilepath
                                          )
 
+    def connectionCount(self):
+        """Return accepted, handshaking, and active UXD connections."""
+        return len(self.axes) + len(self.cxes) + len(self.ixes)
+
     def serviceAxes(self):
         """
         Service accepteds
@@ -534,8 +569,10 @@ class ServerTls(Server):
                                  ca=ca,
                                  bs=self.bs,
                                  cs=cs,
+                                 rxbsLimit=self.rxbsLimit,
+                                 rxbsPerTurn=self.rxbsPerTurn,
                                  wl=self.wl,
-                                 timeout=self.tymeout,
+                                 tymeout=self.tymeout,
                                  context=self.context,
                                  version=self.version,
                                  certify=self.certify,
@@ -587,6 +624,8 @@ class Remoter(tyming.Tymee):
                  tymeout=None,
                  refreshable=True,
                  bs=8096,
+                 rxbsLimit=None,
+                 rxbsPerTurn=None,
                  wl=None,
                  **kwa
                  ):
@@ -617,6 +656,9 @@ class Remoter(tyming.Tymee):
         self.bs = bs
         self.txbs = bytearray()  # bytearray of data to send
         self.rxbs = bytearray()  # bytearray of data received
+        self.rxbsLimit = _validateLimit("rxbsLimit", rxbsLimit)
+        self.rxbsPerTurn = _validateLimit("rxbsPerTurn", rxbsPerTurn)
+        self.rxbsOverflowed = False
         self.wl = wl
 
     def wind(self, tymth):
@@ -672,7 +714,7 @@ class Remoter(tyming.Tymee):
         """
         self.tymer.restart()
 
-    def receive(self):
+    def receive(self, size=None):
         """
         Perform non blocking receive on connected socket .cs
 
@@ -683,7 +725,7 @@ class Remoter(tyming.Tymee):
         data is string in python2 and bytes in python3
         """
         try:
-            data = self.cs.recv(self.bs)
+            data = self.cs.recv(self.bs if size is None else size)
         except OSError as ex:
             # ex.args[0] == ex.errno for better os compatibility.
             # the value of a given errno.XXXXX may be different on each os
@@ -719,20 +761,45 @@ class Remoter(tyming.Tymee):
         """
         Service receives until no more
         """
-        while not self.cutoff:
-            data = self.receive()
+        received = 0
+        while (not self.cutoff and
+               (self.rxbsPerTurn is None or received < self.rxbsPerTurn)):
+            allowance = self.bs
+            if self.rxbsPerTurn is not None:
+                allowance = min(allowance, self.rxbsPerTurn - received)
+            if self.rxbsLimit is not None:
+                available = self.rxbsLimit - len(self.rxbs)
+                allowance = min(allowance, available) if available > 0 else 1
+            data = self.receive(size=allowance)
             if not data:
                 break
+            if (self.rxbsLimit is not None and
+                    len(self.rxbs) + len(data) > self.rxbsLimit):
+                self.rxbsOverflowed = True
+                self.cutoff = True
+                self.close()
+                break
             self.rxbs.extend(data)
+            received += len(data)
 
     def serviceReceiveOnce(self):
         """
         Retrieve from server only one reception
         """
         if not self.cutoff:
-            data = self.receive()
+            if self.rxbsLimit is None:
+                data = self.receive()
+            else:
+                available = self.rxbsLimit - len(self.rxbs)
+                data = self.receive(size=min(self.bs, available) if available > 0 else 1)
             if data:
-                self.rxbs.extend(data)
+                if (self.rxbsLimit is not None and
+                        len(self.rxbs) + len(data) > self.rxbsLimit):
+                    self.rxbsOverflowed = True
+                    self.cutoff = True
+                    self.close()
+                else:
+                    self.rxbs.extend(data)
 
     def clearRxbs(self):
         """
@@ -902,7 +969,7 @@ class RemoterTls(Remoter):
 
         self.connected = True  # handshake completed successfully
 
-    def receive(self):
+    def receive(self, size=None):
         """
         Perform non blocking receive on connected socket .cs
 
@@ -913,7 +980,7 @@ class RemoterTls(Remoter):
         data is string in python2 and bytes in python3
         """
         try:
-            data = self.cs.recv(self.bs)
+            data = self.cs.recv(self.bs if size is None else size)
         except OSError as ex:  # ssl.SSLError is a subtype of OSError
             # ex.args[0] == ex.errno for better compat
             # the value of a given errno.XXXXX may be different on each os

@@ -1475,7 +1475,7 @@ def test_anchored_exchange_shows_commitment_before_creating_kel_event(wallet, mo
     page = CredentialActivityPage(parent)
     page.set_vault_name('anchor-consent')
     offer, atc = acdc_v2_ipexing.offer(issuer, '', proof, recp=holder.pre, ax=[True],
-                                     modifiers={'dp': [[[acdc.schema, '/', []]]]})
+                                     modifiers={'dp': [[acdc.schema, '/', []]]})
     ipexing.prepare(app.vault, issuer, offer, atc)
     page.refresh()
 
@@ -1532,7 +1532,7 @@ def test_grant_matches_requested_schema_and_previewed_origin(wallet, preview):
 
     for requested in (other_schema.said, expected.said):
         request, atc = acdc_v2_ipexing.apply(holder, issuer.pre, '',
-                                           modifiers={'dp': [[[requested, '/', []]]]})
+                                           modifiers={'dp': [[requested, '/', []]]})
         ipexing.prepare(app.vault, holder, request, atc)
         offer, atc = acdc_v2_ipexing.offer(issuer, '',
             ipexing._offer_preview(first.sad) if preview else first_proof,
@@ -1576,7 +1576,7 @@ def test_offer_review_accepts_reference_and_metadata(wallet, metadata):
                      attribute=ipexing._offer_preview(acdc.sad).sad['a']) if metadata else proof
     offer, atc = acdc_v2_ipexing.offer(issuer, '', origin, recp=holder.pre,
                                     artifacts=[] if metadata else None,
-                                    modifiers={'dp': [[[acdc.schema, '/', []]]]})
+                                    modifiers={'dp': [[acdc.schema, '/', []]]})
     ipexing.prepare(app.vault, issuer, offer, atc)
     parent = QWidget()
     parent.app = app
@@ -1670,7 +1670,7 @@ def test_activity_receives_verified_remote_request_and_clears_stale_response(wal
     app.hby.db.schema.pin((schemer.said,), schemer)
     app.vault.db.issuers.pin((schemer.said,), issuer.pre)
     request, atc = acdc_v2_ipexing.apply(holder, issuer.pre, 'Need a credential',
-                                      modifiers={'dp': [[[schemer.said, '/', []]]]})
+                                      modifiers={'dp': [[schemer.said, '/', []]]})
     app.vault.mbx.parser.parse(ims=bytearray(request.raw + atc), version=kering.Vrsn_2_0)
     row, = page.tables[0]._static_data
     assert row['Status'] == 'Apply' and row['_attention']
@@ -1987,7 +1987,7 @@ def test_issue_controls_select_state_capability(wallet, qapp, mode):
     doing.Doist(doers=app.queued, limit=1, tock=.03125).do()
     rows = list(app.vault.db.issued.getTopItemIter())
     assert len(rows) == 1 and rows[0][1].registry_mode == mode
-    assert bool(rows[0][1].blinder) is (mode == 'blinded')
+    assert bool(rows[0][1].blinder)
     assert not list(app.vault.db.custody.getTopItemIter())
     options.mode.setCurrentIndex(options.mode.combo_box.findData('derived'))
     options.discloser.setCurrentIndex(options.discloser.combo_box.findData(recipient.pre))
@@ -2009,7 +2009,7 @@ def test_response_waits_for_evidence_without_changing_consent(wallet, monkeypatc
     issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
     acdc, _, schemer = issue(app, issuer, holder.pre, authentication='anchor')
     request, atc = acdc_v2_ipexing.apply(holder, issuer.pre, 'Full disclosure',
-        modifiers={'dp': [[[schemer.said, '/', []]]]})
+        modifiers={'dp': [[schemer.said, '/', []]]})
     ipexing.prepare(app.vault, holder, request, atc)
     parent = QWidget()
     parent.app = app
@@ -2066,7 +2066,7 @@ def test_response_exposes_saved_reply_after_outbox_write_failure(wallet, monkeyp
     issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
     acdc, _, schemer = issue(app, issuer, holder.pre, authentication='anchor')
     request, atc = acdc_v2_ipexing.apply(holder, issuer.pre, 'Full disclosure',
-        modifiers={'dp': [[[schemer.said, '/', []]]]})
+        modifiers={'dp': [[schemer.said, '/', []]]})
     ipexing.prepare(app.vault, holder, request, atc)
     parent = QWidget()
     parent.app = app

@@ -356,7 +356,10 @@ class CredentialActivityPage(BaseListPage):
                 schemer = self.vault.hby.db.schema.get((schema,))
                 return credential_name(schemer.sed) if schemer else origins[0], nest.serder.sad
         for exn in reversed(chain):
-            schema = ipexing.request_schema(exn)
+            try:
+                schema = ipexing.request_schema(exn, self.vault)
+            except ipexing.UnsupportedDisclosurePlan:
+                return 'Unsupported historical credential exchange', None
             schemer = self.vault.hby.db.schema.get((schema,)) if schema else None
             if schemer:
                 return credential_name(schemer.sed), None
@@ -816,11 +819,11 @@ class ExchangeResponseDialog(LocksmithDialog):
         attrs = sad.get('a')
         if (said and not sad.get('r') and self.vault.db.issued.get((said,)) and sad.get('i') == tip.sad['ri']
                 and isinstance(attrs, Mapping) and attrs.get('i') == tip.pre
-                and ipexing.request_schema(tip) and 'Grant' in self.row['_actions']):
+                and ipexing.request_schema(tip, self.vault) and 'Grant' in self.row['_actions']):
             try:
                 _, artifacts, plan, _ = ipexing._credential_evidence(self.vault, said)
-                requested = tip.sad['q']['dp']
-                plan[0][0][2] = requested[0][0][2]
+                requested = ipexing._resolved_plan(self.vault, tip)
+                plan[0][2] = list(requested[0][2])
                 if plan == requested and not artifacts:
                     action = 'Grant'
             except Exception:
@@ -856,7 +859,7 @@ class ExchangeResponseDialog(LocksmithDialog):
             if hab.kever.estOnly else 'This adds a permanent commitment to your key event log.'))
         self.anchor_notice.setVisible(anchored)
         request = self.vault.hby.db.exns.get((tip.sad['p'],)) if tip.route == '/ipex/agree' else tip
-        requested = ipexing.request_schema(request)
+        requested = ipexing.request_schema(request, self.vault) if disclose else None
         self._can_create = disclose and tip.route == '/ipex/apply' and requested is not None
         self._credentials = {}
         selected = self.credential.currentData()
@@ -903,7 +906,7 @@ class ExchangeResponseDialog(LocksmithDialog):
         if ipexing.expiry_error(self.vault, tip):
             self._preview()
             return
-        schema = ipexing.request_schema(tip)
+        schema = ipexing.request_schema(tip, self.vault)
         if self.vault.db.issuers.get((schema,)) != tip.sad['ri']:
             self.show_error('Enable issuance for this schema with the identifier that received the request first.')
             return
@@ -1013,8 +1016,7 @@ class ExchangeResponseDialog(LocksmithDialog):
         try:
             tip = self.row['messages'][-1]
             request = self.vault.hby.db.exns.get((tip.sad['p'],)) if tip.route == '/ipex/agree' else tip
-            plan = request.sad['q'].get('dp', [[]])
-            fields = plan[0][0][2] if plan and plan[0] else []
+            fields = ipexing.request_fields(self.vault, request)
             metadata = self.action == 'Offer' and not fields
             nodes = disclosed_credentials(self.vault, sad['d'], metadata=metadata,
                                           disclose=fields, preview=self.action == 'Offer', **self.disclosure.selection())

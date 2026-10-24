@@ -47,7 +47,7 @@ class StatePublicationOptions(QWidget):
         self.discloser.setVisible(self.registry and mode == 'derived')
         self.bound_event.setVisible(self.registry and mode != 'public')
         self.help.setText({
-            'public': 'Registry status is public. No blinding secret is created.',
+            'public': 'The event-specific status opening is published. No reusable derivation custody is created.',
             'blinded': 'Presentations reveal the specific state opening they need.',
             'derived': 'Requires encrypted custody. Selecting a discloser does not send a secret or establish delegation; provision that capability separately.',
         }[mode])

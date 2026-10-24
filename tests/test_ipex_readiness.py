@@ -13,7 +13,8 @@ from keri.help import helping
 from keri.peer import exchanging
 
 from locksmith.core import credentialing, ipexing
-from test_keri_v2_compat import ipex_vaults, ipex_mailbox, _ipex_fixture, _deliver_ipex
+from test_keri_v2_compat import (IPEX_PLAN, ipex_vaults, ipex_mailbox,
+                                 _ipex_fixture, _deliver_ipex)
 
 
 def _run_sender(vault):
@@ -27,7 +28,7 @@ def test_readiness_after_acceptance_preserves_authorization(ipex_vaults, ipex_ma
     issuer, holder = ipex_vaults('readiness-issuer'), ipex_vaults('readiness-holder')
     ih, hh, _, _, _, acdc, proof = _ipex_fixture(issuer, holder)
     request, request_atc = acdc_v2_ipexing.apply(hh, ih.pre, 'Request disclosure',
-        modifiers={'dp': [[[acdc.sad['s']['$id'], '/', []]]]})
+        modifiers={'dp': [[acdc.sad['s']['$id'], '/', []]]})
     _deliver_ipex(issuer.vault, ipexing.prepare(holder.vault, hh, request, request_atc))
     grant, atc = acdc_v2_ipexing.grant(ih, hh.pre, 'Approved disclosure', proof, apply=request)
     checks = []
@@ -115,7 +116,8 @@ def test_delivery_age_uses_authentication_specific_kram_lag(ipex_vaults, monkeyp
     sender = ipex_vaults('timing-sender')
     hab = sender.hby.makeHab(name='sender', icount=key_count, isith=1)
     recipient = sender.hby.makeHab(name='recipient')
-    exn, atc = acdc_v2_ipexing.apply(hab, recipient.pre, 'Timing boundary', modifiers={'dp': [[]]})
+    exn, atc = acdc_v2_ipexing.apply(
+        hab, recipient.pre, 'Timing boundary', modifiers={'dp': IPEX_PLAN})
     ipexing.prepare(sender.vault, hab, exn, atc)
     policy = sender.hby.db.kramCTYP.get('~')
     assert policy.ll > policy.sl

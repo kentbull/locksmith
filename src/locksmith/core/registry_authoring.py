@@ -1,14 +1,14 @@
-"""Explicit ACDC v2 registry state-publication modes using the existing core authoring API.
+"""Explicit ACDC v2 ``bup`` state-publication modes.
 
-Public upd and derived bup composition adapt KERIpy AcdcV2Author
-(named NativeAuthor at historical commit a6539208).
-The legacy per-event blinded mode still uses Registrar.issue. All branches stage
-through Registry.processEvent; receipt collection and acceptance remain separate.
+Public mode retains and publishes one random event opening. Blinded mode gives
+that opening only to selected disclosures, while derived mode uses separately
+provisioned custody. All branches stage through Registry.processEvent; receipt
+collection and acceptance remain separate.
 """
 from keri import kering
 from keri.acdc import Registrar, messaging
 from keri.app.credential_disclosing import boundEvent
-from keri.core import Counter, Codens, messagize
+from keri.core import messagize
 
 from locksmith.core.disclosing import custody
 
@@ -38,7 +38,7 @@ def stage(vault, registry, acdc, state, mode, *, bound_event=None):
         registry: Accepted local issuer registry.
         acdc: Credential being issued or revoked.
         state: ACDC v2 registry state string, such as issued or revoked.
-        mode: public (no secret), blinded (one random opening), or derived
+        mode: public (published opening), blinded (selected opening), or derived
             (explicit previously provisioned per-registry custody).
         bound_event: Optional exact current issuee KEL event for blinded state.
 
@@ -56,15 +56,17 @@ def stage(vault, registry, acdc, state, mode, *, bound_event=None):
     head = registry.store.headEvent(registry.regk)
     if head is None:
         raise kering.MissingAnchorError('Registry inception has not been accepted')
-    if mode == 'blinded':
+    if head.ilk == 'upd':
+        raise kering.ConfigurationError('Historical upd heads cannot author current ACDC v2 standing')
+    if mode in ('public', 'blinded'):
         opening, event = Registrar(rgy=vault.rgy).issue(registry, acdc, state=state, **coordinates)
+        if mode == 'public':
+            vault.rgy.store.retainOpening(event, opening)
     else:
-        opening = (custody(vault).derive(registry.regk, head.sn + 1, acdc.said, state, **coordinates)
-                   if mode == 'derived' else None)
-        event = (messaging.blindate(registry.regk, head.said, opening.said, sn=head.sn + 1)
-                 if opening else messaging.update(registry.regk, head.said, acdc.said,
-                                                  state, sn=head.sn + 1))
+        opening = custody(vault).derive(registry.regk, head.sn + 1, acdc.said,
+                                        state, **coordinates)
+        event = messaging.blindate(registry.regk, head.said, opening.said,
+                                   sn=head.sn + 1)
         registry.processEvent(event)
-    proof = (messagize(acdc, bonds=[opening.data], framed=False) if opening else
-             acdc.raw + Counter(Codens.AttachmentGroup, count=0, version=kering.Vrsn_2_0).qb64b)
+    proof = messagize(acdc, bonds=[opening.data], framed=False)
     return opening, event, proof

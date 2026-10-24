@@ -57,6 +57,58 @@ class MissingRouteError(kering.ConfigurationError):
     """The recipient needs an introduction with a usable delivery endpoint."""
 
 
+class UnsupportedDisclosurePlan(kering.ValidationError):
+    """The signed exchange uses a disclosure plan this wallet cannot honor."""
+
+
+def _validate_plan(plan):
+    """Require the maintained flat q.dp profile without rewriting signed history."""
+    legacy = (plan == [[]] or isinstance(plan, list) and plan
+              and isinstance(plan[0], list) and plan[0]
+              and isinstance(plan[0][0], list))
+    if legacy:
+        raise UnsupportedDisclosurePlan(
+            'Historical nested q.dp is unsupported; start a new credential exchange')
+    validator = getattr(ipexing, '_disclosurePathError', None)
+    if validator is None:
+        raise kering.ConfigurationError(
+            'Installed KERIpy does not support the maintained flat q.dp profile')
+    if error := validator(plan):
+        raise UnsupportedDisclosurePlan(f'Unsupported q.dp disclosure plan: {error}')
+    return plan
+
+
+def _message_plan(exn):
+    """Read and validate one message's signed flat q.dp value."""
+    if exn is None or not isinstance(exn.sad.get('q'), Mapping) or 'dp' not in exn.sad['q']:
+        raise UnsupportedDisclosurePlan('The exchange has no explicit q.dp disclosure plan')
+    return _validate_plan(exn.sad['q']['dp'])
+
+
+def _resolved_plan(vault, exn):
+    """Resolve empty reply dittos to one earlier non-empty flat plan."""
+    seen = set()
+    current = exn
+    while current is not None and current.said not in seen:
+        seen.add(current.said)
+        plan = _message_plan(current)
+        if plan:
+            return plan
+        prior = current.sad.get('p', '')
+        if not prior:
+            raise UnsupportedDisclosurePlan(
+                'An opening exchange cannot use an empty q.dp disclosure plan')
+        current = vault.hby.db.exns.get((prior,))
+        if current is None:
+            raise UnsupportedDisclosurePlan('The inherited q.dp disclosure plan is unavailable')
+    raise UnsupportedDisclosurePlan('The q.dp disclosure-plan chain is cyclic')
+
+
+def request_fields(vault, exn):
+    """Return the exact origin paths authorized by a supported request chain."""
+    return list(_resolved_plan(vault, exn)[0][2])
+
+
 def presentation_eligible(credential, pre, designated=()):
     """Return whether pre is the disclosed issuee or the original issuer.
 
@@ -300,7 +352,7 @@ def _disclosure_plan(origin, nodes):
         pending.extend((far, prefix + path) for far, path in _edge_nodes(sad))
     if seen != nodes.keys():
         raise kering.ValidationError('Retained evidence contains unrelated credentials')
-    return [plan]
+    return _validate_plan(plan)
 
 
 def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
@@ -357,7 +409,8 @@ def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
         nodes[parsed[0].serder.said] = parsed[0].serder.sad
     plan = _disclosure_plan(credential_said, nodes)
     if disclose:
-        plan[0][0][2] = list(disclose)
+        plan[0][2] = list(disclose)
+        _validate_plan(plan)
     return view, list(artifacts.values()), plan, nodes
 
 
@@ -427,14 +480,20 @@ def _offer_preview(original):
                    schema=original['s'], rule=rules, kind=kering.Kinds.json, **fields)
 
 
-def request_schema(exn):
-    """Read the origin schema for the composer's retained-node disclosure plans."""
-    plan = exn.sad['q'].get('dp', [])
-    if len(plan) == 1 and plan[0]:
-        schema, path, fields = plan[0][0]
-        if path == '/' and isinstance(fields, list) and all(not entry[2] for entry in plan[0][1:]):
-            return schema
-    return None
+def request_schema(exn, vault=None):
+    """Read the origin schema from a supported flat disclosure plan.
+
+    ``vault`` resolves an empty reply ditto through its exact signed priors.
+    Historical nested plans raise rather than being silently reinterpreted.
+    """
+    plan = _resolved_plan(vault, exn) if vault is not None else _message_plan(exn)
+    if not plan:
+        return None
+    schema, prefix, fields = plan[0]
+    if prefix not in ('', '/') or any(entry[2] for entry in plan[1:]):
+        raise UnsupportedDisclosurePlan(
+            'This wallet supports one origin request and node-presence dependencies')
+    return schema
 
 
 def start(vault, hab, recipient, action, message='', *, schema=None, credential_said=None,
@@ -454,8 +513,9 @@ def start(vault, hab, recipient, action, message='', *, schema=None, credential_
     if action == 'Apply':
         if not schema or vault.hby.db.schema.get((schema,)) is None:
             raise ValueError('Choose a loaded schema')
+        plan = _validate_plan([[schema, '/', list(disclose)]])
         exn, atc = ipexing.apply(hab, recipient, message,
-                                 modifiers={'dp': [[[schema, '/', list(disclose)]]]}, ax=ax,
+                                 modifiers={'dp': plan}, ax=ax,
                                  kind=kering.Kinds.json)
     elif action == 'Offer':
         view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
@@ -506,6 +566,11 @@ def responses(vault, exn):
             or vault.hby.db.erpy.get((exn.said,)) is not None
             or expiry_error(vault, exn)):
         return []
+    if exn.route in ('/ipex/apply', '/ipex/offer', '/ipex/agree', '/ipex/grant'):
+        try:
+            _resolved_plan(vault, exn)
+        except (UnsupportedDisclosurePlan, kering.ConfigurationError):
+            return ['Spurn'] if exn.route != '/ipex/agree' else []
     match exn.route:
         case '/ipex/apply':
             return ['Offer', 'Grant', 'Spurn']
@@ -554,15 +619,13 @@ def respond(vault, said, action, message='', credential_said=None, *, from_grant
     if action in ('Offer', 'Grant'):
         request = (vault.hby.db.exns.get((prior.sad['p'],))
                    if prior.route == '/ipex/agree' else prior)
-        requested = request.sad['q'].get('dp', [[]])
-        fields = requested[0][0][2] if requested and requested[0] else []
+        requested = _resolved_plan(vault, request)
+        fields = list(requested[0][2])
         view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
             from_grant=from_grant, disclose=fields, refresh=refresh,
             openings=openings, derive=derive, bound_event=bound_event, preview=action == 'Offer')
         _require_presenter(SerderACDC(sad=view['sad']), hab.pre, prior.pre, vault=vault)
-        schema = request_schema(request)
-        if request.sad['q'].get('dp') not in (None, [[]]) and schema is None:
-            raise ValueError('This disclosure plan is not supported by the whole-credential form')
+        schema = request_schema(request, vault)
         offered = request.sad['a'].get('o', []) if request.route == '/ipex/offer' else []
         if offered:
             previews = exchanging.loadParsedNestedSubstreams(vault.hby, request.said)
@@ -573,9 +636,8 @@ def respond(vault, said, action, message='', credential_said=None, *, from_grant
         actual = actual if isinstance(actual, str) else actual['$id']
         if schema and schema != actual:
             raise ValueError('The credential does not match the requested schema')
-        requested = request.sad['q'].get('dp', [[]])
         if schema:
-            plan[0][0][2] = requested[0][0][2]
+            plan[0][2] = list(requested[0][2])
         if action == 'Offer':
             preview = SerderACDC(sad=view['sad']) if fields else _offer_preview(view['sad'])
             exn, atc = ipexing.offer(hab, message, preview, apply=prior,
@@ -587,7 +649,7 @@ def respond(vault, said, action, message='', credential_said=None, *, from_grant
                 raise ValueError('Credential evidence does not match the agreed disclosure plan')
             link = {'apply': prior} if prior.route == '/ipex/apply' else {'agree': prior}
             exn, atc = ipexing.grant(hab, prior.pre, message, view['proof'], artifacts=artifacts,
-                                    modifiers={'dp': [[]]}, ax=prior.sad['a'].get('ax'),
+                                    modifiers={'dp': []}, ax=prior.sad['a'].get('ax'),
                                     kind=kering.Kinds.json, **link)
     elif action == 'Agree':
         exn, atc = ipexing.agree(hab, message, prior, kind=kering.Kinds.json)
@@ -699,10 +761,11 @@ def _validate_credential(vault, credential, grant_said):
     negotiated schema, allowed presenter and valid disclosed nested proofs.
     Raise on missing, stale or invalid evidence; never admit a credential here."""
     grant = vault.hby.db.exns.get((grant_said,))
+    _resolved_plan(vault, grant)
     prior = vault.hby.db.exns.get((grant.sad['p'],)) if grant.sad['p'] else None
     if prior and prior.route == '/ipex/agree':
         prior = vault.hby.db.exns.get((prior.sad['p'],))
-    expected = request_schema(prior) if prior else None
+    expected = request_schema(prior, vault) if prior else None
     actual = credential.schema if isinstance(credential.schema, str) else credential.schema['$id']
     if expected and actual != expected:
         raise kering.ValidationError('The disclosed credential does not match the agreed schema')

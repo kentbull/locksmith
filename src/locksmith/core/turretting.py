@@ -19,6 +19,12 @@ from locksmith.turret.uxd import Server, ServerDoer
 
 logger = help.ogler.getLogger(__name__)
 
+UXD_MAX_CONNECTIONS = 8
+UXD_ACCEPTS_PER_TURN = 4
+UXD_RX_BUFFER_LIMIT = 8 * 1024 * 1024
+UXD_RX_BYTES_PER_TURN = 64 * 1024
+UXD_IDLE_TIMEOUT = 30.0
+
 
 def load_handlers(hby, rgy, exc, cues):
 
@@ -52,7 +58,12 @@ class TurretDoer(doing.DoDoer):
         if os.path.exists(_socket_path):
             os.remove(_socket_path)
 
-        server = Server(path=_socket_path, bufsize=8069)
+        server = Server(path=_socket_path, bufsize=8069,
+                        maxConnections=UXD_MAX_CONNECTIONS,
+                        acceptsPerTurn=UXD_ACCEPTS_PER_TURN,
+                        rxbsLimit=UXD_RX_BUFFER_LIMIT,
+                        rxbsPerTurn=UXD_RX_BYTES_PER_TURN,
+                        tymeout=UXD_IDLE_TIMEOUT)
         server_doer = ServerDoer(server=server)
 
         exc = exchanging.Exchanger(hby, handlers=[])

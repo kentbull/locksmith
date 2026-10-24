@@ -125,16 +125,37 @@ def credential_state(vault, acdc, blinder=None, *, blinders=None):
     rip, head = store.seqEvent(regk, 0), store.headEvent(regk)
     if rip is None or head is None:
         raise kering.MissingChainError(f'Missing registry evidence for {regk}')
+    if head.ilk == 'upd':
+        raise kering.ConfigurationError(
+            'Historical upd heads do not establish current ACDC v2 standing')
     updates = []
     for sn in range(1, Number(numh=head.sad['n']).num + 1):
         update = store.seqEvent(regk, sn)
         if update is None:
             raise kering.MissingChainError(f'Missing registry update {sn} for {regk}')
         updates.append(update)
+    proofs = [proof for proof in (blinders if blinders is not None else [blinder])
+              if proof is not None]
+    public = None
+    if raw := store.opening(head.said):
+        candidates = []
+        for clan in (BlindState, BoundState):
+            try:
+                candidate = Blinder(clan=clan, qb64=raw)
+            except Exception:
+                continue
+            if candidate.qb64 == raw:
+                candidates.append(candidate)
+        if len(candidates) != 1:
+            raise kering.ValidationError('Retained public opening is invalid')
+        public = store.retainOpening(head, candidates[0])
+    if public is not None:
+        if all(proof is None or proof.qb64 != public.qb64 for proof in proofs):
+            proofs.append(public)
     try:
         return regeventing.vetBinds(rip=rip, updates=updates, db=vault.hby.db,
                                    acdc=acdc, target=acdc.said,
-                                   blinders=blinders if blinders is not None else [blinder])
+                                   blinders=proofs)
     except kering.MissingAnchorError as ex:
         raise kering.MissingChainError(f'Missing issuer KEL evidence for {regk}') from ex
 
@@ -613,10 +634,7 @@ class RevokeCredentialDoer(CredentialUpdateDoer):
             if registry is None:
                 raise ValueError('This credential has no local revocable registry')
             blinder = regeventing._blindCandidates(record.blinder)[0] if record.blinder else None
-            retained_update = self.vault.rgy.store.event(record.update)
-            revoked = (blinder is not None and blinder.state == 'revoked'
-                       or record.registry_mode == 'public' and retained_update is not None
-                       and retained_update.sad.get('ts') == 'revoked')
+            revoked = blinder is not None and blinder.state == 'revoked'
             if revoked:
                 update = self.vault.rgy.store.event(record.update)
                 if update is None:

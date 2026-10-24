@@ -18,12 +18,16 @@ from locksmith.core import registries
 
 @pytest.fixture
 def wallets():
+    from locksmith.db.basing import LocksmithBaser
     with ExitStack() as stack:
         def make(name):
             hby = stack.enter_context(habbing.openHby(name=name, temp=True, version=kering.Vrsn_2_0))
             rgy = Regery(hby=hby, name=name, temp=True)
+            db = LocksmithBaser(name=name, temp=True)
             stack.callback(rgy.close)
-            return SimpleNamespace(hby=hby, rgy=rgy, exc=SimpleNamespace(cues=deque()))
+            stack.callback(db.close)
+            return SimpleNamespace(hby=hby, rgy=rgy, db=db,
+                                   exc=SimpleNamespace(cues=deque()))
         yield make('registry-sender'), make('registry-receiver')
 
 
@@ -565,14 +569,13 @@ def _full_reply(sender, registry):
 
 @pytest.mark.parametrize('public', [False, True])
 def test_full_observer_fetch_verifies_kels_without_signer_put(wallets, service, qapp, public):
-    """The explicit full profile authenticates an initially unknown issuer from proof."""
+    """Authenticate an unknown issuer and retain an explicit public opening for standing."""
     sender, receiver = wallets
-    issuer, _, registry, acdc = _issue(sender)
+    issuer, registrar, registry, acdc = _issue(sender)
+    opening = event = None
     if public:
-        from keri.acdc.messaging import update
-        head = sender.rgy.store.headEvent(registry.regk)
-        event = update(registry.regk, head.said, acdc.said, 'issued', sn=2)
-        registry.processEvent(event)
+        opening, event = registrar.issue(registry, acdc, state='revoked')
+        sender.rgy.store.retainOpening(event, opening)
         _anchor(issuer, registry, event)
     holder = receiver.hby.makeHab(name='holder')
     config = receiver.hby.cf.get() or {}
@@ -588,6 +591,11 @@ def test_full_observer_fetch_verifies_kels_without_signer_put(wallets, service, 
     assert [(method, path) for method, path, _ in requests] == [('POST', '/')]
     assert issuer.pre in receiver.hby.kevers
     assert receiver.evidence.reger is receiver.rgy.baser
+    if public:
+        from locksmith.core import credentialing
+        assert receiver.rgy.store.opening(event.said) == opening.qb64
+        assert credentialing.credential_state(receiver, acdc).state == 'revoked'
+        assert not list(receiver.db.custody.getTopItemIter())
 
 
 @pytest.mark.parametrize('failure', ['head', 'stale', 'future', 'missing', 'pending'])
@@ -620,10 +628,15 @@ def test_full_reply_cannot_claim_freshness_without_matching_proof(wallets, failu
 
 
 def test_full_profile_publishes_signed_complete_evidence(wallets, service, qapp):
-    """Publication carries a signed query and complete public proof, not admin JSON."""
+    """Sign the exact KEL/TEL bytes including an independently verifiable public opening."""
     sender, receiver = wallets
     from locksmith.core import evidence
-    hab, _, registry, _ = _issue(sender)
+    from keri.acdc import regeventing
+    hab, registrar, registry, acdc = _issue(sender)
+    opening, event = registrar.issue(registry, acdc, state='revoked')
+    sender.rgy.store.retainOpening(event, opening)
+    _anchor(hab, registry, event)
+    expected = evidence.processor(sender).clone([registry.regk])
     config = sender.hby.cf.get() or {}
     config['registries'] = {'profile': 'full-evidence'}
     sender.hby.cf.put(config)
@@ -633,7 +646,15 @@ def test_full_profile_publishes_signed_complete_evidence(wallets, service, qapp)
         parsed = Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(raw), processive=False)
         assert parsed.serder.route == 'tels/publish'
         assert parsed.serder.pre == hab.pre and parsed.sigers is not None
-        result = evidence.processor(receiver).ingest(parsed.serder.sad['q']['stream'].encode())
+        stream = parsed.serder.sad['q']['stream'].encode()
+        assert stream == expected
+        assert opening.qb64 == sender.rgy.store.opening(event.said)
+        state = regeventing.vet(sender.rgy.store.seqEvent(registry.regk, 0),
+                                [sender.rgy.store.seqEvent(registry.regk, sn)
+                                 for sn in range(1, event.sn + 1)],
+                                db=sender.hby.db, acdc=acdc, blinder=opening)
+        assert state.state == 'revoked'
+        result = evidence.processor(receiver).ingest(stream)
         return 200, json.dumps(result).encode()
     state['respond'] = accept
     doer = registries.RegistrySyncDoer(sender, hab, registry.regk, registrar_url=url)
