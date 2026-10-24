@@ -9,7 +9,7 @@ from PySide6.QtTest import QSignalSpy, QTest
 from PySide6.QtWidgets import QCheckBox, QFileDialog, QLabel, QWidget
 from hio.base import doing
 from keri import kering
-from keri.acdc import Registrar, Regery, acdcmap, ipexing as native_ipexing
+from keri.acdc import Registrar, Regery, acdcmap, ipexing as acdc_v2_ipexing
 from keri.app import habbing, notifying, organizing
 from keri.core import Noncer, messagize, parsing, scheming, SerderACDC, SerderKERI
 from keri.peer import exchanging
@@ -247,7 +247,7 @@ def test_schema_selection_does_not_create_registry_or_request_witness_auth(walle
     app = wallet('schema-ui')
     hab = app.hby.makeHab(name='issuer')
     schemer = schema()
-    source = tmp_path / 'native.json'
+    source = tmp_path / 'acdc_v2_ipexing.json'
     source.write_bytes(schemer.raw)
     dialog = AddSchemaDialog(app=app)
     dialog.file_radio.setChecked(True)
@@ -687,7 +687,7 @@ def test_pending_import_does_not_open_acceptance_or_add_wallet_credential(wallet
     holder = receiver.hby.makeHab(name='holder')
     acdc, proof, _ = issue(sender, issuer, holder.pre)
     receiver.vault.mbx.parser.parse(ims=bytearray(issuer.replay(gvrsn=kering.Vrsn_2_0)), local=False)
-    exn, atc = native_ipexing.grant(issuer, holder.pre, 'Grant', proof)
+    exn, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Grant', proof)
     source = tmp_path / 'grant.cesr'
     source.write_bytes(exn.raw + atc)
     dialog = AcceptCredentialDialog(app=receiver, parent=QWidget())
@@ -703,7 +703,7 @@ def test_pending_import_does_not_open_acceptance_or_add_wallet_credential(wallet
 
 
 @pytest.mark.parametrize('cancel_export', [False, True])
-def test_grant_notification_and_file_acceptance_use_verified_native_evidence(
+def test_grant_notification_and_file_acceptance_use_verified_acdc_v2_ipex_evidence(
         wallet, tmp_path, monkeypatch, cancel_export):
     app = wallet('accept-ui')
     issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
@@ -992,7 +992,7 @@ def test_admit_dialog_explains_saved_delivery_after_interrupted_acceptance(walle
 
 def test_activity_keep_current_page_during_background_updates(wallet):
     app = wallet('delivery-pages-ui')
-    # Retained submissions remain visible even if their native message is missing.
+    # Retained submissions remain visible even if their ACDC v2 IPEX message is missing.
     for index in range(12):
         app.vault.db.outbox.put((f'missing-{index:02}',), IpexSubmission(status='submitted'))
     parent = QWidget()
@@ -1221,7 +1221,7 @@ def test_application_defaults_to_direct_delivery_without_terms(wallet, qapp, mon
         '/ipex/apply', '/ipex/grant', '/ipex/admit']
 
 
-def test_activity_drives_native_negotiation_and_keeps_direction(wallet, tmp_path, monkeypatch):
+def test_activity_drives_acdc_v2_ipex_negotiation_and_keeps_direction(wallet, tmp_path, monkeypatch):
     app = wallet('activity-negotiation')
     # Exchange bodies must not inherit the identifier's KEL serialization.
     issuer = app.hby.makeHab(name='issuer', kind=kering.Kinds.cesr)
@@ -1413,7 +1413,7 @@ def test_witnessed_acceptance_waits_to_export_receipt_without_sending(wallet, mo
     app = wallet('witnessed-export')
     issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
     acdc, proof, _ = issue(app, issuer, holder.pre, authentication='signature')
-    grant, atc = native_ipexing.grant(issuer, holder.pre, '', proof, ax=[True])
+    grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, '', proof, ax=[True])
     ipexing.prepare(app.vault, issuer, grant, atc)
     witness = app.hby.makeHab(name='witness', transferable=False)
     holder.rotate(adds=[witness.pre], toad=1)
@@ -1474,7 +1474,7 @@ def test_anchored_exchange_shows_commitment_before_creating_kel_event(wallet, mo
     parent.app = app
     page = CredentialActivityPage(parent)
     page.set_vault_name('anchor-consent')
-    offer, atc = native_ipexing.offer(issuer, '', proof, recp=holder.pre, ax=[True],
+    offer, atc = acdc_v2_ipexing.offer(issuer, '', proof, recp=holder.pre, ax=[True],
                                      modifiers={'dp': [[[acdc.schema, '/', []]]]})
     ipexing.prepare(app.vault, issuer, offer, atc)
     page.refresh()
@@ -1531,16 +1531,16 @@ def test_grant_matches_requested_schema_and_previewed_origin(wallet, preview):
     app.hby.db.schema.pin((other_schema.said,), other_schema)
 
     for requested in (other_schema.said, expected.said):
-        request, atc = native_ipexing.apply(holder, issuer.pre, '',
+        request, atc = acdc_v2_ipexing.apply(holder, issuer.pre, '',
                                            modifiers={'dp': [[[requested, '/', []]]]})
         ipexing.prepare(app.vault, holder, request, atc)
-        offer, atc = native_ipexing.offer(issuer, '',
+        offer, atc = acdc_v2_ipexing.offer(issuer, '',
             ipexing._offer_preview(first.sad) if preview else first_proof,
             artifacts=[] if preview else None, apply=request)
         ipexing.prepare(app.vault, issuer, offer, atc)
-        agree, atc = native_ipexing.agree(holder, '', offer)
+        agree, atc = acdc_v2_ipexing.agree(holder, '', offer)
         ipexing.prepare(app.vault, holder, agree, atc)
-        grant, atc = native_ipexing.grant(issuer, holder.pre, '', second_proof, agree=agree)
+        grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, '', second_proof, agree=agree)
         assert (offer.sad['a']['o'] == [first.said]) is not preview
         assert grant.sad['a']['o'] == [second.said]
         malformed = grant.sad
@@ -1557,7 +1557,7 @@ def test_grant_matches_requested_schema_and_previewed_origin(wallet, preview):
             assert app.vault.db.receipts.get((holder.pre, grant.said)) is None
             assert app.hby.db.erpy.get((grant.said,)) is None
             if requested == expected.said:
-                grant, atc = native_ipexing.grant(issuer, holder.pre, '', first_proof, agree=agree)
+                grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, '', first_proof, agree=agree)
                 ipexing.prepare(app.vault, issuer, grant, atc)
                 assert app.vault.exc.complete(grant.said)
         else:
@@ -1574,7 +1574,7 @@ def test_offer_review_accepts_reference_and_metadata(wallet, metadata):
     acdc, proof, _ = issue(app, issuer, holder.pre, authentication='anchor')
     origin = acdcmap(israid=issuer.pre, uuid='', schema=acdc.schema,
                      attribute=ipexing._offer_preview(acdc.sad).sad['a']) if metadata else proof
-    offer, atc = native_ipexing.offer(issuer, '', origin, recp=holder.pre,
+    offer, atc = acdc_v2_ipexing.offer(issuer, '', origin, recp=holder.pre,
                                     artifacts=[] if metadata else None,
                                     modifiers={'dp': [[[acdc.schema, '/', []]]]})
     ipexing.prepare(app.vault, issuer, offer, atc)
@@ -1669,7 +1669,7 @@ def test_activity_receives_verified_remote_request_and_clears_stale_response(wal
     schemer = schema(composed=True)
     app.hby.db.schema.pin((schemer.said,), schemer)
     app.vault.db.issuers.pin((schemer.said,), issuer.pre)
-    request, atc = native_ipexing.apply(holder, issuer.pre, 'Need a credential',
+    request, atc = acdc_v2_ipexing.apply(holder, issuer.pre, 'Need a credential',
                                       modifiers={'dp': [[[schemer.said, '/', []]]]})
     app.vault.mbx.parser.parse(ims=bytearray(request.raw + atc), version=kering.Vrsn_2_0)
     row, = page.tables[0]._static_data
@@ -1761,12 +1761,12 @@ def test_activity_receives_verified_remote_request_and_clears_stale_response(wal
         before = issuer.kever.sn
         with pytest.raises(kering.ValidationError, match='application has expired'):
             ipexing.respond(app.vault, request.said, 'Offer', credential_said=credential_said)
-        offer, atc = native_ipexing.offer(issuer, '', credential.stream.encode(), apply=request)
+        offer, atc = acdc_v2_ipexing.offer(issuer, '', credential.stream.encode(), apply=request)
         with pytest.raises(kering.ValidationError, match='application has expired'):
             ipexing.prepare(app.vault, issuer, offer, atc)
         assert issuer.kever.sn == before
         assert app.hby.db.erpy.get((request.said,)) is None
-        fresh, atc = native_ipexing.apply(holder, issuer.pre, '', modifiers=request.sad['q'])
+        fresh, atc = acdc_v2_ipexing.apply(holder, issuer.pre, '', modifiers=request.sad['q'])
         app.vault.mbx.parser.parse(ims=bytearray(fresh.raw + atc), version=kering.Vrsn_2_0)
         sent = ipexing.respond(app.vault, fresh.said, 'Offer', credential_said=credential_said)
         assert app.vault.exc.complete(sent)
@@ -2008,7 +2008,7 @@ def test_response_waits_for_evidence_without_changing_consent(wallet, monkeypatc
     app = wallet('response-readiness')
     issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
     acdc, _, schemer = issue(app, issuer, holder.pre, authentication='anchor')
-    request, atc = native_ipexing.apply(holder, issuer.pre, 'Full disclosure',
+    request, atc = acdc_v2_ipexing.apply(holder, issuer.pre, 'Full disclosure',
         modifiers={'dp': [[[schemer.said, '/', []]]]})
     ipexing.prepare(app.vault, holder, request, atc)
     parent = QWidget()
@@ -2065,7 +2065,7 @@ def test_response_exposes_saved_reply_after_outbox_write_failure(wallet, monkeyp
     app = wallet('response-interrupted')
     issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
     acdc, _, schemer = issue(app, issuer, holder.pre, authentication='anchor')
-    request, atc = native_ipexing.apply(holder, issuer.pre, 'Full disclosure',
+    request, atc = acdc_v2_ipexing.apply(holder, issuer.pre, 'Full disclosure',
         modifiers={'dp': [[[schemer.said, '/', []]]]})
     ipexing.prepare(app.vault, holder, request, atc)
     parent = QWidget()

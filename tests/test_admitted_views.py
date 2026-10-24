@@ -1,7 +1,7 @@
 """A later admission cannot enrich an earlier retained disclosure."""
 import pytest
 from keri import kering
-from keri.acdc import acdcmap, ipexing as native
+from keri.acdc import acdcmap, ipexing as acdc_v2_ipexing
 from keri.core import Compactor, Noncer, SealSource, SerderKERI, messagize
 from keri.peer import exchanging
 
@@ -30,7 +30,7 @@ def test_explicit_admitted_view_survives_fuller_grant_and_reopen(ipex_vaults, qa
     partial = acdcmap(israid=issuer.pre, uuid=full.sad['u'], schema=schema.said,
                       attribute=block.partials[('i',)].mad)
     assert partial.said == full.said
-    first, atc = native.grant(issuer, holder.pre, 'Partial',
+    first, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Partial',
         origin=messagize(partial, bonds=[SealSource(s=anchor.snh, d=anchor.said)]),
         modifiers={'dp': [[[schema.said, '/', []]]]})
     _deliver_ipex(receiver.vault, ipexing.prepare(sender.vault, issuer, first, atc))

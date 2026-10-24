@@ -1,4 +1,4 @@
-"""Native wallet issuance and explicit acceptance with independent stores."""
+"""ACDC v2 wallet issuance and explicit acceptance with independent stores."""
 from time import monotonic, sleep
 
 import pytest
@@ -133,7 +133,7 @@ def _issue(app, schema, recipient, attributes=None, edges=None, authentication='
     return events[-1][2]['credential_said']
 
 
-def test_native_issuance_keeps_independent_credentials_valid_after_reopen(ipex_vaults):
+def test_acdc_v2_issuance_keeps_independent_credentials_valid_after_reopen(ipex_vaults):
     app = ipex_vaults('native-issuer')
     issuer = app.hby.makeHab(name='issuer')
     holder = app.hby.makeHab(name='holder')
@@ -240,8 +240,8 @@ def test_grant_preserves_compacted_retained_disclosure(ipex_vaults, hidden_issue
             ipexing.grant(sender.vault, issuer, said, holder.pre)
         # Even an externally built, authenticated Grant cannot establish who
         # holds the credential when its entire issuee block remains hidden.
-        from keri.acdc import ipexing as native
-        grant, atc = native.grant(issuer, holder.pre, 'Hidden subject', proof,
+        from keri.acdc import ipexing as acdc_v2_ipexing
+        grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Hidden subject', proof,
                                   modifiers={'dp': [[[schema.said, '/', []]]]})
         _deliver_ipex(receiver.vault, grant.raw + atc)
         assert receiver.vault.exc.complete(grant.said)
@@ -260,7 +260,7 @@ def test_grant_preserves_compacted_retained_disclosure(ipex_vaults, hidden_issue
     assert nested.serder.raw == compact.raw
 
 
-def test_native_grant_requires_evidence_schema_and_consent_before_inventory(ipex_vaults):
+def test_acdc_v2_grant_requires_evidence_schema_and_consent_before_inventory(ipex_vaults):
     from keri.peer import exchanging
 
     sender, receiver = ipex_vaults('issue-sender'), ipex_vaults('issue-receiver')
@@ -329,7 +329,7 @@ def test_native_grant_requires_evidence_schema_and_consent_before_inventory(ipex
 @pytest.mark.parametrize('authentication', ['anchor', 'signature'])
 def test_registry_free_exchange_uses_mailbox_and_retains_presentation_evidence(
         ipex_vaults, ipex_mailbox, authentication, tmp_path, monkeypatch, qapp):
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
     from keri.peer import exchanging
 
     sender, receiver = ipex_vaults('free-sender'), ipex_vaults('free-receiver')
@@ -351,7 +351,7 @@ def test_registry_free_exchange_uses_mailbox_and_retains_presentation_evidence(
         assert target.vault.exc.complete(exn.said)
         return exn
 
-    request = send(receiver, sender, holder, native.apply(
+    request = send(receiver, sender, holder, acdc_v2_ipexing.apply(
         holder, issuer.pre, 'Request', modifiers={'dp': [[[schema.said, '/', []]]]}, ax=[True]))
     offer = send(sender, receiver, issuer, ipexing.respond(
         sender.vault, request.said, 'Offer', credential_said=said))
@@ -578,13 +578,13 @@ def test_retained_graph_rechecks_linked_issuer_evidence(ipex_vaults):
 
 
 def _verified_grant(ipex_vaults, anchored=False):
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
 
     sender, receiver = ipex_vaults('receipt-sender'), ipex_vaults('receipt-receiver')
     issuer, holder, reg, rip, issued, credential, proof = _ipex_fixture(sender, receiver)
     receiver.vault.rgy.store.accept(reg.regk, 0, rip)
     receiver.vault.rgy.store.accept(reg.regk, 1, issued)
-    grant, atc = native.grant(issuer, holder.pre, 'Grant', proof, ax=[anchored])
+    grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Grant', proof, ax=[anchored])
     _deliver_ipex(receiver.vault, issuer.replay(gvrsn=kering.Vrsn_2_0))
     _deliver_ipex(receiver.vault, ipexing.prepare(sender.vault, issuer, grant, atc))
     assert receiver.vault.exc.complete(grant.said)
@@ -713,14 +713,14 @@ def test_acceptance_recovers_original_admit_after_interruption(
 
 @pytest.mark.parametrize('interrupted', [False, True])
 def test_distinct_grants_keep_separate_receipts_and_one_inventory_entry(ipex_vaults, monkeypatch, interrupted):
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
 
     sender, receiver, issuer, holder, credential, first = _verified_grant(ipex_vaults)
     first_admit, _ = ipexing.admit(receiver.vault, holder, first.said)
     accepted_at = receiver.vault.db.accepted.get((credential.said,)).accepted_at
     assert accepted_at
     proof, = sender.hby.db.enst.get((first.said,))
-    second, atc = native.grant(issuer, holder.pre, 'Another grant', proof.encode())
+    second, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Another grant', proof.encode())
     _deliver_ipex(receiver.vault, ipexing.prepare(sender.vault, issuer, second, atc))
     if interrupted:
         with monkeypatch.context() as patch:
@@ -1069,9 +1069,9 @@ def test_witness_timeout_preserves_pending_issuance_and_closes_receiptor(
 
 @pytest.mark.parametrize('kind', [kering.Kinds.json, kering.Kinds.cbor, kering.Kinds.mgpk])
 @pytest.mark.parametrize('state', ['issued', 'revoked'])
-def test_native_credential_content_kind_and_acceptance_state(ipex_vaults, kind, state):
+def test_acdc_v2_credential_content_kind_and_acceptance_state(ipex_vaults, kind, state):
     from keri.acdc import Registrar, acdcmap
-    from keri.acdc import ipexing as native_ipexing
+    from keri.acdc import ipexing as acdc_v2_ipexing
     from keri.core import messagize
     from keri.peer import exchanging
 
@@ -1097,7 +1097,7 @@ def test_native_credential_content_kind_and_acceptance_state(ipex_vaults, kind, 
         receiver.vault.rgy.store.accept(reg.regk, sn, sender.vault.rgy.store.seqEvent(reg.regk, sn))
     receiver.hby.db.schema.pin((schema.said,), schema)
     proof = messagize(serder=acdc, bonds=[blinder.data, vacuous.data], framed=False)
-    grant, attachment = native_ipexing.grant(issuer, holder.pre, 'Credential', origin=proof)
+    grant, attachment = acdc_v2_ipexing.grant(issuer, holder.pre, 'Credential', origin=proof)
     _deliver_ipex(receiver.vault, grant.raw + attachment)
     assert receiver.vault.exc.complete(grant.said)
     if state == 'issued':
@@ -1134,7 +1134,7 @@ def test_accepted_credential_retains_admit_after_revocation(ipex_vaults, monkeyp
         admit, _ = ipexing.admit(receiver.vault, holder, grant.said)
     retained = exchanging.serializeMessage(receiver.hby, admit.said)
     if saved_receipt == 'legacy':
-        # Earlier V2 vaults have the same native evidence and inventory entry,
+        # Earlier V2 vaults have the same ACDC v2 IPEX evidence and inventory entry,
         # but no separate per-grant receipt.
         receiver.vault.db.receipts.rem((holder.pre, grant.said))
     reg = sender.vault.rgy.registryByName('fixture')
@@ -1187,12 +1187,12 @@ def test_registry_exchange_requires_observer_even_with_valid_local_evidence(ipex
 
     # Valid local TEL fixture evidence does not stand in for an observer check.
     # Service transport itself is exercised in the separate registry tests.
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
     _deliver_ipex(receiver.vault, identifier_introduction(issuer))
     regk = view['sad']['rd']
     for sn in (0, 1):
         receiver.vault.rgy.store.accept(regk, sn, sender.vault.rgy.store.seqEvent(regk, sn))
-    grant, atc = native.grant(issuer, holder.pre, 'Registry credential', origin=view['proof'],
+    grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Registry credential', origin=view['proof'],
                               modifiers={'dp': [[[schema.said, '/', []]]]})
     _deliver_ipex(receiver.vault, grant.raw + atc)
     assert receiver.vault.exc.complete(grant.said)

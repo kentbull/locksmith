@@ -1,6 +1,7 @@
-"""Explicit native state-publication modes using the existing core authoring API.
+"""Explicit ACDC v2 registry state-publication modes using the existing core authoring API.
 
-Public upd and derived bup composition adapt KERIpy NativeAuthor at a6539208.
+Public upd and derived bup composition adapt KERIpy AcdcV2Author
+(named NativeAuthor at historical commit a6539208).
 The legacy per-event blinded mode still uses Registrar.issue. All branches stage
 through Registry.processEvent; receipt collection and acceptance remain separate.
 """
@@ -19,7 +20,7 @@ def bound_options(vault, acdc, event):
 
     vault owns verified KEL evidence; acdc supplies the issuee; event is the exact
     operator-selected digest. Reproducing historical openings uses boundEvent
-    directly instead. This authoring constraint follows NativeAuthor.update.
+    directly instead. This authoring constraint follows AcdcV2Author.update.
     """
     if not event:
         return {}
@@ -36,7 +37,7 @@ def stage(vault, registry, acdc, state, mode, *, bound_event=None):
         vault: Issuer's open evidence/optional custody owner.
         registry: Accepted local issuer registry.
         acdc: Credential being issued or revoked.
-        state: Native state string, such as issued or revoked.
+        state: ACDC v2 registry state string, such as issued or revoked.
         mode: public (no secret), blinded (one random opening), or derived
             (explicit previously provisioned per-registry custody).
         bound_event: Optional exact current issuee KEL event for blinded state.

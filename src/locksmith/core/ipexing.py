@@ -1,5 +1,5 @@
 # -*- encoding: utf-8 -*-
-"""Native exchanges with V2 JSON bodies and V2 CESR attachments."""
+"""ACDC v2 IPEX exchanges with V2 JSON bodies and V2 CESR attachments."""
 from collections import deque
 from copy import deepcopy
 from collections.abc import Mapping
@@ -39,7 +39,7 @@ class IpexHandler(ipexing.IpexHandler):
             issuer = getattr(credential, 'israid', None)
             if issuer:
                 try:
-                    # Native current-key checks use get(), which does not load disk state.
+                    # Current-key checks use get(), which does not load disk state.
                     self.hby.db.kevers[issuer]
                 except KeyError:
                     pass
@@ -274,7 +274,7 @@ def grant_credential(vault, grant_said):
     """Load the origin credential from a retained, verified grant."""
     exn = vault.hby.db.exns.get(keys=(grant_said,))
     if exn is None or exn.route != '/ipex/grant' or exn.pvrsn.major != 2:
-        raise kering.ValidationError('Verified native grant not found')
+        raise kering.ValidationError('Verified ACDC v2 IPEX grant not found')
     exchanging.verify(vault.hby, exn)
     origin = exn.sad['a']['o'][0]
     for nest in exchanging.loadParsedNestedSubstreams(vault.hby, grant_said):
@@ -284,7 +284,7 @@ def grant_credential(vault, grant_said):
 
 
 def _disclosure_plan(origin, nodes):
-    """Name the retained nodes in native BFS order without expanding their fields."""
+    """Name the retained nodes in disclosure-plan BFS order without expanding their fields."""
     plan, seen = [], set()
     pending = deque([(origin, '/')])
     while pending:
@@ -305,13 +305,13 @@ def _disclosure_plan(origin, nodes):
 
 def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
                          disclose=(), refresh=False, openings=(), derive=False, bound_event=None, preview=False):
-    """Load exact selected material and its native disclosure plan.
+    """Load exact selected material and its ACDC v2 IPEX disclosure plan.
 
     vault/credential_said identify inventory; hab optionally enforces current
     observer policy. from_grant selects one admission. disclose chooses held
     attribute paths; refresh/openings/derive select explicit Grant proof sources.
     preview selects content only for Offer and refuses state-opening options.
-    Return view, serialized artifacts, native plan and disclosed SADs. Grant
+    Return view, serialized artifacts, ACDC v2 IPEX plan and disclosed SADs. Grant
     mode verifies every node's authentication; Offer makes no current-state claim.
     """
     view = credentialing.credential(vault, credential_said, grant=from_grant)
@@ -327,7 +327,7 @@ def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
     if hab is not None:
         credentialing.require_registry_evidence(vault, SerderACDC(sad=view['sad']), hab)
     artifacts = dict(view['artifacts'])
-    # Received credentials already retain the native Grant's complete evidence.
+    # Received credentials already retain the ACDC v2 IPEX grant's complete evidence.
     pending = [view] if not from_grant and vault.db.issued.get((credential_said,)) else []
     while pending:
         current = pending.pop()
@@ -379,7 +379,7 @@ def grant(vault, hab, credential_said, recipient, message='', *, from_grant=None
         bound_event: Optional exact accepted issuee event for derived bound state.
 
     Returns:
-        tuple: Native signed exchange and attachments, still requiring prepare/submit.
+        tuple: ACDC v2 IPEX signed exchange and attachments, still requiring prepare/submit.
     """
     _require_vault(vault, hab)
     view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
@@ -445,7 +445,7 @@ def start(vault, hab, recipient, action, message='', *, schema=None, credential_
     the displayed text. schema selects an Apply schema; credential_said and
     from_grant select an Offer's exact evidence. disclose selects attribute
     paths (empty preserves the existing whole-credential form); ax requests
-    native anchor negotiation. Return the queued signed exchange identifier.
+    ACDC v2 IPEX anchor negotiation. Return the queued signed exchange identifier.
     """
     _require_vault(vault, hab)
     if not recipient or recipient == hab.pre:
@@ -472,7 +472,7 @@ def start(vault, hab, recipient, action, message='', *, schema=None, credential_
 
 
 def expiry_error(vault, exn):
-    """Explain an expired exchange using the wallet's native KRAM policy."""
+    """Explain an expired exchange using the wallet's ACDC v2 IPEX KRAM policy."""
     kramer = vault.kvy.kramer
     if exn is None or kramer is None or not kramer.enabled:
         return None
@@ -716,7 +716,7 @@ def _validate_credential(vault, credential, grant_said):
 
 
 def _pending_anchors(vault, exn):
-    """Load unreceipted local anchors from the retained native source seals."""
+    """Load unreceipted local anchors from the retained ACDC v2 source seals."""
     pending = []
     for (_, pre), (_, diger) in vault.hby.db.ests.getTopItemIter(keys=(exn.said, '')):
         if pre not in vault.hby.prefixes:
@@ -732,7 +732,7 @@ def _pending_anchors(vault, exn):
 
 
 def _finish_receipt(vault, pre, grant_said, receipt, restore=False):
-    """Reconcile native evidence, the send permission and wallet membership."""
+    """Reconcile ACDC v2 IPEX evidence, the send permission and wallet membership."""
     grant = vault.hby.db.exns.get((grant_said,))
     reply = vault.hby.db.erpy.get((grant_said,))
     exn = vault.hby.db.exns.get((reply.qb64,)) if reply else None
@@ -797,7 +797,7 @@ def admit(vault, hab, grant_said, message='', *, send=False):
                 raise kering.ValidationError(error)
         _validate_credential(vault, credential, grant_said)
         receipt = GrantReceipt(credential=credential.said, send=send)
-        # Save consent before the native builder can create an AX anchor.
+        # Save consent before the ACDC v2 IPEX builder can create an AX anchor.
         vault.db.receipts.put((hab.pre, grant_said), receipt)
         if vault.hby.db.erpy.get((grant_said,)) is None:
             exn, atc = ipexing.admit(hab, message, grant, kind=kering.Kinds.json)
@@ -874,7 +874,7 @@ def _due(record, now):
 
 
 class SendIpexDoer(credentialing.CredentialUpdateDoer):
-    """Receipt a retained native exchange and submit authorized delivery."""
+    """Receipt a retained ACDC v2 IPEX exchange and submit authorized delivery."""
 
     Timeout = 30.0
 

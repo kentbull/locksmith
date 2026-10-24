@@ -518,7 +518,7 @@ def ipex_vaults(monkeypatch, tmp_path, mailbox_routes):
         app.name, app.hby, app.rgy = name, hby, rgy
         app.plugin_manager = SimpleNamespace(on_vault_closed=lambda *a, **k: None,
                                              get_witness_batches=lambda *a: [])
-        # These exchange fixtures isolate native crypto and durable wallet state.
+        # These exchange fixtures isolate ACDC v2 IPEX proof and durable wallet state.
         # Observer transport has dedicated worker/socket tests. Keep the real
         # service gate only when a test explicitly requests that boundary.
         from locksmith.core import credentialing
@@ -614,7 +614,7 @@ def _ipex_fixture(issuer, holder, learn_peers=True, delegated=False):
 
 @pytest.fixture
 def ipex_mailbox(monkeypatch):
-    """Forward native streams through a separate witness's HTTP endpoint and mailbox."""
+    """Forward ACDC v2 IPEX streams through a separate witness's HTTP endpoint and mailbox."""
     import falcon
     from hio.core import http, tcp
     from keri.app import forwarding, indirecting as kerindirecting, storing
@@ -821,7 +821,7 @@ def test_ipex_rejects_invalid_proof_wrong_recipient_and_unsigned_messages(ipex_v
     _deliver_ipex(other.vault, exn.raw + atc)
     assert _ipex_status(other.vault, exn.said) == 'unverified'
     assert other.vault.notifier.getNoteCnt() == 0
-    # Parser consumes a well-framed but unsigned native exchange, without saving it.
+    # Parser consumes a well-framed but unsigned ACDC v2 IPEX exchange, without saving it.
     unsigned = exn.raw + Counter.enclose(qb64=b'', code=Codens.AttachmentGroup,
                                           version=kering.Vrsn_2_0)
     _deliver_ipex(holder.vault, unsigned)
@@ -842,7 +842,7 @@ def test_ipex_missing_sender_key_requires_key_history_before_redelivery(ipex_vau
     assert receiver.vault.notifier.getNoteCnt() == 0
     assert receiver.hby.db.exns.get((exn.said,)) is None
     _deliver_ipex(receiver.vault, sh.replay(gvrsn=kering.Vrsn_2_0))
-    # Before KRAM handoff, the native policy permits redelivery after sender KEL arrives.
+    # Before KRAM handoff, the ACDC v2 IPEX policy permits redelivery after sender KEL arrives.
     _deliver_ipex(receiver.vault, exn.raw + atc)
     assert _ipex_status(receiver.vault, exn.said) == 'protocol_verified'
     assert receiver.vault.notifier.getNoteCnt() == 1
@@ -889,7 +889,7 @@ def test_mailbox_accepts_v1_key_events_and_rejects_legacy_ipex(ipex_vaults, gvrs
 
 
 @pytest.mark.real_routes
-def test_native_ipex_submission_retries_failed_delivery_across_reopen(
+def test_acdc_v2_ipex_submission_retries_failed_delivery_across_reopen(
         ipex_vaults, ipex_mailbox, monkeypatch):
     from datetime import timedelta
     from keri.acdc import ipexing
@@ -963,7 +963,7 @@ def test_native_ipex_submission_retries_failed_delivery_across_reopen(
                                   kering.Roles.mailbox, kering.Roles.witness])
 @pytest.mark.parametrize('mixed', [False, True])
 def test_ipex_outbox_rechecks_revoked_route_before_send(ipex_vaults, monkeypatch, role, mixed):
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
     from keri.app import forwarding
     from keri.peer import exchanging
     from locksmith.core import ipexing
@@ -982,7 +982,7 @@ def test_ipex_outbox_rechecks_revoked_route_before_send(ipex_vaults, monkeypatch
         deliveries.append(self.recp)
         raise TimeoutError('Endpoint unavailable')
     monkeypatch.setattr(forwarding.StreamPoster, 'deliver', unavailable)
-    exn, atc = native.apply(hab, peer.pre, 'Apply', modifiers={'dp': [[]]})
+    exn, atc = acdc_v2_ipexing.apply(hab, peer.pre, 'Apply', modifiers={'dp': [[]]})
     ipexing.submit(sender.vault, hab, exn, atc)
     retained = exchanging.serializeMessage(sender.hby, exn.said)
     sender.hby.psr.parse(ims=bytearray(peer.makeEndRole(
@@ -1007,7 +1007,7 @@ def test_ipex_outbox_rechecks_revoked_route_before_send(ipex_vaults, monkeypatch
 
 def test_ipex_outbox_yields_during_history_scan(ipex_vaults, monkeypatch):
     from contextlib import closing
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
     from keri.app import forwarding
     from locksmith.core import ipexing
     from locksmith.db.basing import IpexSubmission
@@ -1022,7 +1022,7 @@ def test_ipex_outbox_yields_during_history_scan(ipex_vaults, monkeypatch):
         for index in range(history_count):
             txn.put(f'0{index:08}'.encode(), outbox._ser(IpexSubmission(status='submitted')),
                     db=outbox.sdb)
-    exn, atc = native.apply(hab, peer.pre, 'Apply', modifiers={'dp': [[]]})
+    exn, atc = acdc_v2_ipexing.apply(hab, peer.pre, 'Apply', modifiers={'dp': [[]]})
     ipexing.submit(sender.vault, hab, exn, atc)
     scanned, closed, progress, events = [], [], [], []
     records = outbox.getTopItemIter
@@ -1056,7 +1056,7 @@ def test_ipex_outbox_yields_during_history_scan(ipex_vaults, monkeypatch):
     assert not closed and not events
     assert outbox.get((exn.said,)).status == 'pending'
     sender.close_vault()
-    assert closed, 'Closing the vault did not close the native scan iterator and its read transaction'
+    assert closed, 'Closing the vault did not close the ACDC v2 inventory scan iterator and its read transaction'
     sender = ipex_vaults('outbox-history')
     sender.vault.signals.doer_event.connect(lambda *event: events.append(event))
     for _ in range(512):
@@ -1069,7 +1069,7 @@ def test_ipex_outbox_yields_during_history_scan(ipex_vaults, monkeypatch):
 
 
 @pytest.mark.parametrize('delegated', [False, True])
-def test_native_ipex_submission_carries_foreign_issuer_kel(ipex_vaults, ipex_mailbox, delegated):
+def test_acdc_v2_ipex_submission_carries_foreign_issuer_kel(ipex_vaults, ipex_mailbox, delegated):
     from keri.acdc import ipexing
 
     issuer, holder = ipex_vaults('presentation-issuer'), ipex_vaults('presentation-holder')
@@ -1165,7 +1165,7 @@ def test_expired_ipex_grant_recovers_in_a_fresh_conversation(ipex_vaults, monkey
     assert _ipex_status(holder.vault, grant.said) == 'unverified'
 
 
-def test_native_ipex_submission_timeout_closes_transport(ipex_vaults, monkeypatch):
+def test_acdc_v2_ipex_submission_timeout_closes_transport(ipex_vaults, monkeypatch):
     from hio.core.http import clienting
     from keri.acdc import ipexing
     from locksmith.core.ipexing import SendIpexDoer, submit
@@ -1197,14 +1197,14 @@ def test_ipex_child_transport_failure_keeps_vault_running_and_retryable(
         ipex_vaults, monkeypatch, failure):
     import ssl
     from hio.core.http import clienting, httping
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
     from keri.help import helping
     from keri.peer import exchanging
     from locksmith.core import ipexing
 
     sender, receiver = ipex_vaults('child-sender'), ipex_vaults('child-receiver')
     sh, rh = sender.hby.makeHab(name='sender'), receiver.hby.makeHab(name='receiver')
-    exn, atc = native.apply(sh, rh.pre, 'Submit', modifiers={'dp': [[]]})
+    exn, atc = acdc_v2_ipexing.apply(sh, rh.pre, 'Submit', modifiers={'dp': [[]]})
     ipexing.submit(sender.vault, sh, exn, atc)
     retained = exchanging.serializeMessage(sender.hby, exn.said)
     events, closed, progress = [], [], []
@@ -1228,7 +1228,7 @@ def test_ipex_child_transport_failure_keeps_vault_running_and_retryable(
     with monkeypatch.context() as patch:
         patch.setattr(sh, 'endsFor', lambda pre: {
             kering.Roles.controller: {rh.pre: {'https': 'https://127.0.0.1:9999'}}})
-        # Preserve native Poster, HTTP messenger, ClientDoer and HIO cleanup.
+        # Preserve existing Poster, HTTP messenger, ClientDoer and HIO cleanup.
         # Substitute only the socket service failure and avoid opening a socket.
         patch.setattr(clienting.Client, 'reopen', lambda *a, **k: None)
         patch.setattr(clienting.Client, 'service', service)
@@ -1266,13 +1266,13 @@ def test_ipex_child_transport_failure_keeps_vault_running_and_retryable(
         assert exchanging.serializeMessage(sender.hby, exn.said) == retained
 
 
-def test_native_ipex_cannot_fall_back_to_legacy_validation(ipex_vaults):
+def test_acdc_v2_ipex_cannot_fall_back_to_legacy_validation(ipex_vaults):
     from keri.core import exchange
 
     sender, receiver = ipex_vaults('downgrade-sender'), ipex_vaults('downgrade-receiver')
     sh, rh = sender.hby.makeHab(name='sender'), receiver.hby.makeHab(name='receiver')
     _deliver_ipex(receiver.vault, sh.replay(gvrsn=kering.Vrsn_2_0))
-    # Missing native routing and dp fields do not make an envelope legacy.
+    # Missing ACDC v2 IPEX routing and dp fields do not make an envelope legacy.
     invalid = exchange(sender=sh.pre, receiver='', xid='', route='/ipex/apply',
                        modifiers={}, attributes={'m': 'Malformed native opener'},
                        pvrsn=kering.Vrsn_2_0, gvrsn=kering.Vrsn_2_0,
@@ -1287,13 +1287,13 @@ def test_native_ipex_cannot_fall_back_to_legacy_validation(ipex_vaults):
 def test_ipex_close_stops_inflight_delivery_and_reopen_resumes(
         ipex_vaults, ipex_mailbox, monkeypatch):
     from hio.core.http import clienting
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
     from keri.peer import exchanging
     from locksmith.core import ipexing
 
     sender, receiver = ipex_vaults('closing-sender'), ipex_vaults('closing-receiver')
     sh, rh = sender.hby.makeHab(name='sender'), receiver.hby.makeHab(name='receiver')
-    exn, atc = native.apply(sh, rh.pre, 'Send', modifiers={'dp': [[]]})
+    exn, atc = acdc_v2_ipexing.apply(sh, rh.pre, 'Send', modifiers={'dp': [[]]})
     ipexing.submit(sender.vault, sh, exn, atc)
     record = sender.vault.db.outbox.get((exn.said,))
     record.attempts = 3
@@ -1325,13 +1325,13 @@ def test_ipex_close_stops_inflight_delivery_and_reopen_resumes(
 
 
 def test_ipex_outbox_is_scoped_to_vault_base(ipex_vaults):
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
     from locksmith.core import ipexing
 
     first, second = ipex_vaults('same-name', base='first'), ipex_vaults('same-name', base='second')
     one, two = first.hby.makeHab(name='sender'), second.hby.makeHab(name='sender')
     recipient = first.hby.makeHab(name='recipient')
-    exn, atc = native.apply(one, recipient.pre, 'Send', modifiers={'dp': [[]]})
+    exn, atc = acdc_v2_ipexing.apply(one, recipient.pre, 'Send', modifiers={'dp': [[]]})
     assert first.vault.db.path != second.vault.db.path
     with pytest.raises(ValueError, match='does not belong'):
         ipexing.submit(second.vault, one, exn, atc)
@@ -1345,15 +1345,15 @@ def test_ipex_outbox_is_scoped_to_vault_base(ipex_vaults):
 
 
 def test_ipex_retry_preserves_valid_sender_seal_after_rotation(ipex_vaults, ipex_mailbox):
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
     from keri.peer import exchanging
     from locksmith.core import ipexing
 
     sender, receiver = ipex_vaults('sealed-sender'), ipex_vaults('sealed-receiver')
     sh, rh = sender.hby.makeHab(name='sender'), receiver.hby.makeHab(name='receiver')
-    exn, _ = native.apply(sh, rh.pre, 'Apply', modifiers={'dp': [[]]})
+    exn, _ = acdc_v2_ipexing.apply(sh, rh.pre, 'Apply', modifiers={'dp': [[]]})
     # This extra authentication seal does not negotiate AX for the reply.
-    signed = native._sign(sh, exn, anchor=True)
+    signed = acdc_v2_ipexing._sign(sh, exn, anchor=True)
     ipexing.submit(sender.vault, sh, exn, signed[exn.size:])
     retained = exchanging.serializeMessage(sender.hby, exn.said)
     sh.rotate()
@@ -1458,10 +1458,10 @@ def test_vault_listens_through_receiving_endpoints_and_replays_unparsed_mail(ipe
 
 
 def test_mailbox_retains_unparsed_frames_across_reopen(ipex_vaults):
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
     sender, receiver = ipex_vaults('raw-sender'), ipex_vaults('raw-receiver')
     sh, rh = sender.hby.makeHab(name='sender'), receiver.hby.makeHab(name='receiver')
-    exn, atc = native.apply(sh, rh.pre, 'Saved mail', modifiers={'dp': [[]]})
+    exn, atc = acdc_v2_ipexing.apply(sh, rh.pre, 'Saved mail', modifiers={'dp': [[]]})
     committed = []
     # The sender's KEL arrives first. Parsing must keep that order.
     for frame in (sh.replay(gvrsn=kering.Vrsn_2_0), exn.raw + atc):
@@ -1485,13 +1485,13 @@ def test_mailbox_retains_unparsed_frames_across_reopen(ipex_vaults):
 
 @pytest.mark.parametrize('outcome', ['malformed', 'forged', 'rejected', 'missing_keys'])
 def test_mailbox_discards_frames_once_parsed(ipex_vaults, monkeypatch, outcome):
-    from keri.acdc import ipexing as native
+    from keri.acdc import ipexing as acdc_v2_ipexing
 
     sender, receiver = ipex_vaults('bounded-sender'), ipex_vaults('bounded-receiver')
     sh, rh = sender.hby.makeHab(name='sender'), receiver.hby.makeHab(name='receiver')
     if outcome != 'missing_keys':
         _deliver_ipex(receiver.vault, sh.replay(gvrsn=kering.Vrsn_2_0))
-    exn, atc = native.apply(sh, rh.pre, 'Mail', modifiers={'dp': [[]]})
+    exn, atc = acdc_v2_ipexing.apply(sh, rh.pre, 'Mail', modifiers={'dp': [[]]})
     raw = bytes(exn.raw + atc)
     if outcome == 'malformed':
         raw = b'junk'

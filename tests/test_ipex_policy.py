@@ -1,9 +1,9 @@
-"""Wallet acceptance policy on independent native exchange stores."""
+"""Wallet acceptance policy on independent ACDC v2 IPEX exchange stores."""
 from copy import deepcopy
 
 import pytest
 from keri import kering
-from keri.acdc import acdcmap, ipexing as native
+from keri.acdc import acdcmap, ipexing as acdc_v2_ipexing
 from keri.core import Noncer, scheming
 from keri.peer import exchanging
 
@@ -51,7 +51,7 @@ def test_only_issuee_can_represent_targeted_credential(ipex_vaults):
     # Bypass the local composer. Authentic issuer evidence is insufficient to
     # authorize a different presenter at the receiving wallet's admission step.
     proof = credentialing.credential(verifier.vault, said)['proof']
-    replay, atc = native.grant(reviewer, holder.pre, 'Replay', origin=proof,
+    replay, atc = acdc_v2_ipexing.grant(reviewer, holder.pre, 'Replay', origin=proof,
                                 modifiers={'dp': [[[schema.said, '/', []]]]}, kind=kering.Kinds.json)
     _deliver_ipex(holder_app.vault, replay.raw + atc)
     assert holder_app.vault.exc.complete(replay.said)
@@ -71,10 +71,10 @@ def test_metadata_offer_binds_rules_before_admission(ipex_vaults, substitute):
     said = _issue(source, schema, holder, authentication='signature', rules={'d': '', 'terms': 'Agreed terms'})
     original = credentialing.credential(source.vault, said)
     metadata = acdcmap(israid=issuer.pre, uuid='', schema=schema.said, attribute='', rule=original['sad']['r'])
-    offer, atc = native.offer(issuer, 'Terms', metadata, recp=holder.pre, artifacts=[],
+    offer, atc = acdc_v2_ipexing.offer(issuer, 'Terms', metadata, recp=holder.pre, artifacts=[],
                               modifiers={'dp': [[[schema.said, '/', []]]]}, kind=kering.Kinds.json)
     _deliver_ipex(target.vault, ipexing.prepare(source.vault, issuer, offer, atc))
-    agree, atc = native.agree(holder, 'Agree', offer, kind=kering.Kinds.json)
+    agree, atc = acdc_v2_ipexing.agree(holder, 'Agree', offer, kind=kering.Kinds.json)
     _deliver_ipex(source.vault, ipexing.prepare(target.vault, holder, agree, atc))
     if substitute == 'rules':
         said = _issue(source, schema, holder, authentication='signature', rules={'d': '', 'terms': 'Changed terms'})
@@ -83,7 +83,7 @@ def test_metadata_offer_binds_rules_before_admission(ipex_vaults, substitute):
         source.vault.db.issuers.pin((schema.said,), other_issuer.pre)
         said = _issue(source, schema, holder, authentication='signature', rules={'d': '', 'terms': 'Agreed terms'})
         _introduce(source, target)
-    grant, atc = native.grant(issuer, holder.pre, 'Grant', origin=credentialing.credential(source.vault, said)['proof'],
+    grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Grant', origin=credentialing.credential(source.vault, said)['proof'],
                               agree=agree, modifiers={'dp': [[]]}, kind=kering.Kinds.json)
     previews = exchanging.loadParsedNestedSubstreams(target.hby, offer.said)
     assert previews, 'Missing retained offer preview'
@@ -111,7 +111,7 @@ def test_legacy_linked_offer_can_be_declined_after_reopen(ipex_vaults):
     child = acdcmap(israid=issuer.pre, uuid='', schema=schema.said, attribute='')
     root = acdcmap(israid=issuer.pre, uuid='', schema=schema.said, attribute='',
                    edge={'d': '', 'source': {'n': child.said, 's': schema.said}})
-    offer, atc = native.offer(issuer, '', root, recp=holder.pre, artifacts=[child],
+    offer, atc = acdc_v2_ipexing.offer(issuer, '', root, recp=holder.pre, artifacts=[child],
                               modifiers={'dp': plan}, kind=kering.Kinds.json)
     _deliver_ipex(target.vault, ipexing.prepare(source.vault, issuer, offer, atc))
     agree = ipexing.respond(target.vault, offer.said, 'Agree')
@@ -129,7 +129,7 @@ def test_legacy_linked_offer_can_be_declined_after_reopen(ipex_vaults):
     assert source.hby.db.erpy.get((agree,)) is None
 
     view, artifacts, _, _ = ipexing._credential_evidence(source.vault, said)
-    grant, atc = native.grant(issuer, holder.pre, '', view['proof'], artifacts=artifacts,
+    grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, '', view['proof'], artifacts=artifacts,
                               agree=source.hby.db.exns.get((agree,)),
                               modifiers={'dp': [[]]}, kind=kering.Kinds.json)
     _deliver_ipex(target.vault, grant.raw + atc)
@@ -308,7 +308,7 @@ def test_metadata_offer_distinguishes_public_text_from_staged_rule_disclosure(fo
 
 
 @pytest.mark.parametrize('revoked_node', ['origin', 'linked'])
-def test_queued_grant_rechecks_native_state_before_disclosure(ipex_vaults, monkeypatch, revoked_node):
+def test_queued_grant_rechecks_acdc_v2_registry_state_before_disclosure(ipex_vaults, monkeypatch, revoked_node):
     """Refuse delivery when either queued root or linked credential has since been revoked."""
     from types import SimpleNamespace
     from hio.base import doing

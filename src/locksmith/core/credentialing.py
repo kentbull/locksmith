@@ -1,5 +1,5 @@
 # -*- encoding: utf-8 -*-
-"""Schema selection, native credential issuance, and the wallet's inventory."""
+"""Schema selection, ACDC v2 credential issuance, and the wallet's inventory."""
 from collections.abc import Mapping
 from copy import deepcopy
 import json
@@ -56,7 +56,7 @@ def attribute_schemas(schema, aggregate=False):
 
 
 def complete_block(definition, values, issuee=None):
-    """Fill schema constants and native block identifiers without inventing data."""
+    """Fill schema constants and ACDC v2 block identifiers without inventing data."""
     result = deepcopy(values)
     definition = schema_detail(definition) or {}
     properties = definition.get('properties', {})
@@ -140,7 +140,7 @@ def credential_state(vault, acdc, blinder=None, *, blinders=None):
 
 
 def authentication(vault, nest):
-    """Use the pinned native issuer policy; do not infer it from the Grant signer."""
+    """Use the pinned ACDC v2 issuer policy; do not infer it from the Grant signer."""
     acdc = nest.serder
     if acdc.sad.get('rd'):
         proofs = [Blinder(clan=clan, qb64=b''.join(part.qb64b for part in proof))
@@ -151,7 +151,7 @@ def authentication(vault, nest):
     # Keripy has no public standalone issuer-authentication entry point yet.
     # Keep its anchor selection and current-key rules at this one adapter boundary.
     try:
-        # Statedict.get is cache-only; load persisted state for native signature checks.
+        # Statedict.get is cache-only; load persisted state for ACDC v2 signature checks.
         vault.hby.db.kevers[acdc.israid]
     except KeyError:
         pass
@@ -170,7 +170,7 @@ def admission(vault, said, grant):
     Args:
         vault: Open wallet with receipt, inventory and exchange stores.
         said: Exact credential identifier expected in the selected grant.
-        grant: Previously admitted native grant identifier.
+        grant: Previously admitted ACDC v2 IPEX grant identifier.
 
     Returns:
         AcceptedCredential: Exact grant/admit reference and local consent time.
@@ -246,7 +246,7 @@ def credential(vault, said, received=False, *, grant=None):
         recipient = acdc.iseaid
         if record.stream:
             proof = record.stream.encode()
-        else:  # Persisted registry issuances from before native stream retention.
+        else:  # Persisted registry issuances from before ACDC v2 stream retention.
             blinder = regeventing._blindCandidates(record.blinder)[0]
             proof = messagize(serder=acdc, bonds=[blinder.data], framed=False)
         ims = bytearray(proof)
@@ -365,21 +365,22 @@ class LoadSchemaDoer(doing.DoDoer):
 
 
 class CredentialUpdateDoer(doing.DoDoer):
-    """Anchor a native registry event and collect its witness receipts."""
+    """Anchor an ACDC v2 registry event and collect its witness receipts."""
 
     def anchor(self, registry, event, receiptor, auths):
         """Reuse or author a seal, collect receipts, and verify TEL acceptance.
 
         Args:
             registry: Local issuer registry owning the already staged event.
-            event: Exact native TEL event to seal; never recreated on retry.
+            event: Exact ACDC v2 registry TEL event to seal; never recreated on retry.
             receiptor: Scheduled wallet receipt worker.
             auths: Witness AID to short-lived authentication header mapping.
 
         Yields:
             float: Cooperative receipt progress. Missing quorum remains a failure.
 
-        The pending-anchor search adapts KERIpy NativeAuthor.anchor at 9ca869f6;
+        The pending-anchor search adapts KERIpy AcdcV2Author.anchor
+        (named NativeAuthor.anchor at historical commit 9ca869f6);
         it selects authoring work, not evidence accepted on behalf of a verifier.
         """
         hab = registry.hab
@@ -418,7 +419,7 @@ class CredentialUpdateDoer(doing.DoDoer):
 
 
 class IssueCredentialDoer(CredentialUpdateDoer):
-    """Issue a native credential with the selected issuer authentication factor."""
+    """Issue an ACDC v2 credential with the selected issuer authentication factor."""
 
     def __init__(self, app, schema_said, recipient_pre, attributes, edges=None, rules=None,
                  codes=None, signal_bridge=None, authentication='registry', nonce=None,

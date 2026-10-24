@@ -8,7 +8,7 @@ from datetime import timedelta
 import pytest
 from hio.base import doing
 from keri import kering
-from keri.acdc import ipexing as native
+from keri.acdc import ipexing as acdc_v2_ipexing
 from keri.help import helping
 from keri.peer import exchanging
 
@@ -26,10 +26,10 @@ def _run_sender(vault):
 def test_readiness_after_acceptance_preserves_authorization(ipex_vaults, ipex_mailbox, monkeypatch):
     issuer, holder = ipex_vaults('readiness-issuer'), ipex_vaults('readiness-holder')
     ih, hh, _, _, _, acdc, proof = _ipex_fixture(issuer, holder)
-    request, request_atc = native.apply(hh, ih.pre, 'Request disclosure',
+    request, request_atc = acdc_v2_ipexing.apply(hh, ih.pre, 'Request disclosure',
         modifiers={'dp': [[[acdc.sad['s']['$id'], '/', []]]]})
     _deliver_ipex(issuer.vault, ipexing.prepare(holder.vault, hh, request, request_atc))
-    grant, atc = native.grant(ih, hh.pre, 'Approved disclosure', proof, apply=request)
+    grant, atc = acdc_v2_ipexing.grant(ih, hh.pre, 'Approved disclosure', proof, apply=request)
     checks = []
 
     def pending(*args):
@@ -60,7 +60,7 @@ def test_readiness_after_acceptance_preserves_authorization(ipex_vaults, ipex_ma
 def test_saved_message_recovery_is_explicit_and_idempotent(ipex_vaults):
     issuer, holder = ipex_vaults('saved-issuer'), ipex_vaults('saved-holder')
     ih, hh, _, _, _, _, proof = _ipex_fixture(issuer, holder)
-    grant, atc = native.grant(ih, hh.pre, 'Approved disclosure', proof)
+    grant, atc = acdc_v2_ipexing.grant(ih, hh.pre, 'Approved disclosure', proof)
     ipexing.prepare(issuer.vault, ih, grant, atc)
     assert issuer.vault.db.outbox.get((grant.said,)) is None
     issuer.close_vault()
@@ -75,7 +75,7 @@ def test_saved_message_recovery_is_explicit_and_idempotent(ipex_vaults):
 def test_saved_grant_expiry_blocks_without_resigning(ipex_vaults, monkeypatch):
     issuer, holder = ipex_vaults('expired-issuer'), ipex_vaults('expired-holder')
     ih, hh, _, _, _, _, proof = _ipex_fixture(issuer, holder)
-    grant, atc = native.grant(ih, hh.pre, 'Approved disclosure', proof)
+    grant, atc = acdc_v2_ipexing.grant(ih, hh.pre, 'Approved disclosure', proof)
     ipexing.submit(issuer.vault, ih, grant, atc)
     original = exchanging.serializeMessage(issuer.hby, grant.said)
     policy = issuer.hby.db.kramCTYP.get('~')
@@ -92,7 +92,7 @@ def test_final_readiness_gate_prevents_transport(ipex_vaults, monkeypatch, failu
     """Readiness changing after the initial check cannot start a network attempt."""
     issuer, holder = ipex_vaults('final-issuer'), ipex_vaults('final-holder')
     ih, hh, _, _, _, _, proof = _ipex_fixture(issuer, holder)
-    grant, atc = native.grant(ih, hh.pre, 'Approved disclosure', proof)
+    grant, atc = acdc_v2_ipexing.grant(ih, hh.pre, 'Approved disclosure', proof)
     ipexing.submit(issuer.vault, ih, grant, atc)
     checks = 0
     def check(*args):
@@ -115,7 +115,7 @@ def test_delivery_age_uses_authentication_specific_kram_lag(ipex_vaults, monkeyp
     sender = ipex_vaults('timing-sender')
     hab = sender.hby.makeHab(name='sender', icount=key_count, isith=1)
     recipient = sender.hby.makeHab(name='recipient')
-    exn, atc = native.apply(hab, recipient.pre, 'Timing boundary', modifiers={'dp': [[]]})
+    exn, atc = acdc_v2_ipexing.apply(hab, recipient.pre, 'Timing boundary', modifiers={'dp': [[]]})
     ipexing.prepare(sender.vault, hab, exn, atc)
     policy = sender.hby.db.kramCTYP.get('~')
     assert policy.ll > policy.sl

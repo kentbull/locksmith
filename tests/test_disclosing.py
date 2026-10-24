@@ -201,7 +201,7 @@ def test_optional_custody_derives_without_gating_held_proofs(ipex_vaults, tmp_pa
     with pytest.raises(kering.AuthError):
         disclosing.material(target.vault, earlier, refresh=True, derive=True, **options)
     # This retained event-2 opening is sufficient; ordinary presentation never
-    # loads the damaged salt record and still passes native verification.
+    # loads the damaged salt record and still passes ACDC v2 IPEX verification.
     grant, atc = ipexing.grant(target.vault, holder, acdc.said, issuer.pre, from_grant=current)
     assert ipexing.prepare(target.vault, holder, grant, atc)
 

@@ -371,7 +371,7 @@ def test_registry_worker_publishes_owned_history_without_registry_cache(wallets,
 
 
 @pytest.mark.parametrize('outcome', ['replay', 'timeout', 'close', 'failure'])
-def test_observer_refresh_waits_for_native_issuer_anchor(wallets, service, qapp, monkeypatch, outcome):
+def test_observer_refresh_waits_for_acdc_v2_issuer_anchor(wallets, service, qapp, monkeypatch, outcome):
     sender, receiver = wallets
     issuer, registrar, registry, acdc = _issue(sender)
     _copy_kel(issuer, receiver)
@@ -385,7 +385,7 @@ def test_observer_refresh_waits_for_native_issuer_anchor(wallets, service, qapp,
     if outcome == 'timeout':
         monkeypatch.setattr(registries, 'monotonic', lambda: clock[0])
 
-    # Replace only network delivery. The native AnchorQuerier still waits for
+    # Replace only network delivery. The registry AnchorQuerier still waits for
     # the replay to pass Kevery and for the exact accepted seal to be present.
     class ReplayTransport(doing.DoDoer):
         def __init__(self, hby):
@@ -443,7 +443,7 @@ def test_observer_refresh_waits_for_native_issuer_anchor(wallets, service, qapp,
             assert 'bad child framing' in worker.error
 
 
-def test_v1_identifier_introduction_and_v2_json_query_fit_native_http():
+def test_v1_identifier_introduction_and_v2_json_query_fit_cesr_http():
     from keri.app import forwarding, httping
     from keri.core import SerderKERI
 
@@ -464,7 +464,7 @@ def test_v1_identifier_introduction_and_v2_json_query_fit_native_http():
         assert all(request['headers'][httping.CESR_ATTACHMENT_HEADER] for request in requests)
 
 
-def test_native_anchor_query_posts_json_then_accepts_injected_kel(wallets, service, qapp, monkeypatch):
+def test_acdc_v2_anchor_query_posts_json_then_accepts_injected_kel(wallets, service, qapp, monkeypatch):
     from keri.core import SerderKERI
 
     source, receiver = wallets
@@ -478,7 +478,7 @@ def test_native_anchor_query_posts_json_then_accepts_injected_kel(wallets, servi
     url, state, requests = service
     witness = source.hby.makeHab(name='witness', transferable=False)
     # Exercise the outgoing JSON query through HTTPMessenger and HIO. The
-    # responder injects KEL replay into native verification below; it does not
+    # responder injects KEL replay into ACDC v2 IPEX verification below; it does not
     # return replay through the HTTP response or the mailbox receive path.
     monkeypatch.setattr(holder, 'endsFor', lambda pre: {
         kering.Roles.witness: {witness.pre: {kering.Schemes.http: url}}})
@@ -509,7 +509,7 @@ def test_native_anchor_query_posts_json_then_accepts_injected_kel(wallets, servi
 
 
 @pytest.mark.parametrize('rotations', [0, 4, 32])
-def test_wallet_query_uses_native_observer_ingress(wallets, qapp, rotations):
+def test_wallet_query_uses_acdc_v2_observer_ingress(wallets, qapp, rotations):
     serving = pytest.importorskip('kfobserver.core.serving')
     from hio.core import http, tcp
 

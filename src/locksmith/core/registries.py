@@ -35,7 +35,7 @@ def ingest(vault, regk, stream):
     """Verify an observer chain before extending accepted local registry history.
 
     A response cannot replace accepted events or roll back the known head.
-    Native TEL acceptance markers are written in order after full validation.
+    ACDC v2 registry TEL acceptance markers are written in order after full validation.
     An interrupted append leaves a verified prefix that a retry can complete.
     """
     events = _events(stream)
@@ -255,7 +255,7 @@ def required(sad):
 class RegistryEvidenceDoer(doing.DoDoer):
     """Keep disclosed registry evidence current for one open vault.
 
-    Work is reconstructed from issued credentials, accepted Grants, and native
+    Work is reconstructed from issued credentials, accepted Grants, and ACDC v2 registry
     proof escrow. Successful freshness and publication checks are never carried
     across a vault reopen. Services are configured in ``hby.cf['registries']``.
     """

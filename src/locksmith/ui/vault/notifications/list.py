@@ -335,7 +335,7 @@ class NotificationsListPage(QWidget):
             return self._format_generic_notification(note, rid, timestamp_display)
 
     def _format_ipex_message(self, exn, route: str, actual_message: str = "") -> tuple[str, str]:
-        """Format native exchange results and expose grants for explicit acceptance."""
+        """Format ACDC v2 IPEX exchange results and expose grants for explicit acceptance."""
         if exn.pvrsn.major != 2 or not exn.sad.get('x'):
             return "Unsupported IPEX", "This exchange does not use ACDC V2 IPEX"
         verb = route.rsplit('/', 1)[-1].upper()

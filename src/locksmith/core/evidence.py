@@ -42,7 +42,7 @@ def receive(vault, regk, raw, headers, *, maximum_age=15.0):
     Args:
         vault: Receiver owning verified evidence stores.
         regk: Requested registry identifier.
-        raw: Complete supporting KEL and framed native TEL bytes.
+        raw: Complete supporting KEL and framed ACDC v2 registry TEL bytes.
         headers: Lowercase HTTP header map from the configured observer endpoint.
         maximum_age: Positive finite maximum receiver observation age in seconds.
 
