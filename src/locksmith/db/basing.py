@@ -95,6 +95,13 @@ class GrantReceipt:
 
 @dataclass
 class IpexSubmission:
+    """Authorize delivery of one retained EXN, keyed by its SAID in outbox.
+
+    ``waiting_evidence`` preserves consent while prohibiting transmission;
+    ``attempts`` counts transport attempts, not observer-readiness checks.
+    Existing persisted records need no schema migration.
+    """
+
     status: str = 'pending'
     attempts: int = 0
     retry_at: float = 0.0

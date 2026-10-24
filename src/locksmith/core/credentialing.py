@@ -92,6 +92,14 @@ def validate_schema(vault, acdc):
     return schemer
 
 
+class RegistryEvidencePending(kering.MissingChainError):
+    """A configured observer or registrar has not completed a readiness check.
+
+    Callers may wait and retry the same approved operation. This is not proof
+    invalidity or authorization to transmit without current evidence.
+    """
+
+
 def require_registry_evidence(vault, acdc, hab):
     """Require a recent independent status check before a wallet decision."""
     from locksmith.core.registries import required
@@ -103,11 +111,11 @@ def require_registry_evidence(vault, acdc, hab):
         if not worker.ensure(regk, hab):
             detail = worker.errors.get(regk, 'Waiting for a current observer status check')
             if not worker.observer_url:
-                detail = 'Configure an observer in Settings to check credential status'
-            raise kering.MissingChainError(detail)
+                raise kering.ConfigurationError('Configure an observer in Settings to check credential status')
+            raise RegistryEvidencePending(detail)
         rip = vault.rgy.store.seqEvent(regk, 0)
         if rip is not None and rip.israid in vault.hby.prefixes and not worker.published(regk):
-            raise kering.MissingChainError('Waiting for the registrar to accept the issuer registry update')
+            raise RegistryEvidencePending('Waiting for the registrar to accept the issuer registry update')
 
 
 def credential_state(vault, acdc, blinder=None, *, blinders=None):

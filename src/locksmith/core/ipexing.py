@@ -1,6 +1,7 @@
 # -*- encoding: utf-8 -*-
 """Native exchanges with V2 JSON bodies and V2 CESR attachments."""
 from collections import deque
+from copy import deepcopy
 from collections.abc import Mapping
 from contextlib import closing
 from itertools import islice
@@ -10,6 +11,7 @@ from hio.core.http import httping
 from keri import help, kering
 from keri.acdc import acdcmap, ipexing
 from keri.app import agenting, forwarding
+from keri.core.kraming import AuthTypes
 from keri.core import Compactor, Prefixer, Saider, SerderACDC, SerderKERI, parsing
 from keri.help import helping
 from keri.peer import exchanging
@@ -180,7 +182,38 @@ def _validate_outgoing_grant(vault, hab, grant):
     _require_presenter(grant_credential(vault, grant.said), hab.pre, grant.sad['ri'], vault=vault)
 
 
-def prepare(vault, hab, serder, attachment):
+def _require_delivery_time(vault, serder):
+    """Reject a retained message already stale under this wallet's KRAM policy.
+
+    This is a conservative local send gate, not a prediction of a remote
+    verifier's policy or network arrival time. Reuse KERIpy's authentication
+    classification against the exact retained attachments; never re-sign an
+    expired reply. Core KRAM remains authoritative at the receiver.
+    """
+    kramer = vault.kvy.kramer
+    if kramer is None or not kramer.enabled:
+        return
+    if error := expiry_error(vault, serder):
+        raise kering.ValidationError(error)
+    stream = exchanging.serializeMessage(vault.hby, serder.said)
+    parsed = parsing.Parser().parse(ims=bytearray(stream), processive=False,
+                                   version=kering.Vrsn_2_0)[0]
+    attachments = parsed if isinstance(parsed, dict) else vars(parsed)
+    kever = vault.hby.kevers[serder.pre]
+    auth, _ = kramer._resolveAuthType(
+        serder, attachments, kever, kramer._hasSeals(serder.pre, attachments),
+        kramer._hasSigs(serder.pre, attachments), serder.pre)
+    if auth is None:
+        raise kering.ValidationError('Saved message has no usable authentication')
+    policy = vault.hby.db.kramCTYP.get('~')
+    lag = policy.ll if auth == AuthTypes.AttachedSignatureMultiKey else policy.sl
+    age = (helping.nowUTC() - helping.fromIso8601(serder.stamp)).total_seconds() * 1000
+    if age > policy.d + lag or age < -policy.d:
+        raise kering.ValidationError(
+            'Saved message is outside the local KRAM timing window. Start a new negotiation.')
+
+
+def _retain(vault, hab, serder, attachment):
     """Retain a new local message, or reuse its previously verified copy.
 
     This is submission preparation, not intake of additional attachments.
@@ -198,14 +231,27 @@ def prepare(vault, hab, serder, attachment):
                                version=kering.Vrsn_2_0)
     if not vault.exc.complete(serder.said):
         raise kering.ValidationError('Outgoing IPEX has not passed protocol verification')
+    return exchanging.serializeMessage(vault.hby, serder.said)
+
+
+def prepare(vault, hab, serder, attachment):
+    """Retain and validate a message without authorizing network delivery.
+
+    Preserve the explicit preparation API for import and admission callers.
+    Submission uses _retain directly so mutable readiness cannot strand consent.
+    """
+    stream = _retain(vault, hab, serder, attachment)
     if serder.route == '/ipex/grant' and serder.sad['a'].get('o'):
         _validate_outgoing_grant(vault, hab, serder)
-    return exchanging.serializeMessage(vault.hby, serder.said)
+    return stream
 
 
 def submit(vault, hab, serder, attachment):
     """Retain a signed message and authorize its delivery by the vault worker."""
-    prepare(vault, hab, serder, attachment)
+    _retain(vault, hab, serder, attachment)
+    # Protocol acceptance and delivery consent are separate databases. A crash
+    # here is recovered by the existing explicit Send saved message action.
+    # The sender checks mutable readiness before any network operation.
     if vault.db.outbox.put((serder.said,), IpexSubmission()):
         vault.signals.emit_doer_event('Ipex', 'queued', {'said': serder.said})
     return serder.said
@@ -550,6 +596,49 @@ def respond(vault, said, action, message='', credential_said=None, *, from_grant
     return submit(vault, hab, exn, atc)
 
 
+class ApprovedResponse(doing.DoDoer):
+    """Retry one reviewed response while its vault remains open.
+
+    ``said`` and ``action`` identify the exact predecessor and response;
+    ``selection`` is copied so widgets cannot alter consent during a wait.
+    The owning outbox scheduler supplies HIO recurrence. No intent is persisted
+    until submit authorizes an exact signed message; closing cancels that wait.
+    """
+
+    def __init__(self, vault, said, action, **selection):
+        """Capture vault, predecessor SAID, action and copied disclosure options."""
+        self.vault, self.said, self.action = vault, said, action
+        self.selection = deepcopy(selection)
+        if credential_said := self.selection.get('credential_said'):
+            view = credentialing.credential(vault, credential_said,
+                                            grant=self.selection.get('from_grant'))
+            if view['grant']:
+                self.selection['from_grant'] = view['grant']
+        self.result = None
+        self.error = ''
+        self.waiting = False
+        super().__init__(doers=[doing.doify(self.respondDo)])
+
+    def respondDo(self, tymth=None, tock=0.0, **opts):
+        """Revalidate the frozen decision each pass; construct at most one reply."""
+        self.wind(tymth)
+        yield self.tock
+        while not getattr(self.vault, 'closed', False):
+            try:
+                self.result = respond(self.vault, self.said, self.action, **self.selection)
+                self.error, self.waiting = '', False
+                return
+            except credentialing.RegistryEvidencePending as error:
+                self.error, self.waiting = str(error), True
+            except (kering.KeriError, ValueError) as error:
+                self.error, self.waiting = str(error), False
+                return
+            finally:
+                self.vault.signals.emit_doer_event('Ipex', 'response_preparation',
+                                                   {'prior': self.said})
+            yield 0.25
+
+
 def exchanges(vault):
     """Read saved IPEX chains, with transport and acceptance records attached.
 
@@ -778,7 +867,7 @@ def _due(record, now):
     A failed message retries automatically after each delay in RetryDelays,
     then waits for a manual Retry, which sets it back to pending.
     """
-    if record.status == 'pending':
+    if record.status in ('pending', 'waiting_evidence'):
         return True
     return (record.status == 'failed' and record.attempts <= len(SendIpexDoer.RetryDelays)
             and record.retry_at <= now)
@@ -803,6 +892,7 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
         record = None
         consent = None
         claimed = False
+        transport_started = False
         try:
             _require_vault(self.vault)
             record = self.vault.db.outbox.get((self.said,))
@@ -814,6 +904,7 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
             self.hab = self.vault.hby.habByPre(self.serder.pre)
             if self.hab is None:
                 raise kering.ValidationError('Saved submission has no local sender')
+            _require_delivery_time(self.vault, self.serder)
             if self.serder.route == '/ipex/grant' and self.serder.sad['a'].get('o'):
                 _validate_outgoing_grant(self.vault, self.hab, self.serder)
             if self.serder.route == '/ipex/admit':
@@ -827,7 +918,6 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
                                reply=self.serder.route not in ('/ipex/admit', '/ipex/spurn'))
                 record.status, record.error = 'sending', ''
                 record.missing_route = False
-                record.attempts += 1
                 self.vault.db.outbox.pin((self.said,), record)
                 claimed = True
             # The EXN and its exact source seals are durable before this wait.
@@ -847,6 +937,13 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
                     self.vault.signals.emit_doer_event('Ipex', 'accepted', {'said': self.said})
             if record is None:
                 return
+            _require_delivery_time(self.vault, self.serder)
+            if self.serder.route == '/ipex/grant' and self.serder.sad['a'].get('o'):
+                _validate_outgoing_grant(self.vault, self.hab, self.serder)
+            transport_started = True
+            record.attempts += 1
+            record.retry_at = 0.0
+            self.vault.db.outbox.pin((self.said,), record)
             stream = exchanging.serializeMessage(self.vault.hby, self.said)
             self.vault.signals.emit_doer_event('Ipex', 'sending', {'said': self.said})
             poster = forwarding.StreamPoster(hby=self.vault.hby, hab=self.hab,
@@ -888,9 +985,16 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
             record.status = 'submitted'
             self.vault.db.outbox.pin((self.said,), record)
             self.vault.signals.emit_doer_event('Ipex', 'transport_submitted', {'said': self.said})
+        except credentialing.RegistryEvidencePending as ex:
+            if record is not None and self.vault.db.opened:
+                record.status, record.error = 'waiting_evidence', str(ex)
+                record.retry_at = 0.0
+                self.vault.db.outbox.pin((self.said,), record)
+                self.vault.signals.emit_doer_event('Ipex', 'waiting_evidence',
+                                                   {'said': self.said, 'error': record.error})
         except (OSError, httping.HTTPException, kering.KeriError, ValueError) as ex:
             if record is not None and self.vault.db.opened:
-                failure = ('blocked' if not claimed and isinstance(ex, (kering.ValidationError, kering.ConfigurationError))
+                failure = ('blocked' if not transport_started and isinstance(ex, (kering.ValidationError, kering.ConfigurationError))
                            else 'failed')
                 record.status, record.error = failure, str(ex)
                 record.missing_route = isinstance(ex, MissingRouteError)
