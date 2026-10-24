@@ -22,7 +22,7 @@ from keri.app import (
 from keri.core import routing as keriRouting, eventing, coring, kraming
 from keri.peer import exchanging
 
-from locksmith.core import indirecting, challenging, ipexing, registries
+from locksmith.core import indirecting, challenging, ipexing, registries, evidence
 from locksmith.core.adjudication import Watchmen, KeyStateVarianceAuthority
 from locksmith.core.configing import ENABLE_TURRET_BROWSER_PLUGIN
 from locksmith.core.grouping import CounselingCompletionDoer
@@ -174,6 +174,7 @@ class Vault(doing.DoDoer):
             kvy=self.kvy,
             rvy=self.rvy,
             rgy=self.rgy,
+            evidence=evidence.processor(self),
         )
 
         # Notification toast doer

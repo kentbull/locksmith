@@ -60,12 +60,19 @@ class BrowserPluginSettings:
 
 @dataclass
 class IssuedCredential:
+    """Retain exact issuer bytes and the current authoring/proof reference.
+
+    ``raw`` is the issued ACDC; ``update``/``stream`` identify its retained TEL
+    work. ``blinder`` is an event-specific opening, not a registry derivation
+    salt. ``registry_mode`` selects public, random blinded or derived updates;
+    the legacy default preserves records created before that field existed."""
     raw: str
     blinder: str = ''
     update: str = ''
     stream: str = ''
     witness_threshold: int = 0
     created_at: str = ''
+    registry_mode: str = 'blinded'
 
 
 @dataclass
@@ -77,11 +84,13 @@ class AcceptedCredential:
 
 @dataclass
 class GrantReceipt:
+    """Consent to one exact grant; accepted_at is local time, not publication."""
     credential: str
     admit: str = ''
     send: bool = False
     status: str = 'preparing'
     error: str = ''
+    accepted_at: str = ''
 
 
 @dataclass
@@ -99,6 +108,10 @@ class MailboxFrame:
 
 
 class LocksmithBaser(dbing.LMDBer):
+    """Store wallet metadata, explicit grant consent and pending application work.
+
+    KERIpy owns authenticated protocol records. These application subdatabases
+    reference those records and must not replace core acceptance decisions."""
     TailDirPath = "keri/rt"
     AltTailDirPath = ".keri/rt"
     TempPrefix = "rt"
@@ -144,6 +157,10 @@ class LocksmithBaser(dbing.LMDBer):
         self.issued = koming.Komer(db=self, subkey='issued.', klas=IssuedCredential)
         self.accepted = koming.Komer(db=self, subkey='accepted.', klas=AcceptedCredential)
         self.receipts = koming.Komer(db=self, subkey='receipts.', klas=GrantReceipt)
+        # Opening this schema never reads/decrypts a salt. Only explicit optional
+        # derivation/provisioning operations use RegistryCustody over this table.
+        from keri.app.registry_custody import EncryptedCustody
+        self.custody = koming.Komer(db=self, subkey='custody.', klas=EncryptedCustody)
         self.outbox = koming.Komer(db=self, subkey='outbox.', klas=IpexSubmission)
         self.inbox = koming.Komer(db=self, subkey='inbox.', klas=MailboxFrame)
 

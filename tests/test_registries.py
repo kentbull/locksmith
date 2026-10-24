@@ -114,11 +114,13 @@ def test_registry_ingest_failure_leaves_store_unchanged(wallets, failure):
 
 @pytest.fixture
 def service(qapp):
+    """Yield a loopback Qt HTTP fixture with configurable replies; this is not a KF service."""
     server = QTcpServer()
     assert server.listen(QHostAddress.SpecialAddress.LocalHost, 0)
     connections, buffers, requests = [], {}, []
     state = {'respond': lambda method, path, body: (200, b'{}')}
     def read(connection):
+        """Buffer complete Content-Length requests and reply through the configured fixture callback."""
         buffers[connection].extend(bytes(connection.readAll()))
         raw = buffers[connection]
         while b'\r\n\r\n' in raw:
@@ -133,9 +135,11 @@ def service(qapp):
             result = state['respond'](method, path, body[:length])
             if result is None:
                 return
-            status, response = result
+            status, response = result[:2]
+            extra = result[2] if len(result) == 3 else {}
+            extra = ''.join(f'{key}: {value}\r\n' for key, value in extra.items())
             connection_mode = 'keep-alive' if state.get('keepalive') else 'close'
-            connection.write(f'HTTP/1.1 {status} Reply\r\nContent-Length: {len(response)}\r\nConnection: {connection_mode}\r\n\r\n'.encode() + response)
+            connection.write(f'HTTP/1.1 {status} Reply\r\nContent-Length: {len(response)}\r\nConnection: {connection_mode}\r\n{extra}\r\n'.encode() + response)
             if not state.get('keepalive'):
                 connection.disconnectFromHost()
                 return
@@ -544,3 +548,119 @@ def test_wallet_query_uses_native_observer_ingress(wallets, qapp, rotations):
         finally:
             runner.exit()
             ctx.observer.close()
+
+
+def _full_reply(sender, registry):
+    """Export real accepted evidence and receiver-observation headers for the fixture."""
+    from locksmith.core import evidence
+    from keri.help import helping
+    stream = evidence.processor(sender).clone([registry.regk])
+    return stream, {
+        'content-type': 'application/cesr',
+        'observer-evidence-state': 'fresh',
+        'observer-observed-at': helping.nowIso8601(),
+        'observer-registry-head': sender.rgy.store.headEvent(registry.regk).said,
+    }
+
+
+@pytest.mark.parametrize('public', [False, True])
+def test_full_observer_fetch_verifies_kels_without_signer_put(wallets, service, qapp, public):
+    """The explicit full profile authenticates an initially unknown issuer from proof."""
+    sender, receiver = wallets
+    issuer, _, registry, acdc = _issue(sender)
+    if public:
+        from keri.acdc.messaging import update
+        head = sender.rgy.store.headEvent(registry.regk)
+        event = update(registry.regk, head.said, acdc.said, 'issued', sn=2)
+        registry.processEvent(event)
+        _anchor(issuer, registry, event)
+    holder = receiver.hby.makeHab(name='holder')
+    config = receiver.hby.cf.get() or {}
+    config['registries'] = {'profile': 'full-evidence'}
+    receiver.hby.cf.put(config)
+    url, state, requests = service
+    stream, headers = _full_reply(sender, registry)
+    state['respond'] = lambda method, path, body: (200, stream, headers)
+    doer = registries.RegistrySyncDoer(receiver, holder, registry.regk, observer_url=url)
+    _run(doer, qapp)
+    assert doer.error == ''
+    assert doer.result.said == headers['observer-registry-head']
+    assert [(method, path) for method, path, _ in requests] == [('POST', '/')]
+    assert issuer.pre in receiver.hby.kevers
+    assert receiver.evidence.reger is receiver.rgy.baser
+
+
+@pytest.mark.parametrize('failure', ['head', 'stale', 'future', 'missing', 'pending'])
+def test_full_reply_cannot_claim_freshness_without_matching_proof(wallets, failure):
+    """Neither a fresh header nor authentic older bytes alone imply a current head."""
+    from datetime import timedelta
+    from locksmith.core import evidence
+    from keri.help import helping
+    sender, receiver = wallets
+    _, _, registry, _ = _issue(sender)
+    stream, headers = _full_reply(sender, registry)
+    if failure == 'head':
+        headers['observer-registry-head'] = Diger(ser=b'unrelated head').qb64
+    elif failure in ('stale', 'future'):
+        offset = -60 if failure == 'stale' else 60
+        headers['observer-observed-at'] = helping.toIso8601(helping.nowUTC() + timedelta(seconds=offset))
+    elif failure == 'missing':
+        del headers['observer-observed-at']
+    else:
+        from keri.core import Counter, Codens
+        # Authentic TEL bodies without their issuer KEL remain durable dependencies.
+        stream = b''.join(raw + Counter(Codens.AttachmentGroup, count=0,
+                         version=kering.Vrsn_2_0).qb64b
+                         for raw in sender.rgy.store.cloneTelIter(registry.regk))
+    with pytest.raises(kering.ValidationError):
+        evidence.receive(receiver, registry.regk, stream, headers)
+    if failure == 'pending':
+        assert receiver.rgy.store.head(registry.regk) is None
+        assert list(receiver.rgy.baser.maes.getTopItemIter())
+
+
+def test_full_profile_publishes_signed_complete_evidence(wallets, service, qapp):
+    """Publication carries a signed query and complete public proof, not admin JSON."""
+    sender, receiver = wallets
+    from locksmith.core import evidence
+    hab, _, registry, _ = _issue(sender)
+    config = sender.hby.cf.get() or {}
+    config['registries'] = {'profile': 'full-evidence'}
+    sender.hby.cf.put(config)
+    url, state, requests = service
+    def accept(method, path, raw):
+        """Verify the signed publication envelope and pass its stream through real shared intake."""
+        parsed = Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(raw), processive=False)
+        assert parsed.serder.route == 'tels/publish'
+        assert parsed.serder.pre == hab.pre and parsed.sigers is not None
+        result = evidence.processor(receiver).ingest(parsed.serder.sad['q']['stream'].encode())
+        return 200, json.dumps(result).encode()
+    state['respond'] = accept
+    doer = registries.RegistrySyncDoer(sender, hab, registry.regk, registrar_url=url)
+    _run(doer, qapp)
+    assert doer.error == ''
+    assert receiver.rgy.store.head(registry.regk).qb64 == sender.rgy.store.head(registry.regk).qb64
+    assert [(method, path) for method, path, _ in requests] == [('POST', '/ingest')]
+
+
+def test_full_observation_cache_does_not_restart_age(wallets, service, qapp, monkeypatch):
+    """A nearly expired observation gets only its remaining lifetime locally."""
+    from datetime import timedelta
+    from keri.help import helping
+    sender, receiver = wallets
+    _, _, registry, _ = _issue(sender)
+    holder = receiver.hby.makeHab(name='holder')
+    url, state, requests = service
+    receiver.hby.cf.put({'registries': {'profile': 'full-evidence', 'observer': url}})
+    stream, headers = _full_reply(sender, registry)
+    headers['observer-observed-at'] = helping.toIso8601(helping.nowUTC() - timedelta(seconds=14))
+    state['respond'] = lambda method, path, body: (200, stream, headers)
+    worker = registries.RegistrySyncDoer(receiver, holder, registry.regk, observer_url=url)
+    _run(worker, qapp)
+    assert not worker.error
+    assert 0 < worker.fresh_until - monotonic() < 1
+    cache = registries.RegistryEvidenceDoer(receiver)
+    cache._fetched[registry.regk] = (worker.result.said, worker.fresh_until)
+    assert cache.ensure(registry.regk, holder)
+    monkeypatch.setattr(registries, 'monotonic', lambda: worker.fresh_until + .01)
+    assert not cache.ensure(registry.regk, holder)

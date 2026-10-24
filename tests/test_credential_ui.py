@@ -748,6 +748,7 @@ def test_grant_notification_and_file_acceptance_use_verified_native_evidence(
 
 
 def test_disclosure_review_shows_linked_data_and_blocks_private_offers(wallet):
+    """Require the real dialogs to show linked data and refuse unsupported private Offers."""
     from test_credentialing import _load_schema, _issue
     from locksmith.core import credentialing
 
@@ -758,7 +759,7 @@ def test_disclosure_review_shows_linked_data_and_blocks_private_offers(wallet):
     source = _issue(app, schemer, holder, attributes={'LEI': '254900OPPU84GM83MG36'},
                     authentication='anchor', rules=terms)
     origin = _issue(app, schemer, holder, attributes={'LEI': '5493001KJTIIGC8Y1R12'},
-                    authentication='anchor', edges={'source': {'n': source, 's': schemer.said}})
+                    authentication='anchor', edges={'source': {'n': source, 's': schemer.said, 'o': 'NI2I'}})
     grant, atc = ipexing.grant(app.vault, issuer, origin, holder.pre)
     ipexing.prepare(app.vault, issuer, grant, atc)
     nodes = exchanging.loadParsedNestedSubstreams(app.hby, grant.said)
@@ -1958,3 +1959,41 @@ def test_notifications_do_not_replay_history_and_exchange_read_keeps_decision(wa
                if note.attrs.get('d') == grant.said)
     assert row['_attention']
     assert events[-1][:2] == ('MailboxListener', 'mark_as_read')
+
+
+@pytest.mark.parametrize('mode', ['public', 'blinded'])
+def test_issue_controls_select_state_capability(wallet, qapp, mode):
+    """Actual form controls reach the real issuer worker without implicit custody."""
+    from PySide6.QtTest import QTest
+    from PySide6.QtCore import Qt
+    app = wallet('issue-state-' + mode)
+    issuer = app.hby.makeHab(name='issuer')
+    recipient = app.hby.makeHab(name='recipient')
+    schemer = schema()
+    app.hby.db.schema.pin((schemer.said,), schemer)
+    app.vault.db.issuers.pin((schemer.said,), issuer.pre)
+    dialog = IssueCredentialDialog(app)
+    dialog.schema_dropdown.setCurrentIndex(1)
+    dialog.local_radio.setChecked(True)
+    dialog.recipient_dropdown.setCurrentIndex(dialog.recipient_dropdown.combo_box.findData(recipient.pre))
+    dialog._dynamic_field_widgets['nickname']['widget'].setText('Alice')
+    options = dialog.state_options
+    options.mode.setCurrentIndex(options.mode.combo_box.findData(mode))
+    assert not list(app.vault.db.custody.getTopItemIter())
+    dialog.show()
+    qapp.processEvents()
+    QTest.keyClick(dialog.issue_button, Qt.Key.Key_Space)
+    assert len(app.queued) == 1
+    doing.Doist(doers=app.queued, limit=1, tock=.03125).do()
+    rows = list(app.vault.db.issued.getTopItemIter())
+    assert len(rows) == 1 and rows[0][1].registry_mode == mode
+    assert bool(rows[0][1].blinder) is (mode == 'blinded')
+    assert not list(app.vault.db.custody.getTopItemIter())
+    options.mode.setCurrentIndex(options.mode.combo_box.findData('derived'))
+    options.discloser.setCurrentIndex(options.discloser.combo_box.findData(recipient.pre))
+    assert options.selection() == {'registry_mode': 'derived', 'discloser': recipient.pre}
+    options.bound_event.line_edit.setFocus()
+    QTest.keyClicks(options.bound_event.line_edit, recipient.kever.serder.said)
+    assert options.selection()['bound_event'] == recipient.kever.serder.said
+    options.set_registry(False)
+    assert options.selection() == {}

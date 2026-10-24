@@ -532,6 +532,7 @@ def test_declared_authentication_cannot_fall_back_to_valid_signature(ipex_vaults
 
 
 def test_retained_graph_rechecks_linked_issuer_evidence(ipex_vaults):
+    """Recheck each linked proof on reuse; use explicit NI2I for these independent credentials."""
     from keri.peer import exchanging
 
     sender, receiver = ipex_vaults('graph-sender'), ipex_vaults('graph-receiver')
@@ -540,7 +541,7 @@ def test_retained_graph_rechecks_linked_issuer_evidence(ipex_vaults):
     receiver.hby.db.schema.pin((schema.said,), schema)
     source = _issue(sender, schema, holder, authentication='signature')
     origin = _issue(sender, schema, holder, authentication='anchor', edges={
-        'source': {'n': source, 's': schema.said}})
+        'source': {'n': source, 's': schema.said, 'o': 'NI2I'}})
     _deliver_ipex(sender.vault, identifier_introduction(holder))
     _deliver_ipex(receiver.vault, identifier_introduction(issuer))
     grants = []

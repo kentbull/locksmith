@@ -10,11 +10,11 @@ from hio.core.http import httping
 from keri import help, kering
 from keri.acdc import acdcmap, ipexing
 from keri.app import agenting, forwarding
-from keri.core import Compactor, Saider, SerderACDC, SerderKERI, parsing
+from keri.core import Compactor, Prefixer, Saider, SerderACDC, SerderKERI, parsing
 from keri.help import helping
 from keri.peer import exchanging
 
-from locksmith.core import credentialing
+from locksmith.core import credentialing, disclosing
 from locksmith.core.indirecting import receiving_endpoints
 from locksmith.core.receipting import LocksmithReceiptor
 from locksmith.db.basing import AcceptedCredential, GrantReceipt, IpexSubmission
@@ -55,21 +55,29 @@ class MissingRouteError(kering.ConfigurationError):
     """The recipient needs an introduction with a usable delivery endpoint."""
 
 
-def presentation_eligible(credential, pre):
+def presentation_eligible(credential, pre, designated=()):
     """Return whether pre is the disclosed issuee or the original issuer.
 
-    This wallet supports direct presentation, not delegated presentation rights.
-    Being the recipient of an earlier Grant does not confer presentation rights.
+    Args:
+        credential: Exact disclosed ACDC.
+        pre: Candidate presenter identifier.
+        designated: Explicit local-policy allowlist; never inferred from receipt
+            or custody. Naming an AID here establishes no cryptographic delegation.
     """
-    return bool(pre and pre in (credential.israid, credential.iseaid))
+    return bool(pre and pre in (credential.israid, credential.iseaid, *designated))
 
 
-def _require_presenter(credential, sender, recipient):
-    if not presentation_eligible(credential, sender):
+def _require_presenter(credential, sender, recipient, *, vault=None):
+    """Enforce the default roles or an explicitly configured per-credential policy."""
+    designated = ((vault.hby.cf.get() or {}).get('presentation_policy', {}).get(credential.said, [])
+                  if vault is not None else [])
+    if not presentation_eligible(credential, sender, designated):
         raise kering.ValidationError('Only the credential issuee or original issuer may present it')
     if (sender == credential.israid and sender != credential.iseaid
             and credential.iseaid and recipient != credential.iseaid):
         raise kering.ValidationError('Original issuer delivery must address the credential issuee')
+    if sender in designated:
+        return  # Explicit local policy, not an assertion of issuer delegation.
     # An opaque attribute section cannot establish whether delivery is targeted.
     if credential.iseaid is None and (
             isinstance(credential.sad.get('a'), str)
@@ -77,6 +85,35 @@ def _require_presenter(credential, sender, recipient):
             or isinstance(credential.sad.get('A'), list)
             and (len(credential.sad['A']) < 2 or not isinstance(credential.sad['A'][1], Mapping))):
         raise kering.ValidationError('Disclose the issuee block before presenting this credential')
+
+
+def set_presenter_policy(vault, credential_said, presenter, *, enabled=True):
+    """Record an operator's explicit per-credential presenter allowance.
+
+    Args:
+        vault: Open wallet whose local admission/presentation policy changes.
+        credential_said: Exact credential commitment, not a schema-wide rule.
+        presenter: Known AID selected by the operator.
+        enabled: Add the allowance, or remove it when False.
+
+    This is local trust policy only. It grants no issuer keys, does not provision
+    a salt, and cannot substitute for possessed credential/opening evidence.
+    Each receiving application's policy must separately accept that presenter.
+    """
+    _require_vault(vault)
+    Saider(qb64=credential_said)
+    Prefixer(qb64=presenter)
+    if presenter not in vault.hby.kevers:
+        raise ValueError('Introduce the selected presenter before configuring policy')
+    config = vault.hby.cf.get() or {}
+    policy = config.setdefault('presentation_policy', {})
+    names = set(policy.get(credential_said, []))
+    names.add(presenter) if enabled else names.discard(presenter)
+    if names:
+        policy[credential_said] = sorted(names)
+    else:
+        policy.pop(credential_said, None)
+    vault.hby.cf.put(config)
 
 
 def _edge_nodes(sad):
@@ -140,7 +177,7 @@ def _validate_outgoing_grant(vault, hab, grant):
         state = credentialing.authentication(vault, nest)
         if state['et'] not in ('issued', 'authenticated'):
             raise kering.ValidationError(f"Credential state is {state['et']}, not issued")
-    _require_presenter(grant_credential(vault, grant.said), hab.pre, grant.sad['ri'])
+    _require_presenter(grant_credential(vault, grant.said), hab.pre, grant.sad['ri'], vault=vault)
 
 
 def prepare(vault, hab, serder, attachment):
@@ -220,16 +257,32 @@ def _disclosure_plan(origin, nodes):
     return [plan]
 
 
-def _credential_evidence(vault, credential_said, hab=None):
-    """Load the retained origin and its linked credentials."""
-    view = credentialing.credential(vault, credential_said)
-    if view['status']['et'] not in ('issued', 'authenticated'):
+def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
+                         disclose=(), refresh=False, openings=(), derive=False, bound_event=None, preview=False):
+    """Load exact selected material and its native disclosure plan.
+
+    vault/credential_said identify inventory; hab optionally enforces current
+    observer policy. from_grant selects one admission. disclose chooses held
+    attribute paths; refresh/openings/derive select explicit Grant proof sources.
+    preview selects content only for Offer and refuses state-opening options.
+    Return view, serialized artifacts, native plan and disclosed SADs. Grant
+    mode verifies every node's authentication; Offer makes no current-state claim.
+    """
+    view = credentialing.credential(vault, credential_said, grant=from_grant)
+    if preview:
+        if refresh or openings or derive or bound_event:
+            raise ValueError('State opening selection belongs to Grant, not Offer preview')
+        view = dict(view, sad=disclosing.select(SerderACDC(sad=view['sad']), disclose).sad)
+    elif disclose or refresh or openings or derive or bound_event:
+        view = disclosing.material(vault, view, paths=disclose, refresh=refresh,
+                                   openings=openings, derive=derive, bound_event=bound_event)
+    if not preview and view['status']['et'] not in ('issued', 'authenticated'):
         raise kering.ValidationError('Credential does not have a verified issued state or issuer authentication')
     if hab is not None:
         credentialing.require_registry_evidence(vault, SerderACDC(sad=view['sad']), hab)
     artifacts = dict(view['artifacts'])
     # Received credentials already retain the native Grant's complete evidence.
-    pending = [view] if vault.db.issued.get((credential_said,)) else []
+    pending = [view] if not from_grant and vault.db.issued.get((credential_said,)) else []
     while pending:
         current = pending.pop()
         for said, _ in _edge_nodes(current['sad']):
@@ -238,7 +291,7 @@ def _credential_evidence(vault, credential_said, hab=None):
             source = credentialing.credential(vault, said)
             if hab is not None:
                 credentialing.require_registry_evidence(vault, SerderACDC(sad=source['sad']), hab)
-            if source['status']['et'] not in ('issued', 'authenticated'):
+            if not preview and source['status']['et'] not in ('issued', 'authenticated'):
                 raise kering.ValidationError(f'Source credential {said} is not issued')
             artifacts[said] = source['proof']
             artifacts.update(source['artifacts'])
@@ -252,18 +305,40 @@ def _credential_evidence(vault, credential_said, hab=None):
             raise kering.ValidationError('Invalid retained credential evidence')
         if hab is not None:
             credentialing.require_registry_evidence(vault, parsed[0].serder, hab)
-        state = credentialing.authentication(vault, parsed[0])
-        if state['et'] not in ('issued', 'authenticated'):
+        state = credentialing.authentication(vault, parsed[0]) if not preview else None
+        if not preview and state['et'] not in ('issued', 'authenticated'):
             raise kering.ValidationError('Source credential does not have a verified issued state')
         nodes[parsed[0].serder.said] = parsed[0].serder.sad
-    return view, list(artifacts.values()), _disclosure_plan(credential_said, nodes), nodes
+    plan = _disclosure_plan(credential_said, nodes)
+    if disclose:
+        plan[0][0][2] = list(disclose)
+    return view, list(artifacts.values()), plan, nodes
 
 
-def grant(vault, hab, credential_said, recipient, message=''):
-    """Build a grant from the wallet's retained issuance or received evidence."""
+def grant(vault, hab, credential_said, recipient, message='', *, from_grant=None,
+          disclose=(), refresh=False, openings=(), derive=False, bound_event=None):
+    """Build a grant using the selected local disclosure and optional opening.
+
+    Args:
+        vault: Open evidence and consent owner.
+        hab: Local signing identifier.
+        credential_said: Exact credential to present.
+        recipient: Counterparty AID.
+        message: Human-readable message.
+        from_grant: Explicit admitted view; None retains inventory defaults.
+        disclose: Attribute paths to reveal from material already possessed.
+        refresh: Rebuild only the registry proof against accepted current history.
+        openings: Explicit event-specific CESR proof bytes.
+        derive: Enable provisioned per-registry derivation for this operation.
+        bound_event: Optional exact accepted issuee event for derived bound state.
+
+    Returns:
+        tuple: Native signed exchange and attachments, still requiring prepare/submit.
+    """
     _require_vault(vault, hab)
-    view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab)
-    _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient)
+    view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
+        from_grant=from_grant, disclose=disclose, refresh=refresh, openings=openings, derive=derive, bound_event=bound_event)
+    _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient, vault=vault)
     return ipexing.grant(hab, recipient, message, origin=view['proof'], artifacts=artifacts,
                          modifiers={'dp': plan}, kind=kering.Kinds.json)
 
@@ -311,13 +386,21 @@ def request_schema(exn):
     plan = exn.sad['q'].get('dp', [])
     if len(plan) == 1 and plan[0]:
         schema, path, fields = plan[0][0]
-        if path == '/' and fields in ([], ['']) and all(not entry[2] for entry in plan[0][1:]):
+        if path == '/' and isinstance(fields, list) and all(not entry[2] for entry in plan[0][1:]):
             return schema
     return None
 
 
-def start(vault, hab, recipient, action, message='', *, schema=None, credential_said=None, ax=None):
-    """Start a schema request or a credential offer after explicit consent."""
+def start(vault, hab, recipient, action, message='', *, schema=None, credential_said=None,
+          ax=None, from_grant=None, disclose=()):
+    """Start an Apply or Offer after explicit local consent.
+
+    vault/hab select the local signer, recipient the counterparty, and message
+    the displayed text. schema selects an Apply schema; credential_said and
+    from_grant select an Offer's exact evidence. disclose selects attribute
+    paths (empty preserves the existing whole-credential form); ax requests
+    native anchor negotiation. Return the queued signed exchange identifier.
+    """
     _require_vault(vault, hab)
     if not recipient or recipient == hab.pre:
         raise ValueError('Choose another identifier for this exchange')
@@ -326,12 +409,13 @@ def start(vault, hab, recipient, action, message='', *, schema=None, credential_
         if not schema or vault.hby.db.schema.get((schema,)) is None:
             raise ValueError('Choose a loaded schema')
         exn, atc = ipexing.apply(hab, recipient, message,
-                                 modifiers={'dp': [[[schema, '/', []]]]}, ax=ax,
+                                 modifiers={'dp': [[[schema, '/', list(disclose)]]]}, ax=ax,
                                  kind=kering.Kinds.json)
     elif action == 'Offer':
-        view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab)
-        _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient)
-        preview = _offer_preview(view['sad'])
+        view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
+            from_grant=from_grant, disclose=disclose, preview=True)
+        _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient, vault=vault)
+        preview = SerderACDC(sad=view['sad']) if disclose else _offer_preview(view['sad'])
         exn, atc = ipexing.offer(hab, message, preview, recp=recipient,
                                  artifacts=[],
                                  modifiers={'dp': plan}, ax=ax,
@@ -395,8 +479,16 @@ def anchor_error(hab):
     return None
 
 
-def respond(vault, said, action, message='', credential_said=None):
-    """Validate the current decision before building and saving one response."""
+def respond(vault, said, action, message='', credential_said=None, *, from_grant=None,
+            refresh=False, openings=(), derive=False, bound_event=None):
+    """Validate and queue one response using the prior's agreed disclosure paths.
+
+    vault owns evidence; said names the prior; action and message express the
+    operator decision. credential_said/from_grant select exact retained material.
+    refresh/openings/derive/bound_event have the same capability meanings as grant.
+    Return the signed response identifier. The builder cannot renegotiate fields
+    at Grant time or enrich a prior admission from another inventory view.
+    """
     _require_vault(vault)
     prior = vault.hby.db.exns.get((said,))
     if error := expiry_error(vault, prior):
@@ -414,10 +506,14 @@ def respond(vault, said, action, message='', credential_said=None):
         return exn.said
     _require_route(hab, prior.pre, reply=action != 'Spurn')
     if action in ('Offer', 'Grant'):
-        view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab)
-        _require_presenter(SerderACDC(sad=view['sad']), hab.pre, prior.pre)
         request = (vault.hby.db.exns.get((prior.sad['p'],))
                    if prior.route == '/ipex/agree' else prior)
+        requested = request.sad['q'].get('dp', [[]])
+        fields = requested[0][0][2] if requested and requested[0] else []
+        view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
+            from_grant=from_grant, disclose=fields, refresh=refresh,
+            openings=openings, derive=derive, bound_event=bound_event, preview=action == 'Offer')
+        _require_presenter(SerderACDC(sad=view['sad']), hab.pre, prior.pre, vault=vault)
         schema = request_schema(request)
         if request.sad['q'].get('dp') not in (None, [[]]) and schema is None:
             raise ValueError('This disclosure plan is not supported by the whole-credential form')
@@ -435,7 +531,7 @@ def respond(vault, said, action, message='', credential_said=None):
         if schema:
             plan[0][0][2] = requested[0][0][2]
         if action == 'Offer':
-            preview = _offer_preview(view['sad'])
+            preview = SerderACDC(sad=view['sad']) if fields else _offer_preview(view['sad'])
             exn, atc = ipexing.offer(hab, message, preview, apply=prior,
                                     artifacts=[],
                                     modifiers={'dp': plan}, ax=prior.sad['a'].get('ax'),
@@ -507,6 +603,12 @@ def exchanges(vault):
 
 
 def _validate_credential(vault, credential, grant_said):
+    """Validate a parsed credential against its exact received grant.
+
+    ``vault`` supplies authenticated exchange/KEL/TEL evidence; ``credential``
+    is the parsed ACDC and ``grant_said`` names its signed Grant. Require the
+    negotiated schema, allowed presenter and valid disclosed nested proofs.
+    Raise on missing, stale or invalid evidence; never admit a credential here."""
     grant = vault.hby.db.exns.get((grant_said,))
     prior = vault.hby.db.exns.get((grant.sad['p'],)) if grant.sad['p'] else None
     if prior and prior.route == '/ipex/agree':
@@ -515,7 +617,7 @@ def _validate_credential(vault, credential, grant_said):
     actual = credential.schema if isinstance(credential.schema, str) else credential.schema['$id']
     if expected and actual != expected:
         raise kering.ValidationError('The disclosed credential does not match the agreed schema')
-    _require_presenter(credential, grant.pre, grant.sad['ri'])
+    _require_presenter(credential, grant.pre, grant.sad['ri'], vault=vault)
     for nest in exchanging.loadParsedNestedSubstreams(vault.hby, grant_said):
         credentialing.validate_schema(vault, nest.serder)
         credentialing.require_registry_evidence(vault, nest.serder, vault.hby.habByPre(grant.sad['ri']))
@@ -571,6 +673,7 @@ def _finish_receipt(vault, pre, grant_said, receipt, restore=False):
         # Keep the original inventory provenance when another grant contains C.
         vault.db.accepted.put((credential.said,), AcceptedCredential(grant_said, exn.said,
                                                                     helping.nowIso8601()))
+    receipt.accepted_at = receipt.accepted_at or helping.nowIso8601()
     receipt.status, receipt.error = 'accepted', ''
     vault.db.receipts.pin((pre, grant_said), receipt)
     return exn, stream[exn.size:]

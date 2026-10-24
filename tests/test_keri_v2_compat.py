@@ -505,8 +505,13 @@ def ipex_vaults(monkeypatch, tmp_path, mailbox_routes):
         monkeypatch.setattr(cls, 'HeadDirPath', str(tmp_path))
     sessions = []
 
-    def open_session(name, base='', *, registry_services=False):
-        hby = habbing.Habery(name=name, base=base, temp=False, salt='0AAwMTIzNDU2Nzg5YWJjZGVm')
+    def open_session(name, base='', *, registry_services=False, bran=None):
+        """Open a persistent test wallet and retain its real scheduler/close path.
+
+        ``name``/``base`` isolate storage; optional ``bran`` enables Keeper
+        encryption. ``registry_services`` keeps the actual service gate for
+        tests of that boundary; default crypto fixtures deliberately isolate it."""
+        hby = habbing.Habery(name=name, base=base, temp=False, salt='0AAwMTIzNDU2Nzg5YWJjZGVm', bran=bran)
         mailbox_routes(hby)
         rgy = registraring.Regery(hby=hby, name=name, base=base, temp=False)
         app = apping.LocksmithApplication.__new__(apping.LocksmithApplication)
