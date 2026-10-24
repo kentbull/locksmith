@@ -2055,3 +2055,36 @@ def test_response_waits_for_evidence_without_changing_consent(wallet, monkeypatc
     finally:
         dialog.reject()
         runner.exit()
+
+
+
+def test_response_exposes_saved_reply_after_outbox_write_failure(wallet, monkeypatch):
+    """A failed queue write must expose explicit recovery, never silently send."""
+    from locksmith.ui.vault.credentials.activity import ExchangeResponseDialog
+
+    app = wallet('response-interrupted')
+    issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
+    acdc, _, schemer = issue(app, issuer, holder.pre, authentication='anchor')
+    request, atc = native_ipexing.apply(holder, issuer.pre, 'Full disclosure',
+        modifiers={'dp': [[[schemer.said, '/', []]]]})
+    ipexing.prepare(app.vault, holder, request, atc)
+    parent = QWidget()
+    parent.app = app
+    page = CredentialActivityPage(parent)
+    page.set_vault_name('response-interrupted')
+    row = next(row for row in page._rows if row['messages'][-1].said == request.said)
+    dialog = ExchangeResponseDialog(page, row, 'Grant')
+    dialog.show()
+    def interrupted(*args, **kwargs):
+        raise OSError('Interrupted between exchange and outbox persistence')
+    with monkeypatch.context() as patch:
+        patch.setattr(app.vault.db.outbox, 'put', interrupted)
+        dialog.send_button.click()
+    reply = app.hby.db.erpy.get((request.said,)).qb64
+    assert app.vault.db.outbox.get((reply,)) is None
+    assert not dialog.isVisible()
+    assert 'Send saved message' in page.summary.text()
+    saved = app.hby.db.exns.get((reply,))
+    stream = exchanging.serializeMessage(app.hby, reply)
+    assert ipexing.submit(app.vault, issuer, saved, stream[saved.size:]) == reply
+    assert app.vault.db.outbox.get((reply,)).status == 'pending'

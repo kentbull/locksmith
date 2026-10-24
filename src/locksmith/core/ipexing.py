@@ -630,7 +630,7 @@ class ApprovedResponse(doing.DoDoer):
                 return
             except credentialing.RegistryEvidencePending as error:
                 self.error, self.waiting = str(error), True
-            except (kering.KeriError, ValueError) as error:
+            except (OSError, kering.KeriError, ValueError) as error:
                 self.error, self.waiting = str(error), False
                 return
             finally:

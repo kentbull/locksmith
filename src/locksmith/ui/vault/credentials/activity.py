@@ -756,6 +756,9 @@ class ExchangeResponseDialog(LocksmithDialog):
         operation = self._approved_response
         if operation is None or doer_name not in ('Ipex', 'RegistryEvidence'):
             return
+        if not self.page._current_vault() or self.page.vault is not self.vault:
+            self.reject()
+            return
         if operation.result:
             self.accept()
         elif operation.error:
@@ -770,6 +773,23 @@ class ExchangeResponseDialog(LocksmithDialog):
                 self.create_button.setEnabled(True)
                 self.send_button.setEnabled(bool(ipexing.responses(self.vault, self.row['messages'][-1])))
                 self.page.refresh()
+                self._show_saved_reply_recovery()
+
+    def _show_saved_reply_recovery(self):
+        """Expose existing explicit recovery after interrupted outbox persistence."""
+        prior = self.row['messages'][-1]
+        reply = self.vault.hby.db.erpy.get((prior.said,))
+        saved = self.vault.hby.db.exns.get((reply.qb64,)) if reply else None
+        if (saved is None or saved.pre not in self.vault.hby.prefixes
+                or self.vault.db.outbox.get((saved.said,)) is not None):
+            return False
+        # A signature is not delivery consent. The existing action revalidates
+        # and authorizes this exact message only after another explicit choice.
+        self.reject()
+        self.page.summary.setText(
+            'Reply saved; delivery was not authorized. '
+            'Select the saved reply and choose Send saved message.')
+        return True
 
     def show_error(self, message):
         previous_height = self._current_banner_height if self._base_height is not None else 0
@@ -1053,4 +1073,7 @@ class ExchangeResponseDialog(LocksmithDialog):
         except Exception as error:
             self.show_error(str(error))
             self.page.refresh()
-            self.send_button.setEnabled(bool(ipexing.responses(self.vault, self.row['messages'][-1])))
+            if self._show_saved_reply_recovery():
+                return
+            prior = self.row['messages'][-1]
+            self.send_button.setEnabled(bool(ipexing.responses(self.vault, prior)))
