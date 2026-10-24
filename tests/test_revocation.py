@@ -1,4 +1,4 @@
-"""A revocation changes native registry state and survives receipt retries."""
+"""A revocation changes ACDC v2 registry state and survives receipt retries."""
 import pytest
 from hio.base import doing
 from keri import kering
@@ -17,7 +17,7 @@ def _revoke(app):
     return said
 
 
-def test_revocation_native_state_idempotence_and_reopen(ipex_vaults):
+def test_revocation_acdc_v2_registry_state_idempotence_and_reopen(ipex_vaults):
     app = ipex_vaults('revoke')
     hab = app.hby.makeHab(name='issuer')
     schema = _load_schema(app, hab)

@@ -1,5 +1,5 @@
 # -*- encoding: utf-8 -*-
-"""Schema selection, native credential issuance, and the wallet's inventory."""
+"""Schema selection, ACDC v2 credential issuance, and the wallet's inventory."""
 from collections.abc import Mapping
 from copy import deepcopy
 import json
@@ -18,6 +18,7 @@ from keri.help import helping
 from keri.peer import exchanging
 
 from locksmith.core.receipting import LocksmithReceiptor
+from locksmith.core import registry_authoring, disclosing
 from locksmith.db.basing import IssuedCredential
 
 logger = help.ogler.getLogger(__name__)
@@ -55,7 +56,7 @@ def attribute_schemas(schema, aggregate=False):
 
 
 def complete_block(definition, values, issuee=None):
-    """Fill schema constants and native block identifiers without inventing data."""
+    """Fill schema constants and ACDC v2 block identifiers without inventing data."""
     result = deepcopy(values)
     definition = schema_detail(definition) or {}
     properties = definition.get('properties', {})
@@ -91,6 +92,14 @@ def validate_schema(vault, acdc):
     return schemer
 
 
+class RegistryEvidencePending(kering.MissingChainError):
+    """A configured observer or registrar has not completed a readiness check.
+
+    Callers may wait and retry the same approved operation. This is not proof
+    invalidity or authorization to transmit without current evidence.
+    """
+
+
 def require_registry_evidence(vault, acdc, hab):
     """Require a recent independent status check before a wallet decision."""
     from locksmith.core.registries import required
@@ -102,11 +111,11 @@ def require_registry_evidence(vault, acdc, hab):
         if not worker.ensure(regk, hab):
             detail = worker.errors.get(regk, 'Waiting for a current observer status check')
             if not worker.observer_url:
-                detail = 'Configure an observer in Settings to check credential status'
-            raise kering.MissingChainError(detail)
+                raise kering.ConfigurationError('Configure an observer in Settings to check credential status')
+            raise RegistryEvidencePending(detail)
         rip = vault.rgy.store.seqEvent(regk, 0)
         if rip is not None and rip.israid in vault.hby.prefixes and not worker.published(regk):
-            raise kering.MissingChainError('Waiting for the registrar to accept the issuer registry update')
+            raise RegistryEvidencePending('Waiting for the registrar to accept the issuer registry update')
 
 
 def credential_state(vault, acdc, blinder=None, *, blinders=None):
@@ -116,22 +125,43 @@ def credential_state(vault, acdc, blinder=None, *, blinders=None):
     rip, head = store.seqEvent(regk, 0), store.headEvent(regk)
     if rip is None or head is None:
         raise kering.MissingChainError(f'Missing registry evidence for {regk}')
+    if head.ilk == 'upd':
+        raise kering.ConfigurationError(
+            'Historical upd heads do not establish current ACDC v2 standing')
     updates = []
     for sn in range(1, Number(numh=head.sad['n']).num + 1):
         update = store.seqEvent(regk, sn)
         if update is None:
             raise kering.MissingChainError(f'Missing registry update {sn} for {regk}')
         updates.append(update)
+    proofs = [proof for proof in (blinders if blinders is not None else [blinder])
+              if proof is not None]
+    public = None
+    if raw := store.opening(head.said):
+        candidates = []
+        for clan in (BlindState, BoundState):
+            try:
+                candidate = Blinder(clan=clan, qb64=raw)
+            except Exception:
+                continue
+            if candidate.qb64 == raw:
+                candidates.append(candidate)
+        if len(candidates) != 1:
+            raise kering.ValidationError('Retained public opening is invalid')
+        public = store.retainOpening(head, candidates[0])
+    if public is not None:
+        if all(proof is None or proof.qb64 != public.qb64 for proof in proofs):
+            proofs.append(public)
     try:
         return regeventing.vetBinds(rip=rip, updates=updates, db=vault.hby.db,
                                    acdc=acdc, target=acdc.said,
-                                   blinders=blinders if blinders is not None else [blinder])
+                                   blinders=proofs)
     except kering.MissingAnchorError as ex:
         raise kering.MissingChainError(f'Missing issuer KEL evidence for {regk}') from ex
 
 
 def authentication(vault, nest):
-    """Use the pinned native issuer policy; do not infer it from the Grant signer."""
+    """Use the pinned ACDC v2 issuer policy; do not infer it from the Grant signer."""
     acdc = nest.serder
     if acdc.sad.get('rd'):
         proofs = [Blinder(clan=clan, qb64=b''.join(part.qb64b for part in proof))
@@ -142,7 +172,7 @@ def authentication(vault, nest):
     # Keripy has no public standalone issuer-authentication entry point yet.
     # Keep its anchor selection and current-key rules at this one adapter boundary.
     try:
-        # Statedict.get is cache-only; load persisted state for native signature checks.
+        # Statedict.get is cache-only; load persisted state for ACDC v2 signature checks.
         vault.hby.db.kevers[acdc.israid]
     except KeyError:
         pass
@@ -155,19 +185,90 @@ def authentication(vault, nest):
     return {'et': 'authenticated', 'dt': stamp, 'auth': 'anchor' if anchored else 'signature'}
 
 
-def credential(vault, said, received=False):
-    """Build a wallet view from local issuance or retained grant evidence."""
+def admission(vault, said, grant):
+    """Resolve explicit consent to one retained grant, never a later disclosure.
+
+    Args:
+        vault: Open wallet with receipt, inventory and exchange stores.
+        said: Exact credential identifier expected in the selected grant.
+        grant: Previously admitted ACDC v2 IPEX grant identifier.
+
+    Returns:
+        AcceptedCredential: Exact grant/admit reference and local consent time.
+
+    Raises:
+        ValidationError: Missing inventory membership, receipt, or signed linkage.
+
+    Earlier vaults may have only the original inventory admission. Deleting the
+    inventory entry still hides all its views until explicit restoration.
+    """
+    from locksmith.db.basing import AcceptedCredential
+    original = vault.db.accepted.get((said,))
+    exn = vault.hby.db.exns.get((grant,))
+    if original is None or exn is None or exn.route != '/ipex/grant':
+        raise kering.ValidationError('Selected grant is not admitted in this wallet')
+    receipt = vault.db.receipts.get((exn.sad['ri'], grant))
+    if receipt is not None and receipt.status == 'accepted' and receipt.credential == said:
+        selected = AcceptedCredential(grant, receipt.admit, receipt.accepted_at)
+    elif original.grant == grant and receipt is None:
+        selected = original
+    else:
+        raise kering.ValidationError('Selected grant is not admitted in this wallet')
+    admit = vault.hby.db.exns.get((selected.admit,))
+    if (admit is None or admit.route != '/ipex/admit' or admit.sad['p'] != grant
+            or admit.pre != exn.sad['ri'] or admit.sad['ri'] != exn.pre
+            or admit.pre not in vault.hby.prefixes or exn.sad['a'].get('o') != [said]):
+        raise kering.ValidationError('Selected admission has inconsistent exchange evidence')
+    exchanging.verify(vault.hby, exn)
+    exchanging.verify(vault.hby, admit)
+    return selected
+
+
+def admissions(vault, said):
+    """List independently admitted views of an inventory member, without merging.
+
+    Args:
+        vault: Open wallet owning retained consent references.
+        said: Credential identifier to enumerate.
+
+    Returns:
+        list[AcceptedCredential]: Validated grant/admit references, original first.
+    """
+    original = vault.db.accepted.get((said,))
+    if original is None:
+        return []
+    grants = dict.fromkeys([original.grant] + [grant for (_, grant), record
+                           in vault.db.receipts.getTopItemIter()
+                           if record.credential == said and record.status == 'accepted'])
+    return [admission(vault, said, grant) for grant in grants]
+
+
+def credential(vault, said, received=False, *, grant=None):
+    """Build a view from local issuance or one exact admitted grant.
+
+    Args:
+        vault: Open wallet owning the retained evidence.
+        said: Credential identifier to inspect.
+        received: Prefer the original admitted view over a local issuance.
+        grant: Explicit admitted disclosure reference; overrides issuance selection.
+
+    Returns:
+        dict: Exact disclosure, proofs, status and provenance. No fuller cached
+            attributes are substituted for a selected grant's retained bytes.
+    """
     artifacts = {}
     pending = False
     created_at, accepted_at, sender = '', '', ''
-    if not received and (record := vault.db.issued.get(keys=(said,))):
+    selected_grant = grant or ''
+    selected = admission(vault, said, grant) if grant else None
+    if not received and not grant and (record := vault.db.issued.get(keys=(said,))):
         created_at = record.created_at
         acdc = SerderACDC(raw=record.raw.encode())
         recipient = acdc.iseaid
         if record.stream:
             proof = record.stream.encode()
-        else:  # Persisted registry issuances from before native stream retention.
-            blinder = Blinder(clan=BlindState, qb64=record.blinder)
+        else:  # Persisted registry issuances from before ACDC v2 stream retention.
+            blinder = regeventing._blindCandidates(record.blinder)[0]
             proof = messagize(serder=acdc, bonds=[blinder.data], framed=False)
         ims = bytearray(proof)
         parsed = parsing.Parser().parse(ims=ims, processive=False, version=kering.Vrsn_2_0)
@@ -183,7 +284,8 @@ def credential(vault, said, received=False):
         # Locally created anchors remain pending until their witness quorum arrives.
         for _, diger in nest.sscs:
             pending |= len(vault.hby.db.wigs.get(keys=(acdc.israid, diger.qb64))) < record.witness_threshold
-    elif record := vault.db.accepted.get(keys=(said,)):
+    elif record := (selected or vault.db.accepted.get(keys=(said,))):
+        selected_grant = record.grant
         accepted_at = record.accepted_at
         sender = vault.hby.db.exns.get(keys=(record.grant,)).pre
         recipient = vault.hby.db.exns.get(keys=(record.grant,)).sad['ri']
@@ -209,6 +311,7 @@ def credential(vault, said, received=False):
     return {'sad': acdc.sad, 'schema': schemer.sed if schemer else {}, 'recipient': recipient,
             'subject': acdc.iseaid, 'held': acdc.iseaid in vault.hby.prefixes,
             'created_at': created_at, 'accepted_at': accepted_at, 'sender': sender,
+            'grant': selected_grant,
             'status': status, 'proof': proof, 'artifacts': artifacts}
 
 
@@ -283,17 +386,40 @@ class LoadSchemaDoer(doing.DoDoer):
 
 
 class CredentialUpdateDoer(doing.DoDoer):
-    """Anchor a native registry event and collect its witness receipts."""
+    """Anchor an ACDC v2 registry event and collect its witness receipts."""
 
     def anchor(self, registry, event, receiptor, auths):
+        """Reuse or author a seal, collect receipts, and verify TEL acceptance.
+
+        Args:
+            registry: Local issuer registry owning the already staged event.
+            event: Exact ACDC v2 registry TEL event to seal; never recreated on retry.
+            receiptor: Scheduled wallet receipt worker.
+            auths: Witness AID to short-lived authentication header mapping.
+
+        Yields:
+            float: Cooperative receipt progress. Missing quorum remains a failure.
+
+        The pending-anchor search adapts KERIpy AcdcV2Author.anchor
+        (named NativeAuthor.anchor at historical commit 9ca869f6);
+        it selects authoring work, not evidence accepted on behalf of a verifier.
+        """
         hab = registry.hab
-        try:
-            sn, _ = regeventing.vetAnchor(event, db=self.vault.hby.db, issuer=hab.pre)
-            anchor = SerderKERI(raw=hab.msgOwnEvent(sn=sn))
-        except kering.MissingAnchorError:
-            seal = dict(i=registry.regk, s=event.sad['n'], d=event.said)
-            raw = hab.rotate(data=[seal]) if hab.kever.estOnly else hab.interact(data=[seal])
-            anchor = SerderKERI(raw=raw)
+        # A locally signed anchor can still lack receipts. vetAnchor verifies
+        # quorum and therefore cannot locate pending authoring work for retry.
+        # Reuse that exact event, then require normal receipt/TEL acceptance.
+        seal = dict(s=event.sad['n'], d=event.said)
+        anchor = None
+        for sn in range(hab.kever.sn + 1):
+            digest = hab.db.kels.getLast(keys=hab.pre, on=sn)
+            candidate = hab.db.evts.get(keys=(hab.pre, digest)) if digest else None
+            if candidate and any(item in candidate.sad.get('a', [])
+                                 for item in (seal, dict(i=registry.regk, **seal))):
+                anchor = candidate
+                break
+        if anchor is None:
+            author = hab.rotate if hab.kever.estOnly else hab.interact
+            anchor = SerderKERI(raw=author(data=[seal]))
         yield from self.receipt(hab, anchor, receiptor, auths)
         if not registry.anchorMsg(event.said):
             raise kering.ValidationError('Registry anchor is still pending')
@@ -314,22 +440,54 @@ class CredentialUpdateDoer(doing.DoDoer):
 
 
 class IssueCredentialDoer(CredentialUpdateDoer):
-    """Issue a native credential with the selected issuer authentication factor."""
+    """Issue an ACDC v2 credential with the selected issuer authentication factor."""
 
     def __init__(self, app, schema_said, recipient_pre, attributes, edges=None, rules=None,
-                 codes=None, signal_bridge=None, authentication='registry', nonce=None):
+                 codes=None, signal_bridge=None, authentication='registry', nonce=None,
+                 registry_mode='blinded', discloser=None, auths=None, bound_event=None):
+        """Configure issuance without opening optional custody.
+
+        app owns the vault; schema_said/recipient_pre select issuer policy and
+        recipient; attributes/edges/rules are the operator's credential data.
+        codes supply manually entered witness OTPs; auths instead supplies exact
+        precomputed OTP-and-timestamp headers. They are mutually exclusive and
+        remain transient. signal_bridge receives completion.
+        authentication selects registry, anchor or signature. nonce is optional
+        credential entropy. registry_mode explicitly selects public, per-event
+        blinded, or derived state; discloser binds newly provisioned derivation
+        custody in derived mode only. bound_event selects an exact current issuee
+        KEL event for blinded state. No salt is shared by issuance itself.
+        """
         self.vault = app.vault
         self.schema_said, self.recipient_pre = schema_said, recipient_pre
         self.issuance_id = uuid.uuid4().hex
         self.attributes, self.edges, self.rules = attributes, edges or {}, rules
-        self.codes = codes or []
+        if codes and auths:
+            raise ValueError('Choose witness codes or exact authorization headers')
+        self.codes, self.auths = codes or [], dict(auths or {})
         if authentication not in ('registry', 'anchor', 'signature'):
             raise ValueError('Select registry, anchor, or signature authentication')
         self.authentication, self.nonce = authentication, nonce
+        if registry_mode not in registry_authoring.MODES:
+            raise ValueError('Choose public, blinded or derived registry state')
+        if authentication != 'registry' and (registry_mode != 'blinded' or discloser):
+            raise ValueError('State capabilities require registry authentication')
+        if discloser and registry_mode != 'derived':
+            raise ValueError('A derivation discloser requires derived state')
+        if bound_event and (authentication != 'registry' or registry_mode == 'public'):
+            raise ValueError('Bound state requires blinded registry authentication')
+        self.bound_event = bound_event
+        self.registry_mode, self.discloser = registry_mode, discloser
         self.signals = signal_bridge if signal_bridge is not None else self.vault.signals
         super().__init__(doers=[doing.doify(self.issue_credential_do)])
 
     def issue_credential_do(self, tymth, tock=0.0, **opts):
+        """Validate issuer inputs, author evidence, and report verified completion.
+
+        tymth and tock are HIO scheduler clock/interval inputs; opts are scheduler
+        extension arguments. Every registry anchor uses normal receipt collection.
+        Failures emit a correlated application event and retain authored state.
+        """
         self.wind(tymth)
         yield self.tock
         receiptor = None
@@ -338,6 +496,8 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             hab = self.vault.hby.habByPre(issuer)
             if hab is None or isinstance(hab, GroupHab):
                 raise ValueError('Select an individual local identifier for this schema')
+            if set(self.auths) - set(hab.kever.wits):
+                raise ValueError('Authorization names a witness outside the issuer witness set')
             schemer = self.vault.hby.db.schema.get(keys=(self.schema_said,))
             if schemer is None:
                 raise kering.ValidationError(f'Load credential schema {self.schema_said} before issuing it')
@@ -382,9 +542,10 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             acdc = acdcmap(israid=hab.pre, uuid=nonce, regid=registry.regk if registry else None, schema=self.schema_said,
                            **attributes, edge=edges, rule=rules)
             schemer = validate_schema(self.vault, acdc)
+            registry_authoring.bound_options(self.vault, acdc, self.bound_event)
             previous = self.vault.db.issued.get((acdc.said,))
             created_at = previous.created_at if previous else helping.nowIso8601()
-            auths = {}
+            auths = dict(self.auths)
             for entry in self.codes:
                 wit, code = entry.split(':', 1)
                 auths[wit] = f'{code}#{helping.nowIso8601()}'
@@ -394,10 +555,13 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             if registry is not None:
                 rip = self.vault.rgy.store.event(registry.regk)
                 yield from self.anchor(registry, rip, receiptor, auths)
-                blinder, update = registrar.issue(registry, acdc=acdc, state='issued')
-                stream = messagize(serder=acdc, bonds=[blinder.data], framed=False)
-                record = IssuedCredential(acdc.raw.decode(), blinder.qb64, update.said, stream.decode(),
-                                          created_at=created_at)
+                if self.registry_mode == 'derived':
+                    disclosing.custody(self.vault).createCustody(registry.regk, self.discloser or hab.pre)
+                blinder, update, stream = registry_authoring.stage(
+                    self.vault, registry, acdc, 'issued', self.registry_mode, bound_event=self.bound_event)
+                record = IssuedCredential(acdc.raw.decode(), blinder.qb64 if blinder else '',
+                                          update.said, stream.decode(), created_at=created_at,
+                                          registry_mode=self.registry_mode)
                 self.vault.db.issued.pin(keys=(acdc.said,), val=record)
                 yield from self.anchor(registry, update, receiptor, auths)
             elif self.authentication == 'anchor':
@@ -433,7 +597,14 @@ class IssueCredentialDoer(CredentialUpdateDoer):
 class RevokeCredentialDoer(CredentialUpdateDoer):
     """Retain and anchor one revocation, including retries after a vault close."""
 
-    def __init__(self, app, credential_said, codes=None):
+    def __init__(self, app, credential_said, codes=None, *, bound_event=None):
+        """Configure revocation of one issued record without changing its state.
+
+        app owns the current vault; credential_said identifies the retained
+        issuance; codes are transient witness OTPs. bound_event explicitly
+        replaces the prior bound coordinate when the issuee KEL has advanced.
+        """
+        self.bound_event = bound_event
         self.vault = app.vault
         self.credential_said = credential_said
         self.revocation_id = uuid.uuid4().hex
@@ -441,6 +612,13 @@ class RevokeCredentialDoer(CredentialUpdateDoer):
         super().__init__(doers=[doing.doify(self.revoke_do)])
 
     def revoke_do(self, tymth, tock=0.0, **opts):
+        """Publish or retry this credential's revocation with one retained update.
+
+        ``tymth`` and ``tock`` are HIO scheduler inputs; ``opts`` are reserved
+        scheduler options. Yield while collecting witness receipts. A bound
+        update requires the selected current issuee event before authoring;
+        retrying a retained update preserves its original coordinates. Report
+        success/failure through vault signals and always remove the receiptor."""
         self.wind(tymth)
         yield self.tock
         receiptor = None
@@ -453,20 +631,23 @@ class RevokeCredentialDoer(CredentialUpdateDoer):
             if hab is None or isinstance(hab, GroupHab):
                 raise ValueError('Revocation requires the individual local issuer')
             registry = self.vault.rgy.regs.get(acdc.regid)
-            if registry is None or not record.blinder:
+            if registry is None:
                 raise ValueError('This credential has no local revocable registry')
-            blinder = Blinder(clan=BlindState, qb64=record.blinder)
-            if blinder.state == 'revoked':
+            blinder = regeventing._blindCandidates(record.blinder)[0] if record.blinder else None
+            revoked = blinder is not None and blinder.state == 'revoked'
+            if revoked:
                 update = self.vault.rgy.store.event(record.update)
                 if update is None:
                     raise kering.MissingChainError('The retained revocation update is missing')
             else:
                 if credential(self.vault, acdc.said)['status']['et'] != 'issued':
                     raise kering.ValidationError('Wait for verified issuance before revoking')
-                blinder, update = Registrar(rgy=self.vault.rgy).issue(registry, acdc, state='revoked')
-                record.blinder = blinder.qb64
+                selected = self.bound_event or (blinder.bd if blinder and blinder.clan == BoundState else None)
+                blinder, update, stream = registry_authoring.stage(
+                    self.vault, registry, acdc, 'revoked', record.registry_mode, bound_event=selected)
+                record.blinder = blinder.qb64 if blinder else ''
                 record.update = update.said
-                record.stream = messagize(serder=acdc, bonds=[blinder.data], framed=False).decode()
+                record.stream = stream.decode()
                 # Keep the new private proof before any asynchronous receipt work.
                 self.vault.db.issued.pin(keys=(acdc.said,), val=record)
             auths = {}
