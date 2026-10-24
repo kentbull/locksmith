@@ -133,39 +133,6 @@ not define a standard ACDC wallet interface.
   ``__init__`` accept an existing application owner so live UI qualification
   does not create another vault/scheduler. Change: ``871c4a8``.
 
-Driver and qualification adapters
----------------------------------
-
-These are new local R&D infrastructure, not imported community protocol code.
-
-* ``driver/__main__.py.main`` is the operator entry point.
-  ``driver/runtime.py`` contains ``MAX_REQUEST``, ``Intake``/``__init__``/
-  ``on_post`` (``on_put`` aliases the same intake), ``LocalControl``/
-  ``__init__``/``_connect``/``_read``/``_advance``/``_reply``/``_disconnect``/
-  ``close``, and ``open_runtime``. They compose the existing Vault and QtTask,
-  queue ordinary CESR into mailbox processing and accept one private local
-  command at a time. Their cleanup follows the donor vault-open lifecycle.
-  Change: ``024604c``.
-* ``driver/operations.py.execute`` calls the same domain operations used by
-  UI controls. Its optional schema/contact/policy configuration is operator
-  setup, never injected accepted protocol state. ``driver/authoring.py.issue``
-  and its nested ``completed`` callback drive the real IssueCredentialDoer and
-  await its matching result. Changes: ``024604c``, ``3c2d489``.
-* ``driver/scenario.py.request`` and ``main`` adapt existing KLI scenario
-  arguments to those local application operations. They do not launch KLI as
-  a substitute for Locksmith actors. Change: ``929bbd4``.
-* ``scripts/scenarios/ui_runtime.py`` and ``ui_issuance.py`` use real Qt widgets
-  and QTest events, including the existing Review/Accept dialogs and new
-  selectors. They capture public controls only. Bootstrap, service publication
-  and final issuer-to-holder Grant may use application operations; those are
-  explicitly separate from UI coverage. Change: ``871c4a8``.
-* Scenario shell files adapt the original six KERIpy/Dolly stories; issuer
-  stories extend them through Locksmith authoring. Dockerfiles copy source and
-  install packages, while named volumes own database state. No host LMDB bind
-  mount is used. ``check-sources.py``, ``artifacts.py`` and
-  ``qualify-community.sh`` are local clean-source/pin/wheel qualification
-  guards. Change: ``a2885cb``.
-
 Test and review evidence
 ------------------------
 
@@ -183,3 +150,12 @@ indexed above; the docstring pass also covered the surrounding changed lifecycle
 methods. Presence alone is not a quality claim: descriptions were checked
 against ownership, inputs, outputs and failure paths. Fixed source SHAs and
 scenario manifests separately establish which artifacts actually ran.
+
+Experiment provenance
+---------------------
+
+The private driver and qualification adapters are now owned by the independent
+``keri-v2`` experiment repository. Their full source-lineage snapshot remains in
+`the pre-extraction ledger
+<https://github.com/kentbull/locksmith/blob/3933bd4199708ef9d7fb8b937d94a0c11365cd21/docs/native-lineage.rst#driver-and-qualification-adapters>`_.
+Application contracts and attribution above remain beside the retained code.

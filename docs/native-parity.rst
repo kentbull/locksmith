@@ -23,18 +23,9 @@ Source lineage
   ACDC default ``I2I`` for targeted far nodes; relaxing the verifier to preserve
   an invalid fixture would misrepresent that relationship. This is a local
   fixture correction, not a new wallet policy.
-* The exact KERIpy dependency pin and Linux Qt test image are local build
-  choices. Docker tests use copied source and named LMDB volumes. They do not
-  require host database mounts or imply that a headless test proves UI parity.
-
-Evidence and remaining gates
-----------------------------
-
-The initial installed donor baseline had 333 passes, three skips and seven
-failures. The five invalid-relation fixtures and two revocation retry failures
-are repaired; the focused 118 tests pass. External-service integration,
-grant-specific disclosure selection, optional opening/derivation capabilities,
-headless end-to-end scenarios and actual UI qualification remain separate gates.
+* The exact KERIpy dependency pin is an application compatibility choice.
+  Composed Linux Qt images are owned by the independent experiment repository;
+  headless component tests do not by themselves prove UI workflow parity.
 
 Full-evidence service configuration
 -----------------------------------
@@ -133,42 +124,6 @@ Twelve installed authoring, revocation and disclosure tests pass, including all
 three modes across reopen and repeat revocation. UI mode selection and real
 hosted-service authoring still require end-to-end qualification.
 
-Private operator driver
------------------------
-
-``python -m locksmith.driver run --name NAME --base BASE --alias ALIAS
---socket PRIVATE_DIR/operator.sock --port PORT`` opens one initialized vault,
-its actual application, QtTask, mailbox parser and durable IPEX outbox. The
-passcode is read from ``KLI_KEYSTORE_PASSCODE``. Use an owner-only directory for
-the Unix socket. A second operator request is refused while one is running.
-
-``python -m locksmith.driver call --socket PRIVATE_DIR/operator.sock`` reads one
-JSON object from stdin and returns one JSON outcome. For example,
-``{"op": "status"}`` checks readiness. Domain actions include schema loading,
-registry-service configuration/query, inventory/inspection, Apply/Offer/Agree/
-Grant/Admit, explicit presenter policy, and optional custody import/opening.
-They call the same application operations as the dialogs. No KLI subprocess or
-alternate protocol composer is used. The driver is a local R&D adapter, not an
-interoperable administration or salt-provisioning API.
-
-The HTTP listener accepts bounded CESR with POST or PUT at ``/`` or ``/ingest``.
-A 202 response means queued for the existing mailbox parser, never user consent.
-Likewise ``submitted`` means outbox transport completion; scenarios must inspect
-receiver acceptance and Dolly hooks separately. Disconnect cancels the local
-wait while already authorized outbox work remains durable. Shutdown closes
-operator work before the application closes its vault and dependent stores.
-
-This adapter follows the existing vault-open/QtTask lifecycle. Its socket access
-uses `Qt QLocalServer UserAccessOption
-<https://doc.qt.io/qtforpython-6/PySide6/QtNetwork/QLocalServer.html>`_ plus the
-private parent directory; this local mechanism adds no KERI authorization rule.
-
-Full-profile freshness is bounded by the observer's original observation time.
-The wallet caches only the remaining portion of its 15-second observation-age
-policy, using a monotonic deadline bound to the configured source and exact head.
-Receiving a nearly expired observation does not restart a 60-second wallet cache.
-The older bare-TEL profile retains its existing refresh cadence.
-
 Disclosure review controls
 --------------------------
 
@@ -194,59 +149,6 @@ metadata-Offer/proof-bearing-Grant separation in KERIpy and the adopted PR 92
 composer; the wallet no longer makes a future Grant capability prerequisite to
 previewing an Offer. State-opening controls apply to Grant only.
 
-Community scenario adapter
---------------------------
-
-The existing six separate KERIpy Bash stories accept
-``SCENARIO_WALLET_PROFILE=locksmith``. The explicit test adapter translates holder
-and designated-presenter commands into private application requests, starts one
-vault per actor, and uses signed controller endpoints for real outbox delivery.
-Issuer commands remain KLI in this profile; that is recorded in its manifest and
-must not be reported as Locksmith issuer end-to-end coverage. Individual issuer
-application doers have separate tests. The ordinary KLI profile remains intact.
-
-The adapter waits for queued input to pass protocol verification before a reply,
-exports only public proof artifacts, and enumerates each admitted view separately.
-A withheld field may fail earlier in Locksmith's Compactor than in KLI's protocol
-verification; both scenarios require refusal and no additional Dolly hook.
-``scripts/scenarios/Dockerfile`` composes installed actual component wheels on
-copied Linux source. Its current default manifest is deliberately marked as a
-development build; final clean-artifact qualification remains a separate gate.
-
-An operator starting an Offer can now choose an admitted view and check which
-expanded committed attribute sections to reveal before agreement. Unchecked
-sections remain compact commitments. With no sections checked the established
-metadata-only Offer remains the default. The selection control lists only
-material in the selected view; it cannot select a withheld section from another
-admission. Schemas without independently committed sections retain their existing
-whole-credential negotiation behavior.
-
-Explicit operator issuance
---------------------------
-
-The private driver accepts ``schema`` with an optional local ``issuer`` alias,
-matching the UI schema-load issuer policy. ``issue`` invokes the existing
-``IssueCredentialDoer`` through the vault scheduler; it requires that same issuer
-policy and takes recipient, attributes and optional authentication, state mode,
-witness codes and designated derivation discloser. Public, event-blinded and
-explicit derived modes retain their existing application semantics. The driver
-returns public credential/proof metadata only after the worker's normal success
-signal. Cancellation removes the worker and preserves signed authoring records.
-It does not invoke KLI or synthesize accepted state.
-
-``driver.authoring.issue`` is local orchestration around the existing worker
-and signal lifecycle, adapted from ``IssueCredentialDialog._complete_issuance``
-at c82b7ed. The schema policy assignment follows ``LoadSchemaDoer`` at that
-revision. These are operational adapters, not new protocol or delegation rules.
-
-Precomputed witness authorization headers may be supplied as ``auths`` instead
-of manually entered ``codes``. They retain the exact OTP generation timestamp;
-replacing that timestamp can pair a previous 30-second TOTP value with the next
-window and make a valid operator input fail. The hosted issuer scenario reproduced
-this at 15:26:29.963 UTC before a 15:26:30 request. The worker rejects mixed inputs
-and unknown witness IDs before authoring registry state. This local adapter
-correction preserves the hosted provider's existing authorization contract.
-
 Issuance state controls
 -----------------------
 
@@ -258,77 +160,11 @@ states that it sends no secret and creates no delegation. Anchor/signature
 credentials hide these inapplicable options. The established blinded default is
 preserved. Selection itself never opens custody.
 
-Dedicated application-issuer story
-----------------------------------
-
-``scripts/scenarios/issuer-through-holder.sh`` adds issuer coverage without
-replacing the six role-specific stories. Run it in ``locksmith:scenarios`` with
-Linux named volumes at ``/tmp`` and ``/usr/local/var``; set
-``SCENARIO_REGISTRY_MODE`` to ``public`` (default), ``blinded`` or ``derived``.
-The image must include core b6ffa21a and Dolly 4dd76e8 or later. Identity/provider
-bootstrap and the initial signed registrar publication use the existing KLI
-harness. Credential issuance and the initial Grant use Locksmith's persistent
-application; holder admission and both negotiated presentations do too. The
-issuer stops before onward presentation. All three state modes pass with actual
-KF services, hosted witness processes, and two Dolly hooks. Exact earlier-view
-and hook hashes remain unchanged after fuller disclosure.
-
-``issuer-material.py`` is a local test adapter for public artifacts and explicit
-private operator inputs; it calls the application driver and never inserts
-accepted protocol rows. The scenario explicitly loads Dolly's pinned upstream
-ACM schema because the issuer references it by digest. The original six scenarios
-remain unchanged and independently useful. These are development-image results;
-final clean source/wheel manifests and the live UI pass remain open.
-
-The driver now respects the application's existing bounded outbox retry policy.
-A freshness check can expire between composition and dispatch. That transient
-failure leaves an authorized retry in the ordinary outbox; the driver waits for
-submission or its own deadline instead of treating the first retryable status as
-terminal. Blocked policy failures and exhausted send attempts still fail.
-
-Live controls and public UI evidence
-------------------------------------
-
-``SCENARIO_LOCKSMITH_UI=1`` selects ``scripts/scenarios/ui_runtime.py`` in the
-community scenario image. This local qualification adapter opens the real
-``LocksmithWindow`` over the driver's already open application owner, navigates
-Credentials/Activity, activates row Review buttons, selects an exact admission
-and optional opening source, and submits through the ordinary dialogs. The
-window's optional ``app`` parameter preserves one vault/scheduler owner; its
-normal constructor remains unchanged for regular launches. No protocol messages
-or accepted-state rows are constructed by the UI adapter. Setup, provisioning,
-direct Grants and negative driver commands are explicitly outside its UI claim.
-
-The supplied-opening path uses the real file picker. Qt's modal activation must
-run on its event queue after the cooperative driver yields; nested generator
-execution is not a valid substitute. Dialogs retain their normal animated close
-lifecycle. ``ui/*/actions.jsonl`` identifies actual controls and delivered actions;
-PNG captures contain public credential/proof views only. No authentication panel
-or custody material is captured. Ordinary scenario assertions still verify Dolly
-hooks and exact earlier disclosures independently of UI labels.
-
-``scripts/scenarios/issuer-ui.sh`` is an additional dedicated issuance gate. It
-uses Dolly's pinned ``entitlement-v2`` fixture, the actual Issue Credential form,
-manual hosted-witness OTP fields, real holder admission and one onward Dolly hook.
-``SCENARIO_REGISTRY_MODE`` selects the issuance mode. Recipient naming is explicit
-local address-book bootstrap over an already verified KEL; contact onboarding is
-not claimed as UI coverage. ``ui_issuance.py`` never records private OTP inputs.
-The six graduated stories remain distinct and retain their original assertions.
-
-The UI harness, owner injection and capability controls are local R&D choices.
-Disclosure selectors and the opening button reuse the existing toolkit rather
-than native unstyled controls. ``FloatingLabelComboBox`` traces to Evan Asakawa's
-initial Locksmith port, ``ea50b93``; our composition and live-test fixes do not
-imply his authorship or endorsement. Rendering review exposed the original black
-native selectors. The corrected controls retain exact-view selection semantics
-and their existing real-crypto keyboard regression.
-
-
 Explicit issuee-bound derivation
 --------------------------------
 
 Optional ``bound_event`` on Grant composition, negotiated responses and the
-opening driver selects an exact accepted issuee KEL digest. It requires explicit
+opening controls select an exact accepted issuee KEL digest. It requires explicit
 ``derive`` and ``refresh`` for presentation. The advanced UI field appears only
 for the derivation source. It does not silently substitute today's issuee head:
 an existing opening may name an earlier accepted, fully witnessed event. A wrong
@@ -363,43 +199,6 @@ adapter follows ``NativeAuthor.update`` at aef3013d and the existing ``stage``
 composition; it does not establish independent publication-time evidence.
 
 
-Clean published-source qualification
-------------------------------------
-
-``scripts/scenarios/qualify-community.sh`` takes clean source locations through
-``KERI_SOURCE``, ``DOLLY_SOURCE``, ``REGISTRAR_SOURCE``, ``OBSERVER_SOURCE`` and
-``WITNESS_SOURCE``; its own checkout supplies Locksmith. Use fresh clones at
-explicit commits. ``check-sources.py`` refuses dirty inputs, verifies publication
-on each authorized Kent branch, and requires every package to pin the same core
-commit. The check repeats after image construction. It never pushes or merges.
-
-The runner builds the core, wallet and community images from those inputs, checks
-installed wheel requirements/revisions, runs component suites and the original
-KLI/v1 qualification, then runs six separate headless and six real-UI stories,
-three issuer state modes in each launcher, actual released hosted peers, and the
-hosted quorum/restart case. Linux state uses named volumes only. Set
-``QUALIFICATION_RUN`` and ``QUALIFICATION_OUTPUT`` for an explicit volume prefix
-and external log directory. A failed command stops the run and leaves evidence.
-The terminal success line is emitted only after every command exits successfully.
-
-``artifacts.py`` records the six wheel hashes, installed package locations and
-requirements, source revisions and clean-build status. Development defaults stay
-unqualified. This local build contract replaces the earlier hard-coded dirty
-manifest; it is not a signed supply-chain attestation or proof of bit-reproducible
-wheel archives. Screenshots and protocol assertions remain separate evidence.
-
-Complete component test environment
------------------------------------
-
-The final wallet suite runs in the composed scenario image, with the actual
-observer installed. The wallet-only image skips three optional observer ingress
-cases; their absence is not a pass. Running them exposed the retained bare-TEL
-endpoint's missing KEL PUT support, repaired in KF observer ``4d15b8e``. These
-cases use 0, 4 and 32 rotations and real Qt transport. This older API profile is
-still native v2, so its signed queries continue to use KRAM. It is distinct from
-the full-evidence profile's bootstrap and freshness contract.
-
-
 Visible disclosure selections
 -----------------------------
 
@@ -413,90 +212,71 @@ widget and its styling already exist in the community donor ``0c09cc03``; no
 new control framework or selection semantics were introduced.
 
 
-Issuer UI business-value assertion
-----------------------------------
 
-The entitlement issuer UI story configures Dolly's existing projection to
-``a/entitlement`` and makes that field required before sending any grant. Its
-result now requires both the exact ``authorized`` value and ``disclosed`` state.
-The earlier shared fixture mapped ``status/private/note`` instead; that proved
-credential acceptance and hook delivery but did not prove delivery of the value
-entered in this form. Those earlier issuer UI passes do not close this stronger
-acceptance gate.
+Observation cache lifetime
+--------------------------
 
-This is a local scenario correction, using Dolly's existing configured projection
-and required-field contract. The scenario stops and restarts its own Dolly
-process with the fixture-specific policy before the first grant. The protocol,
-application verifier and normal six-story reporting policy are unchanged.
+Full-profile freshness is bounded by the observer's original observation time.
+The wallet caches only the remaining portion of its 15-second observation-age
+policy, using a monotonic deadline bound to the configured source and exact head.
+Receiving a nearly expired observation does not restart a 60-second wallet cache.
+The older bare-TEL profile retains its existing refresh cadence.
 
 
-Qualified community workflow (2026-10-21)
------------------------------------------
+Offer section controls
+----------------------
 
-The additive community profile passed clean installed qualification with actual
-KF registrar, KF observer, three hosted witness processes (quorum two),
-Locksmith application actors and standalone Dolly. Existing KLI and Dolly v1
-paths remain separately qualified. This is the documented provisional native
-profile, not an unqualified specification-conformance or production claim.
+An operator starting an Offer can now choose an admitted view and check which
+expanded committed attribute sections to reveal before agreement. Unchecked
+sections remain compact commitments. With no sections checked the established
+metadata-only Offer remains the default. The selection control lists only
+material in the selected view; it cannot select a withheld section from another
+admission. Schemas without independently committed sections retain their existing
+whole-credential negotiation behavior.
 
-Fixed source inputs were:
 
-* KERIpy ``993b58266992b786d044fd3938e114a19d76f62f``;
-* Dolly ``4b4142dce4b07314d5a894053da7226b41df1fc3``;
-* KF registrar ``917767dfaf8d06387529c1663b027c656984d4c4``;
-* KF observer ``4d15b8efca69608e24590044d311c1bb491ab84f``;
-* witness-hk ``4b58bdb21862ba6ffda1b7e249f8de04b0eb2aaa``;
-* Locksmith ``a2885cb`` for the full suite/headless disclosure baseline,
-  ``d63a38f`` for corrected UI controls and issuer/headless/quorum qualification,
-  and ``92b1a11`` for the stronger issuer UI business-value assertion.
+Hosted issuance authorization
+------------------------------
 
-The last wallet change affects the scenario and its documentation only; its
-application source is identical to ``d63a38f``. The observer's older bare-TEL
-introduction repair is explicit rather than hidden behind skipped tests. Each
-phase retains clean source checks before/after build, installed wheel hashes and
-image identities. A build hash identifies the produced artifact; it is not a
-claim of reproducible archive timestamps or a signed supply-chain attestation.
+Precomputed witness authorization headers may be supplied as ``auths`` instead
+of manually entered ``codes``. They retain the exact OTP generation timestamp;
+replacing that timestamp can pair a previous 30-second TOTP value with the next
+window and make a valid operator input fail. The hosted issuer scenario reproduced
+this at 15:26:29.963 UTC before a 15:26:30 request. The worker rejects mixed inputs
+and unknown witness IDs before authoring registry state. This local adapter
+correction preserves the hosted provider's existing authorization contract.
 
-Results:
 
-* 988 selected core regressions plus 12 shared integration cases passed.
-* Registrar 10, observer 17, hosted witness 43, and the complete composed wallet
-  374 cases passed. The composed wallet has no missing-observer skips. The
-  corrected UI artifact additionally passed 10 focused cases, dependency
-  consistency and Ruff checks.
-* Dolly passed 26 cases; its two optional released-peer cases ran separately
-  and passed against actual KERIpy 1.2.14/1.3.6. Both actual hosted-peer profiles
-  passed too.
-* Original v1 Bash and all six original v2 KLI stories passed.
-* All six community headless and six real-Qt disclosure stories passed,
-  alternating HTTP/TCP and requiring two accepted Dolly hooks per story.
-* Public, individually blinded and derived issuance each passed through the
-  headless issuer-to-holder workflow, with the issuer stopped before the
-  holder's independent partial/full presentation.
-* All three real IssueCredentialDialog modes passed actual issuance, holder
-  admission and an accepted Dolly hook containing exactly the entered
-  ``entitlement: authorized`` value with ``disclosed`` state.
-* The actual hosted-witness outage/restart story passed with the first
-  destination unavailable, refusal below quorum and successful retained retry
-  after a provider restart.
+Application owner and toolkit lineage
+-------------------------------------
 
-The issuer UI fixture's original acceptance-only assertion was insufficient:
-its shared reporting policy projected another fixture's fields. ``92b1a11``
-selects the existing required-field projection before the first grant and checks
-the exact business result. Earlier weak runs are retained separately and do not
-count as passing that final gate.
+``LocksmithWindow(app=...)`` accepts an existing application owner while its
+normal constructor retains ordinary launch behavior. This supports external
+adapters without creating a second vault/scheduler or importing experiment code.
 
-The actual UI driver uses Qt input events on ordinary dialogs. Bootstrap,
-service publication and the issuer UI story's final direct Grant use normal
-application/operator operations; they are not claimed as UI interactions.
-The six distinct UI disclosure stories separately cover negotiated responses.
-Public screenshots and annotated walkthroughs are external qualification
-artifacts, not generated files committed to this application repository.
+Disclosure selectors and the opening button reuse the existing toolkit rather
+than native unstyled controls. ``FloatingLabelComboBox`` traces to Evan Asakawa's
+initial Locksmith port, ``ea50b93``; our composition and live-test fixes do not
+imply his authorship or endorsement. Rendering review exposed the original black
+native selectors. The corrected controls retain exact-view selection semantics
+and their existing real-crypto keyboard regression.
 
-Reproduce with the clean-source ``qualify-community.sh`` entry point described
-above, using ``92b1a11`` or a documentation-only successor for this repository.
-The original run used explicit phase cutovers for the observer, checkbox and
-business-value corrections, retaining superseded evidence rather than calling
-an interrupted outer command successful. All final gates have their own passing
-results. Linux-owned named volumes hold private database/custody state; the
-public report excludes those files.
+
+
+Validation and experiment ownership
+-----------------------------------
+
+Product tests remain in ``tests/``; run ``python -m pytest -q tests`` with the
+installed package and its test dependencies. Tests needing KF observer must run
+with that optional component installed; a missing-component skip is not a pass.
+
+The 2026-10-21 community workflow passed its bounded KLI/v1, headless, UI, issuer,
+released-peer and witness-restart gates. That historical result is not new
+relocation validation. The independent ``keri-v2`` repository now owns the R&D
+headless driver, real-Qt automation, Bash stories and composed qualification.
+Locksmith keeps the application operations those adapters invoke.
+
+`Pre-extraction qualification record
+<https://github.com/kentbull/locksmith/blob/3933bd4199708ef9d7fb8b937d94a0c11365cd21/docs/native-parity.rst#qualified-community-workflow-2026-10-21>`_
+retains its exact source pins, counts and limits. No experiment checkout is
+required to run the wallet. The adopted ``full-ipex`` review baseline is unchanged.

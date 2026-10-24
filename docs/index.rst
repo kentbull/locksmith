@@ -14,3 +14,7 @@ interface, including the bundled KERI Foundation implementation.
    kerifoundation-plugin
    native-parity
    native-lineage
+
+The native guides document application behavior and source lineage. Composed
+experiment recipes and execution evidence belong to the independent ``keri-v2``
+repository and are not installation requirements for Locksmith.
