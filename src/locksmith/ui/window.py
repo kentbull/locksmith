@@ -33,16 +33,18 @@ class LocksmithWindow(QMainWindow):
     and delegates functionality to specialized components.
     """
 
-    def __init__(self, config: LocksmithConfig | None = None):
+    def __init__(self, config: LocksmithConfig | None = None, *, app: LocksmithApplication | None = None):
         """
         Initialize the main window.
 
         Args:
-            config: Application configuration.
+            config: Application configuration when creating a new owner.
+            app: Optional existing application owner, including its open vault
+                and scheduler. The window does not create a second owner.
         """
         super().__init__()
 
-        self.app = LocksmithApplication(config=config)
+        self.app = app if app is not None else LocksmithApplication(config=config)
 
         # Window setup
         self.setWindowTitle("Locksmith")

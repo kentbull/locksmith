@@ -27,6 +27,7 @@ from locksmith.ui.toolkit.widgets import (
 from locksmith.ui.toolkit.widgets.buttons import LocksmithRadioButton
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, FloatingLabelLineEdit
 from locksmith.ui.vault.credentials.issued.grant import GrantCredentialDialog
+from locksmith.ui.vault.credentials.issued.state_options import StatePublicationOptions
 from locksmith.ui.vault.credentials.presentation import attribute_label, attribute_view, credential_name, identifier_name
 from locksmith.ui.vault.shared.witness_auth_mixin import (
     WitnessAuthenticationPanel,
@@ -90,6 +91,8 @@ class IssueCredentialDialog(LocksmithDialog):
         self.authentication_dropdown.addItem("Issuer KEL anchor", userData='anchor')
         self.authentication_dropdown.addItem("Issuer signature", userData='signature')
         layout.addWidget(self.authentication_dropdown)
+        self.state_options = StatePublicationOptions(self.vault)
+        layout.addWidget(self.state_options)
         self.authentication_help = QLabel()
         self.authentication_help.setWordWrap(True)
         layout.addWidget(self.authentication_help)
@@ -193,7 +196,7 @@ class IssueCredentialDialog(LocksmithDialog):
         self.finished.connect(self._on_dialog_finished)
         if request_said:
             request = self.vault.hby.db.exns.get((request_said,))
-            schema = ipexing.request_schema(request)
+            schema = ipexing.request_schema(request, self.vault)
             self.schema_dropdown.setCurrentIndex(self.schema_dropdown.combo_box.findData(schema))
             self.schema_dropdown.setEnabled(False)
             self.local_radio.setChecked(request.pre in self.vault.hby.prefixes)
@@ -330,6 +333,8 @@ class IssueCredentialDialog(LocksmithDialog):
         return False
 
     def _update_authentication_help(self, _index=None):
+        """Update authentication explanation and applicable registry capabilities."""
+        self.state_options.set_registry(self.authentication_dropdown.currentData() == 'registry')
         self.authentication_help.setText({
             'registry': 'A registry records credential status, including revocation.',
             'anchor': 'A KEL anchor remains verifiable after issuer key rotation.',
@@ -1142,12 +1147,17 @@ class IssueCredentialDialog(LocksmithDialog):
             self.show_error(f"Failed to issue credential: {error_msg}")
 
     def _complete_issuance(self, codes=None):
+        """Schedule issuance from the reviewed form and optional witness ``codes``.
+
+        Recheck an originating Apply before authoring. Read the schema, target,
+        attributes, edges and explicit registry-state options from controls;
+        the vault owns the resulting doer and reports its completion by signal."""
         if not self._current_vault():
             return
         if self.request_said:
             request = self.vault.hby.db.exns.get((self.request_said,))
             if ('Offer' not in ipexing.responses(self.vault, request)
-                    or self.vault.db.issuers.get((ipexing.request_schema(request),)) != request.sad['ri']):
+                    or self.vault.db.issuers.get((ipexing.request_schema(request, self.vault),)) != request.sad['ri']):
                 self._set_primary_button_idle()
                 self.show_error(ipexing.expiry_error(self.vault, request)
                                 or 'This request has changed. Return to Activity to review it.')
@@ -1181,7 +1191,8 @@ class IssueCredentialDialog(LocksmithDialog):
                 rules=rules,
                 codes=codes,
                 authentication=self.authentication_dropdown.currentData(),
-                signal_bridge=self.vault.signals if hasattr(self.vault, 'signals') else None
+                signal_bridge=self.vault.signals if hasattr(self.vault, 'signals') else None,
+                **self.state_options.selection()
             )
             self._issuance_id = doer.issuance_id
             self.vault.extend([doer])

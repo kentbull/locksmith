@@ -5,11 +5,18 @@ from keri.core import SerderACDC
 
 from locksmith.core.credentialing import RevokeCredentialDoer
 from locksmith.ui.toolkit.widgets import LocksmithDialog, LocksmithButton, LocksmithInvertedButton
+from locksmith.ui.toolkit.widgets.fields import FloatingLabelLineEdit
 from locksmith.ui.vault.shared.witness_auth_mixin import WitnessAuthenticationPanel
 
 
 class RevokeCredentialDialog(LocksmithDialog):
+    """Confirm issuer revocation without conflating it with holder presentation."""
     def __init__(self, app, credential_said, credential_schema, parent=None):
+        """Bind confirmation to ``app``'s current vault and ``credential_said``.
+
+        ``credential_schema`` labels the confirmation, and ``parent`` owns the
+        Qt dialog. Show current issuee-event selection only for blinded state;
+        witness authentication remains an independent requirement."""
         self.app, self.vault = app, app.vault
         self.credential_said = credential_said
         self._revocation_id = None
@@ -24,6 +31,10 @@ class RevokeCredentialDialog(LocksmithDialog):
         record = self.vault.db.issued.get((credential_said,))
         acdc = SerderACDC(raw=record.raw.encode()) if record else None
         hab = self.vault.hby.habByPre(acdc.israid) if acdc else None
+        self.bound_event = FloatingLabelLineEdit('Current issuee event (optional)')
+        self.bound_event.setToolTip('For bound state, select the new current issuee event if it has advanced since issuance.')
+        self.bound_event.setVisible(bool(record and record.registry_mode != 'public'))
+        layout.addWidget(self.bound_event)
         self.auth_panel = None
         if hab and hab.kever.wits:
             self.auth_panel = WitnessAuthenticationPanel(app, hab, list(hab.kever.wits))
@@ -44,6 +55,10 @@ class RevokeCredentialDialog(LocksmithDialog):
             self.show_error('This credential has no local revocable registry')
 
     def _revoke(self):
+        """Validate controls and schedule one revocation in the original open vault.
+
+        Pass an explicitly selected bound event and witness codes to the domain
+        doer; disable repeat clicks until its matching completion signal arrives."""
         if self._closed or self.app.vault is not self.vault or self.vault.closed:
             self.show_error('This vault is closed. Open the credential in the current vault.')
             return
@@ -54,7 +69,8 @@ class RevokeCredentialDialog(LocksmithDialog):
                 self.show_error(error)
                 return
         self.clear_error()
-        doer = RevokeCredentialDoer(self.app, self.credential_said, codes=codes)
+        doer = RevokeCredentialDoer(self.app, self.credential_said, codes=codes,
+                                    bound_event=self.bound_event.text().strip() or None)
         self._revocation_id = doer.revocation_id
         self.revoke_button.setEnabled(False)
         self.revoke_button.setText('Revoking…')
