@@ -1,6 +1,7 @@
 # -*- encoding: utf-8 -*-
-"""Native exchanges with V2 JSON bodies and V2 CESR attachments."""
+"""ACDC v2 IPEX exchanges with V2 JSON bodies and V2 CESR attachments."""
 from collections import deque
+from copy import deepcopy
 from collections.abc import Mapping
 from contextlib import closing
 from itertools import islice
@@ -10,11 +11,12 @@ from hio.core.http import httping
 from keri import help, kering
 from keri.acdc import acdcmap, ipexing
 from keri.app import agenting, forwarding
-from keri.core import Compactor, Saider, SerderACDC, SerderKERI, parsing
+from keri.core.kraming import AuthTypes
+from keri.core import Compactor, Prefixer, Saider, SerderACDC, SerderKERI, parsing
 from keri.help import helping
 from keri.peer import exchanging
 
-from locksmith.core import credentialing
+from locksmith.core import credentialing, disclosing
 from locksmith.core.indirecting import receiving_endpoints
 from locksmith.core.receipting import LocksmithReceiptor
 from locksmith.db.basing import AcceptedCredential, GrantReceipt, IpexSubmission
@@ -37,7 +39,7 @@ class IpexHandler(ipexing.IpexHandler):
             issuer = getattr(credential, 'israid', None)
             if issuer:
                 try:
-                    # Native current-key checks use get(), which does not load disk state.
+                    # Current-key checks use get(), which does not load disk state.
                     self.hby.db.kevers[issuer]
                 except KeyError:
                     pass
@@ -55,21 +57,81 @@ class MissingRouteError(kering.ConfigurationError):
     """The recipient needs an introduction with a usable delivery endpoint."""
 
 
-def presentation_eligible(credential, pre):
+class UnsupportedDisclosurePlan(kering.ValidationError):
+    """The signed exchange uses a disclosure plan this wallet cannot honor."""
+
+
+def _validate_plan(plan):
+    """Require the maintained flat q.dp profile without rewriting signed history."""
+    legacy = (plan == [[]] or isinstance(plan, list) and plan
+              and isinstance(plan[0], list) and plan[0]
+              and isinstance(plan[0][0], list))
+    if legacy:
+        raise UnsupportedDisclosurePlan(
+            'Historical nested q.dp is unsupported; start a new credential exchange')
+    validator = getattr(ipexing, '_disclosurePathError', None)
+    if validator is None:
+        raise kering.ConfigurationError(
+            'Installed KERIpy does not support the maintained flat q.dp profile')
+    if error := validator(plan):
+        raise UnsupportedDisclosurePlan(f'Unsupported q.dp disclosure plan: {error}')
+    return plan
+
+
+def _message_plan(exn):
+    """Read and validate one message's signed flat q.dp value."""
+    if exn is None or not isinstance(exn.sad.get('q'), Mapping) or 'dp' not in exn.sad['q']:
+        raise UnsupportedDisclosurePlan('The exchange has no explicit q.dp disclosure plan')
+    return _validate_plan(exn.sad['q']['dp'])
+
+
+def _resolved_plan(vault, exn):
+    """Resolve empty reply dittos to one earlier non-empty flat plan."""
+    seen = set()
+    current = exn
+    while current is not None and current.said not in seen:
+        seen.add(current.said)
+        plan = _message_plan(current)
+        if plan:
+            return plan
+        prior = current.sad.get('p', '')
+        if not prior:
+            raise UnsupportedDisclosurePlan(
+                'An opening exchange cannot use an empty q.dp disclosure plan')
+        current = vault.hby.db.exns.get((prior,))
+        if current is None:
+            raise UnsupportedDisclosurePlan('The inherited q.dp disclosure plan is unavailable')
+    raise UnsupportedDisclosurePlan('The q.dp disclosure-plan chain is cyclic')
+
+
+def request_fields(vault, exn):
+    """Return the exact origin paths authorized by a supported request chain."""
+    return list(_resolved_plan(vault, exn)[0][2])
+
+
+def presentation_eligible(credential, pre, designated=()):
     """Return whether pre is the disclosed issuee or the original issuer.
 
-    This wallet supports direct presentation, not delegated presentation rights.
-    Being the recipient of an earlier Grant does not confer presentation rights.
+    Args:
+        credential: Exact disclosed ACDC.
+        pre: Candidate presenter identifier.
+        designated: Explicit local-policy allowlist; never inferred from receipt
+            or custody. Naming an AID here establishes no cryptographic delegation.
     """
-    return bool(pre and pre in (credential.israid, credential.iseaid))
+    return bool(pre and pre in (credential.israid, credential.iseaid, *designated))
 
 
-def _require_presenter(credential, sender, recipient):
-    if not presentation_eligible(credential, sender):
+def _require_presenter(credential, sender, recipient, *, vault=None):
+    """Enforce the default roles or an explicitly configured per-credential policy."""
+    designated = ((vault.hby.cf.get() or {}).get('presentation_policy', {}).get(credential.said, [])
+                  if vault is not None else [])
+    if not presentation_eligible(credential, sender, designated):
         raise kering.ValidationError('Only the credential issuee or original issuer may present it')
     if (sender == credential.israid and sender != credential.iseaid
             and credential.iseaid and recipient != credential.iseaid):
         raise kering.ValidationError('Original issuer delivery must address the credential issuee')
+    if sender in designated:
+        return  # Explicit local policy, not an assertion of issuer delegation.
     # An opaque attribute section cannot establish whether delivery is targeted.
     if credential.iseaid is None and (
             isinstance(credential.sad.get('a'), str)
@@ -77,6 +139,35 @@ def _require_presenter(credential, sender, recipient):
             or isinstance(credential.sad.get('A'), list)
             and (len(credential.sad['A']) < 2 or not isinstance(credential.sad['A'][1], Mapping))):
         raise kering.ValidationError('Disclose the issuee block before presenting this credential')
+
+
+def set_presenter_policy(vault, credential_said, presenter, *, enabled=True):
+    """Record an operator's explicit per-credential presenter allowance.
+
+    Args:
+        vault: Open wallet whose local admission/presentation policy changes.
+        credential_said: Exact credential commitment, not a schema-wide rule.
+        presenter: Known AID selected by the operator.
+        enabled: Add the allowance, or remove it when False.
+
+    This is local trust policy only. It grants no issuer keys, does not provision
+    a salt, and cannot substitute for possessed credential/opening evidence.
+    Each receiving application's policy must separately accept that presenter.
+    """
+    _require_vault(vault)
+    Saider(qb64=credential_said)
+    Prefixer(qb64=presenter)
+    if presenter not in vault.hby.kevers:
+        raise ValueError('Introduce the selected presenter before configuring policy')
+    config = vault.hby.cf.get() or {}
+    policy = config.setdefault('presentation_policy', {})
+    names = set(policy.get(credential_said, []))
+    names.add(presenter) if enabled else names.discard(presenter)
+    if names:
+        policy[credential_said] = sorted(names)
+    else:
+        policy.pop(credential_said, None)
+    vault.hby.cf.put(config)
 
 
 def _edge_nodes(sad):
@@ -140,10 +231,41 @@ def _validate_outgoing_grant(vault, hab, grant):
         state = credentialing.authentication(vault, nest)
         if state['et'] not in ('issued', 'authenticated'):
             raise kering.ValidationError(f"Credential state is {state['et']}, not issued")
-    _require_presenter(grant_credential(vault, grant.said), hab.pre, grant.sad['ri'])
+    _require_presenter(grant_credential(vault, grant.said), hab.pre, grant.sad['ri'], vault=vault)
 
 
-def prepare(vault, hab, serder, attachment):
+def _require_delivery_time(vault, serder):
+    """Reject a retained message already stale under this wallet's KRAM policy.
+
+    This is a conservative local send gate, not a prediction of a remote
+    verifier's policy or network arrival time. Reuse KERIpy's authentication
+    classification against the exact retained attachments; never re-sign an
+    expired reply. Core KRAM remains authoritative at the receiver.
+    """
+    kramer = vault.kvy.kramer
+    if kramer is None or not kramer.enabled:
+        return
+    if error := expiry_error(vault, serder):
+        raise kering.ValidationError(error)
+    stream = exchanging.serializeMessage(vault.hby, serder.said)
+    parsed = parsing.Parser().parse(ims=bytearray(stream), processive=False,
+                                   version=kering.Vrsn_2_0)[0]
+    attachments = parsed if isinstance(parsed, dict) else vars(parsed)
+    kever = vault.hby.kevers[serder.pre]
+    auth, _ = kramer._resolveAuthType(
+        serder, attachments, kever, kramer._hasSeals(serder.pre, attachments),
+        kramer._hasSigs(serder.pre, attachments), serder.pre)
+    if auth is None:
+        raise kering.ValidationError('Saved message has no usable authentication')
+    policy = vault.hby.db.kramCTYP.get('~')
+    lag = policy.ll if auth == AuthTypes.AttachedSignatureMultiKey else policy.sl
+    age = (helping.nowUTC() - helping.fromIso8601(serder.stamp)).total_seconds() * 1000
+    if age > policy.d + lag or age < -policy.d:
+        raise kering.ValidationError(
+            'Saved message is outside the local KRAM timing window. Start a new negotiation.')
+
+
+def _retain(vault, hab, serder, attachment):
     """Retain a new local message, or reuse its previously verified copy.
 
     This is submission preparation, not intake of additional attachments.
@@ -161,14 +283,27 @@ def prepare(vault, hab, serder, attachment):
                                version=kering.Vrsn_2_0)
     if not vault.exc.complete(serder.said):
         raise kering.ValidationError('Outgoing IPEX has not passed protocol verification')
+    return exchanging.serializeMessage(vault.hby, serder.said)
+
+
+def prepare(vault, hab, serder, attachment):
+    """Retain and validate a message without authorizing network delivery.
+
+    Preserve the explicit preparation API for import and admission callers.
+    Submission uses _retain directly so mutable readiness cannot strand consent.
+    """
+    stream = _retain(vault, hab, serder, attachment)
     if serder.route == '/ipex/grant' and serder.sad['a'].get('o'):
         _validate_outgoing_grant(vault, hab, serder)
-    return exchanging.serializeMessage(vault.hby, serder.said)
+    return stream
 
 
 def submit(vault, hab, serder, attachment):
     """Retain a signed message and authorize its delivery by the vault worker."""
-    prepare(vault, hab, serder, attachment)
+    _retain(vault, hab, serder, attachment)
+    # Protocol acceptance and delivery consent are separate databases. A crash
+    # here is recovered by the existing explicit Send saved message action.
+    # The sender checks mutable readiness before any network operation.
     if vault.db.outbox.put((serder.said,), IpexSubmission()):
         vault.signals.emit_doer_event('Ipex', 'queued', {'said': serder.said})
     return serder.said
@@ -191,7 +326,7 @@ def grant_credential(vault, grant_said):
     """Load the origin credential from a retained, verified grant."""
     exn = vault.hby.db.exns.get(keys=(grant_said,))
     if exn is None or exn.route != '/ipex/grant' or exn.pvrsn.major != 2:
-        raise kering.ValidationError('Verified native grant not found')
+        raise kering.ValidationError('Verified ACDC v2 IPEX grant not found')
     exchanging.verify(vault.hby, exn)
     origin = exn.sad['a']['o'][0]
     for nest in exchanging.loadParsedNestedSubstreams(vault.hby, grant_said):
@@ -201,7 +336,7 @@ def grant_credential(vault, grant_said):
 
 
 def _disclosure_plan(origin, nodes):
-    """Name the retained nodes in native BFS order without expanding their fields."""
+    """Name the retained nodes in disclosure-plan BFS order without expanding their fields."""
     plan, seen = [], set()
     pending = deque([(origin, '/')])
     while pending:
@@ -217,19 +352,35 @@ def _disclosure_plan(origin, nodes):
         pending.extend((far, prefix + path) for far, path in _edge_nodes(sad))
     if seen != nodes.keys():
         raise kering.ValidationError('Retained evidence contains unrelated credentials')
-    return [plan]
+    return _validate_plan(plan)
 
 
-def _credential_evidence(vault, credential_said, hab=None):
-    """Load the retained origin and its linked credentials."""
-    view = credentialing.credential(vault, credential_said)
-    if view['status']['et'] not in ('issued', 'authenticated'):
+def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
+                         disclose=(), refresh=False, openings=(), derive=False, bound_event=None, preview=False):
+    """Load exact selected material and its ACDC v2 IPEX disclosure plan.
+
+    vault/credential_said identify inventory; hab optionally enforces current
+    observer policy. from_grant selects one admission. disclose chooses held
+    attribute paths; refresh/openings/derive select explicit Grant proof sources.
+    preview selects content only for Offer and refuses state-opening options.
+    Return view, serialized artifacts, ACDC v2 IPEX plan and disclosed SADs. Grant
+    mode verifies every node's authentication; Offer makes no current-state claim.
+    """
+    view = credentialing.credential(vault, credential_said, grant=from_grant)
+    if preview:
+        if refresh or openings or derive or bound_event:
+            raise ValueError('State opening selection belongs to Grant, not Offer preview')
+        view = dict(view, sad=disclosing.select(SerderACDC(sad=view['sad']), disclose).sad)
+    elif disclose or refresh or openings or derive or bound_event:
+        view = disclosing.material(vault, view, paths=disclose, refresh=refresh,
+                                   openings=openings, derive=derive, bound_event=bound_event)
+    if not preview and view['status']['et'] not in ('issued', 'authenticated'):
         raise kering.ValidationError('Credential does not have a verified issued state or issuer authentication')
     if hab is not None:
         credentialing.require_registry_evidence(vault, SerderACDC(sad=view['sad']), hab)
     artifacts = dict(view['artifacts'])
-    # Received credentials already retain the native Grant's complete evidence.
-    pending = [view] if vault.db.issued.get((credential_said,)) else []
+    # Received credentials already retain the ACDC v2 IPEX grant's complete evidence.
+    pending = [view] if not from_grant and vault.db.issued.get((credential_said,)) else []
     while pending:
         current = pending.pop()
         for said, _ in _edge_nodes(current['sad']):
@@ -238,7 +389,7 @@ def _credential_evidence(vault, credential_said, hab=None):
             source = credentialing.credential(vault, said)
             if hab is not None:
                 credentialing.require_registry_evidence(vault, SerderACDC(sad=source['sad']), hab)
-            if source['status']['et'] not in ('issued', 'authenticated'):
+            if not preview and source['status']['et'] not in ('issued', 'authenticated'):
                 raise kering.ValidationError(f'Source credential {said} is not issued')
             artifacts[said] = source['proof']
             artifacts.update(source['artifacts'])
@@ -252,18 +403,41 @@ def _credential_evidence(vault, credential_said, hab=None):
             raise kering.ValidationError('Invalid retained credential evidence')
         if hab is not None:
             credentialing.require_registry_evidence(vault, parsed[0].serder, hab)
-        state = credentialing.authentication(vault, parsed[0])
-        if state['et'] not in ('issued', 'authenticated'):
+        state = credentialing.authentication(vault, parsed[0]) if not preview else None
+        if not preview and state['et'] not in ('issued', 'authenticated'):
             raise kering.ValidationError('Source credential does not have a verified issued state')
         nodes[parsed[0].serder.said] = parsed[0].serder.sad
-    return view, list(artifacts.values()), _disclosure_plan(credential_said, nodes), nodes
+    plan = _disclosure_plan(credential_said, nodes)
+    if disclose:
+        plan[0][2] = list(disclose)
+        _validate_plan(plan)
+    return view, list(artifacts.values()), plan, nodes
 
 
-def grant(vault, hab, credential_said, recipient, message=''):
-    """Build a grant from the wallet's retained issuance or received evidence."""
+def grant(vault, hab, credential_said, recipient, message='', *, from_grant=None,
+          disclose=(), refresh=False, openings=(), derive=False, bound_event=None):
+    """Build a grant using the selected local disclosure and optional opening.
+
+    Args:
+        vault: Open evidence and consent owner.
+        hab: Local signing identifier.
+        credential_said: Exact credential to present.
+        recipient: Counterparty AID.
+        message: Human-readable message.
+        from_grant: Explicit admitted view; None retains inventory defaults.
+        disclose: Attribute paths to reveal from material already possessed.
+        refresh: Rebuild only the registry proof against accepted current history.
+        openings: Explicit event-specific CESR proof bytes.
+        derive: Enable provisioned per-registry derivation for this operation.
+        bound_event: Optional exact accepted issuee event for derived bound state.
+
+    Returns:
+        tuple: ACDC v2 IPEX signed exchange and attachments, still requiring prepare/submit.
+    """
     _require_vault(vault, hab)
-    view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab)
-    _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient)
+    view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
+        from_grant=from_grant, disclose=disclose, refresh=refresh, openings=openings, derive=derive, bound_event=bound_event)
+    _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient, vault=vault)
     return ipexing.grant(hab, recipient, message, origin=view['proof'], artifacts=artifacts,
                          modifiers={'dp': plan}, kind=kering.Kinds.json)
 
@@ -306,18 +480,32 @@ def _offer_preview(original):
                    schema=original['s'], rule=rules, kind=kering.Kinds.json, **fields)
 
 
-def request_schema(exn):
-    """Read the origin schema for the composer's retained-node disclosure plans."""
-    plan = exn.sad['q'].get('dp', [])
-    if len(plan) == 1 and plan[0]:
-        schema, path, fields = plan[0][0]
-        if path == '/' and fields in ([], ['']) and all(not entry[2] for entry in plan[0][1:]):
-            return schema
-    return None
+def request_schema(exn, vault=None):
+    """Read the origin schema from a supported flat disclosure plan.
+
+    ``vault`` resolves an empty reply ditto through its exact signed priors.
+    Historical nested plans raise rather than being silently reinterpreted.
+    """
+    plan = _resolved_plan(vault, exn) if vault is not None else _message_plan(exn)
+    if not plan:
+        return None
+    schema, prefix, fields = plan[0]
+    if prefix not in ('', '/') or any(entry[2] for entry in plan[1:]):
+        raise UnsupportedDisclosurePlan(
+            'This wallet supports one origin request and node-presence dependencies')
+    return schema
 
 
-def start(vault, hab, recipient, action, message='', *, schema=None, credential_said=None, ax=None):
-    """Start a schema request or a credential offer after explicit consent."""
+def start(vault, hab, recipient, action, message='', *, schema=None, credential_said=None,
+          ax=None, from_grant=None, disclose=()):
+    """Start an Apply or Offer after explicit local consent.
+
+    vault/hab select the local signer, recipient the counterparty, and message
+    the displayed text. schema selects an Apply schema; credential_said and
+    from_grant select an Offer's exact evidence. disclose selects attribute
+    paths (empty preserves the existing whole-credential form); ax requests
+    ACDC v2 IPEX anchor negotiation. Return the queued signed exchange identifier.
+    """
     _require_vault(vault, hab)
     if not recipient or recipient == hab.pre:
         raise ValueError('Choose another identifier for this exchange')
@@ -325,13 +513,15 @@ def start(vault, hab, recipient, action, message='', *, schema=None, credential_
     if action == 'Apply':
         if not schema or vault.hby.db.schema.get((schema,)) is None:
             raise ValueError('Choose a loaded schema')
+        plan = _validate_plan([[schema, '/', list(disclose)]])
         exn, atc = ipexing.apply(hab, recipient, message,
-                                 modifiers={'dp': [[[schema, '/', []]]]}, ax=ax,
+                                 modifiers={'dp': plan}, ax=ax,
                                  kind=kering.Kinds.json)
     elif action == 'Offer':
-        view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab)
-        _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient)
-        preview = _offer_preview(view['sad'])
+        view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
+            from_grant=from_grant, disclose=disclose, preview=True)
+        _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient, vault=vault)
+        preview = SerderACDC(sad=view['sad']) if disclose else _offer_preview(view['sad'])
         exn, atc = ipexing.offer(hab, message, preview, recp=recipient,
                                  artifacts=[],
                                  modifiers={'dp': plan}, ax=ax,
@@ -342,7 +532,7 @@ def start(vault, hab, recipient, action, message='', *, schema=None, credential_
 
 
 def expiry_error(vault, exn):
-    """Explain an expired exchange using the wallet's native KRAM policy."""
+    """Explain an expired exchange using the wallet's ACDC v2 IPEX KRAM policy."""
     kramer = vault.kvy.kramer
     if exn is None or kramer is None or not kramer.enabled:
         return None
@@ -376,6 +566,11 @@ def responses(vault, exn):
             or vault.hby.db.erpy.get((exn.said,)) is not None
             or expiry_error(vault, exn)):
         return []
+    if exn.route in ('/ipex/apply', '/ipex/offer', '/ipex/agree', '/ipex/grant'):
+        try:
+            _resolved_plan(vault, exn)
+        except (UnsupportedDisclosurePlan, kering.ConfigurationError):
+            return ['Spurn'] if exn.route != '/ipex/agree' else []
     match exn.route:
         case '/ipex/apply':
             return ['Offer', 'Grant', 'Spurn']
@@ -395,8 +590,16 @@ def anchor_error(hab):
     return None
 
 
-def respond(vault, said, action, message='', credential_said=None):
-    """Validate the current decision before building and saving one response."""
+def respond(vault, said, action, message='', credential_said=None, *, from_grant=None,
+            refresh=False, openings=(), derive=False, bound_event=None):
+    """Validate and queue one response using the prior's agreed disclosure paths.
+
+    vault owns evidence; said names the prior; action and message express the
+    operator decision. credential_said/from_grant select exact retained material.
+    refresh/openings/derive/bound_event have the same capability meanings as grant.
+    Return the signed response identifier. The builder cannot renegotiate fields
+    at Grant time or enrich a prior admission from another inventory view.
+    """
     _require_vault(vault)
     prior = vault.hby.db.exns.get((said,))
     if error := expiry_error(vault, prior):
@@ -414,13 +617,15 @@ def respond(vault, said, action, message='', credential_said=None):
         return exn.said
     _require_route(hab, prior.pre, reply=action != 'Spurn')
     if action in ('Offer', 'Grant'):
-        view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab)
-        _require_presenter(SerderACDC(sad=view['sad']), hab.pre, prior.pre)
         request = (vault.hby.db.exns.get((prior.sad['p'],))
                    if prior.route == '/ipex/agree' else prior)
-        schema = request_schema(request)
-        if request.sad['q'].get('dp') not in (None, [[]]) and schema is None:
-            raise ValueError('This disclosure plan is not supported by the whole-credential form')
+        requested = _resolved_plan(vault, request)
+        fields = list(requested[0][2])
+        view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
+            from_grant=from_grant, disclose=fields, refresh=refresh,
+            openings=openings, derive=derive, bound_event=bound_event, preview=action == 'Offer')
+        _require_presenter(SerderACDC(sad=view['sad']), hab.pre, prior.pre, vault=vault)
+        schema = request_schema(request, vault)
         offered = request.sad['a'].get('o', []) if request.route == '/ipex/offer' else []
         if offered:
             previews = exchanging.loadParsedNestedSubstreams(vault.hby, request.said)
@@ -431,11 +636,10 @@ def respond(vault, said, action, message='', credential_said=None):
         actual = actual if isinstance(actual, str) else actual['$id']
         if schema and schema != actual:
             raise ValueError('The credential does not match the requested schema')
-        requested = request.sad['q'].get('dp', [[]])
         if schema:
-            plan[0][0][2] = requested[0][0][2]
+            plan[0][2] = list(requested[0][2])
         if action == 'Offer':
-            preview = _offer_preview(view['sad'])
+            preview = SerderACDC(sad=view['sad']) if fields else _offer_preview(view['sad'])
             exn, atc = ipexing.offer(hab, message, preview, apply=prior,
                                     artifacts=[],
                                     modifiers={'dp': plan}, ax=prior.sad['a'].get('ax'),
@@ -445,13 +649,56 @@ def respond(vault, said, action, message='', credential_said=None):
                 raise ValueError('Credential evidence does not match the agreed disclosure plan')
             link = {'apply': prior} if prior.route == '/ipex/apply' else {'agree': prior}
             exn, atc = ipexing.grant(hab, prior.pre, message, view['proof'], artifacts=artifacts,
-                                    modifiers={'dp': [[]]}, ax=prior.sad['a'].get('ax'),
+                                    modifiers={'dp': []}, ax=prior.sad['a'].get('ax'),
                                     kind=kering.Kinds.json, **link)
     elif action == 'Agree':
         exn, atc = ipexing.agree(hab, message, prior, kind=kering.Kinds.json)
     else:
         exn, atc = ipexing.spurn(hab, message, prior, kind=kering.Kinds.json)
     return submit(vault, hab, exn, atc)
+
+
+class ApprovedResponse(doing.DoDoer):
+    """Retry one reviewed response while its vault remains open.
+
+    ``said`` and ``action`` identify the exact predecessor and response;
+    ``selection`` is copied so widgets cannot alter consent during a wait.
+    The owning outbox scheduler supplies HIO recurrence. No intent is persisted
+    until submit authorizes an exact signed message; closing cancels that wait.
+    """
+
+    def __init__(self, vault, said, action, **selection):
+        """Capture vault, predecessor SAID, action and copied disclosure options."""
+        self.vault, self.said, self.action = vault, said, action
+        self.selection = deepcopy(selection)
+        if credential_said := self.selection.get('credential_said'):
+            view = credentialing.credential(vault, credential_said,
+                                            grant=self.selection.get('from_grant'))
+            if view['grant']:
+                self.selection['from_grant'] = view['grant']
+        self.result = None
+        self.error = ''
+        self.waiting = False
+        super().__init__(doers=[doing.doify(self.respondDo)])
+
+    def respondDo(self, tymth=None, tock=0.0, **opts):
+        """Revalidate the frozen decision each pass; construct at most one reply."""
+        self.wind(tymth)
+        yield self.tock
+        while not getattr(self.vault, 'closed', False):
+            try:
+                self.result = respond(self.vault, self.said, self.action, **self.selection)
+                self.error, self.waiting = '', False
+                return
+            except credentialing.RegistryEvidencePending as error:
+                self.error, self.waiting = str(error), True
+            except (OSError, kering.KeriError, ValueError) as error:
+                self.error, self.waiting = str(error), False
+                return
+            finally:
+                self.vault.signals.emit_doer_event('Ipex', 'response_preparation',
+                                                   {'prior': self.said})
+            yield 0.25
 
 
 def exchanges(vault):
@@ -507,15 +754,22 @@ def exchanges(vault):
 
 
 def _validate_credential(vault, credential, grant_said):
+    """Validate a parsed credential against its exact received grant.
+
+    ``vault`` supplies authenticated exchange/KEL/TEL evidence; ``credential``
+    is the parsed ACDC and ``grant_said`` names its signed Grant. Require the
+    negotiated schema, allowed presenter and valid disclosed nested proofs.
+    Raise on missing, stale or invalid evidence; never admit a credential here."""
     grant = vault.hby.db.exns.get((grant_said,))
+    _resolved_plan(vault, grant)
     prior = vault.hby.db.exns.get((grant.sad['p'],)) if grant.sad['p'] else None
     if prior and prior.route == '/ipex/agree':
         prior = vault.hby.db.exns.get((prior.sad['p'],))
-    expected = request_schema(prior) if prior else None
+    expected = request_schema(prior, vault) if prior else None
     actual = credential.schema if isinstance(credential.schema, str) else credential.schema['$id']
     if expected and actual != expected:
         raise kering.ValidationError('The disclosed credential does not match the agreed schema')
-    _require_presenter(credential, grant.pre, grant.sad['ri'])
+    _require_presenter(credential, grant.pre, grant.sad['ri'], vault=vault)
     for nest in exchanging.loadParsedNestedSubstreams(vault.hby, grant_said):
         credentialing.validate_schema(vault, nest.serder)
         credentialing.require_registry_evidence(vault, nest.serder, vault.hby.habByPre(grant.sad['ri']))
@@ -525,7 +779,7 @@ def _validate_credential(vault, credential, grant_said):
 
 
 def _pending_anchors(vault, exn):
-    """Load unreceipted local anchors from the retained native source seals."""
+    """Load unreceipted local anchors from the retained ACDC v2 source seals."""
     pending = []
     for (_, pre), (_, diger) in vault.hby.db.ests.getTopItemIter(keys=(exn.said, '')):
         if pre not in vault.hby.prefixes:
@@ -541,7 +795,7 @@ def _pending_anchors(vault, exn):
 
 
 def _finish_receipt(vault, pre, grant_said, receipt, restore=False):
-    """Reconcile native evidence, the send permission and wallet membership."""
+    """Reconcile ACDC v2 IPEX evidence, the send permission and wallet membership."""
     grant = vault.hby.db.exns.get((grant_said,))
     reply = vault.hby.db.erpy.get((grant_said,))
     exn = vault.hby.db.exns.get((reply.qb64,)) if reply else None
@@ -571,6 +825,7 @@ def _finish_receipt(vault, pre, grant_said, receipt, restore=False):
         # Keep the original inventory provenance when another grant contains C.
         vault.db.accepted.put((credential.said,), AcceptedCredential(grant_said, exn.said,
                                                                     helping.nowIso8601()))
+    receipt.accepted_at = receipt.accepted_at or helping.nowIso8601()
     receipt.status, receipt.error = 'accepted', ''
     vault.db.receipts.pin((pre, grant_said), receipt)
     return exn, stream[exn.size:]
@@ -605,7 +860,7 @@ def admit(vault, hab, grant_said, message='', *, send=False):
                 raise kering.ValidationError(error)
         _validate_credential(vault, credential, grant_said)
         receipt = GrantReceipt(credential=credential.said, send=send)
-        # Save consent before the native builder can create an AX anchor.
+        # Save consent before the ACDC v2 IPEX builder can create an AX anchor.
         vault.db.receipts.put((hab.pre, grant_said), receipt)
         if vault.hby.db.erpy.get((grant_said,)) is None:
             exn, atc = ipexing.admit(hab, message, grant, kind=kering.Kinds.json)
@@ -675,14 +930,14 @@ def _due(record, now):
     A failed message retries automatically after each delay in RetryDelays,
     then waits for a manual Retry, which sets it back to pending.
     """
-    if record.status == 'pending':
+    if record.status in ('pending', 'waiting_evidence'):
         return True
     return (record.status == 'failed' and record.attempts <= len(SendIpexDoer.RetryDelays)
             and record.retry_at <= now)
 
 
 class SendIpexDoer(credentialing.CredentialUpdateDoer):
-    """Receipt a retained native exchange and submit authorized delivery."""
+    """Receipt a retained ACDC v2 IPEX exchange and submit authorized delivery."""
 
     Timeout = 30.0
 
@@ -700,6 +955,7 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
         record = None
         consent = None
         claimed = False
+        transport_started = False
         try:
             _require_vault(self.vault)
             record = self.vault.db.outbox.get((self.said,))
@@ -711,6 +967,7 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
             self.hab = self.vault.hby.habByPre(self.serder.pre)
             if self.hab is None:
                 raise kering.ValidationError('Saved submission has no local sender')
+            _require_delivery_time(self.vault, self.serder)
             if self.serder.route == '/ipex/grant' and self.serder.sad['a'].get('o'):
                 _validate_outgoing_grant(self.vault, self.hab, self.serder)
             if self.serder.route == '/ipex/admit':
@@ -724,7 +981,6 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
                                reply=self.serder.route not in ('/ipex/admit', '/ipex/spurn'))
                 record.status, record.error = 'sending', ''
                 record.missing_route = False
-                record.attempts += 1
                 self.vault.db.outbox.pin((self.said,), record)
                 claimed = True
             # The EXN and its exact source seals are durable before this wait.
@@ -744,6 +1000,13 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
                     self.vault.signals.emit_doer_event('Ipex', 'accepted', {'said': self.said})
             if record is None:
                 return
+            _require_delivery_time(self.vault, self.serder)
+            if self.serder.route == '/ipex/grant' and self.serder.sad['a'].get('o'):
+                _validate_outgoing_grant(self.vault, self.hab, self.serder)
+            transport_started = True
+            record.attempts += 1
+            record.retry_at = 0.0
+            self.vault.db.outbox.pin((self.said,), record)
             stream = exchanging.serializeMessage(self.vault.hby, self.said)
             self.vault.signals.emit_doer_event('Ipex', 'sending', {'said': self.said})
             poster = forwarding.StreamPoster(hby=self.vault.hby, hab=self.hab,
@@ -785,9 +1048,16 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
             record.status = 'submitted'
             self.vault.db.outbox.pin((self.said,), record)
             self.vault.signals.emit_doer_event('Ipex', 'transport_submitted', {'said': self.said})
+        except credentialing.RegistryEvidencePending as ex:
+            if record is not None and self.vault.db.opened:
+                record.status, record.error = 'waiting_evidence', str(ex)
+                record.retry_at = 0.0
+                self.vault.db.outbox.pin((self.said,), record)
+                self.vault.signals.emit_doer_event('Ipex', 'waiting_evidence',
+                                                   {'said': self.said, 'error': record.error})
         except (OSError, httping.HTTPException, kering.KeriError, ValueError) as ex:
             if record is not None and self.vault.db.opened:
-                failure = ('blocked' if not claimed and isinstance(ex, (kering.ValidationError, kering.ConfigurationError))
+                failure = ('blocked' if not transport_started and isinstance(ex, (kering.ValidationError, kering.ConfigurationError))
                            else 'failed')
                 record.status, record.error = failure, str(ex)
                 record.missing_route = isinstance(ex, MissingRouteError)
