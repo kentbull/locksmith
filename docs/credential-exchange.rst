@@ -151,6 +151,13 @@ events, so current standing survives a wallet restart. Historical ``upd``
 events remain readable as evidence but cannot establish current standing or be
 extended by the authoring workflow.
 
+Configure registrar and observer URLs in Vault Settings when using registry
+services. Locksmith uses one service contract: it publishes a signed query
+containing complete KEL/TEL evidence and fetches evidence with a signed query.
+An observer response establishes current standing only when its observation
+time is recent and its advertised head matches the independently accepted
+registry head. No registry service profile setting is needed.
+
 Protocol compatibility
 ----------------------
 

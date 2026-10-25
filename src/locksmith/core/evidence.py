@@ -1,4 +1,4 @@
-"""Full KEL/TEL service profile over the vault's borrowed core processors.
+"""Full KEL/TEL service evidence over the vault's borrowed core processors.
 
 Adapted from KERIpy EvidenceProcessor and public_evidence.Request at 7671c088.
 Network scheduling stays in RegistrySyncDoer; this module neither writes accepted
@@ -99,7 +99,7 @@ def sync(worker):
         str: Successful UI event name after worker.result is authenticated.
 
     Reader/publisher KEL introduction is a deployment bootstrap requirement of
-    this profile; a wallet query cannot change the observer's acquisition loop.
+    this service; a wallet query cannot change the observer's acquisition loop.
     """
     vault, hab, regk = worker.vault, worker.hab, worker.regk
     if worker.registrar_url:

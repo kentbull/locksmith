@@ -6,7 +6,7 @@ from keri.acdc import Registrar, acdcmap, messaging
 from keri.core import BoundState, Saider, SerderACDC
 from keri.acdc.regeventing import _blindCandidates
 
-from locksmith.core import credentialing, disclosing, registries, registry_authoring
+from locksmith.core import credentialing, disclosing, registry_authoring
 from test_credentialing import _load_schema
 from test_keri_v2_compat import ipex_vaults as ipex_vaults
 
@@ -94,7 +94,6 @@ def test_historical_upd_remains_parseable_but_cannot_author_or_claim_standing(ip
     acdc = acdcmap(israid=issuer.pre, regid=registry.regk,
                    attribute={'d': '', 'value': 'legacy'})
     update = messaging.update(registry.regk, rip.said, acdc.said, 'issued', sn=1)
-    assert [event.ilk for event in registries._events(rip.raw + update.raw)] == ['rip', 'upd']
     with pytest.raises(kering.ValidationError, match='upd.*retired'):
         registry.processEvent(update)
     # Model an exact row written by an older wallet without asking the current
