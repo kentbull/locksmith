@@ -128,3 +128,42 @@ def test_delivery_age_uses_authentication_specific_kram_lag(ipex_vaults, monkeyp
             ipexing._require_delivery_time(sender.vault, exn)
     else:
         ipexing._require_delivery_time(sender.vault, exn)
+
+
+def test_final_graph_gate_rechecks_semantic_evidence_before_transport(ipex_vaults, monkeypatch):
+    """Losing an edge pin after initial readiness preserves the queued bytes."""
+    from keri.core import scheming
+    from test_credentialing import _issue, _load_schema
+    from test_ipex_policy import _introduce
+
+    issuer, holder = ipex_vaults('final-graph-issuer'), ipex_vaults('final-graph-holder')
+    ih, hh = issuer.hby.makeHab(name='issuer'), holder.hby.makeHab(name='holder')
+    schema = _load_schema(issuer, ih)
+    pin = scheming.Schemer(sed={'$id': '', 'version': '1.0.0', 'title': 'current edge constraint', 'type': 'object'})
+    issuer.hby.db.schema.pin((pin.said,), pin)
+    leaf = _issue(issuer, schema, hh, authentication='signature')
+    root = _issue(issuer, schema, hh, authentication='signature', edges={
+        'source': {'n': leaf, 's': pin.said, 'o': 'NI2I'}})
+    _introduce(issuer, holder)
+    _introduce(holder, issuer)
+    grant, atc = ipexing.grant(issuer.vault, ih, root, hh.pre)
+    ipexing.submit(issuer.vault, ih, grant, atc)
+    exact = exchanging.serializeMessage(issuer.hby, grant.said)
+    checks = []
+
+    def evidence_changes(*args):
+        checks.append(True)
+        if len(checks) == 2:
+            issuer.hby.db.schema.rem((pin.said,))
+
+    def forbidden_transport(**kwa):
+        pytest.fail('An unresolved graph reached network delivery')
+
+    monkeypatch.setattr(credentialing, 'require_registry_evidence', evidence_changes)
+    monkeypatch.setattr(ipexing.forwarding, 'StreamPoster', forbidden_transport)
+    _run_sender(issuer.vault)
+    record = issuer.vault.db.outbox.get((grant.said,))
+    assert len(checks) == 2
+    assert record.status == 'waiting_evidence' and record.attempts == 0
+    assert exchanging.serializeMessage(issuer.hby, grant.said) == exact
+    assert issuer.vault.exc.routes['/ipex/grant'].verifyAccepted(grant.said, historical=True)

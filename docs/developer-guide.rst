@@ -66,6 +66,17 @@ Once the editable install is in place:
 
    uv run --locked python -m locksmith.main
 
+ACDC Graph Policy
+-----------------
+
+The vault shares one KERIpy graph verification context across its IPEX handlers.
+Only an explicit ``True``
+evaluation permits new receipt consent, inventory, or Grant signing/delivery.
+An unresolved result or missing evaluation evidence uses the existing waiting
+state; ``False`` refuses the action. An authenticated Grant remains retained
+for inspection or refusal. Existing accepted inventory and identical receipt
+recovery remain historical records, even if current evidence changes.
+
 Building the Docs
 -----------------
 

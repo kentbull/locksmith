@@ -31,7 +31,8 @@ class IpexHandler(ipexing.IpexHandler):
         super().__init__(*args, **kwa)
         self.signals = signals
 
-    def verify(self, serder, attachments=None, nests=None, sscs=None, evidence=None):
+    def verify(self, serder, attachments=None, nests=None, sscs=None, evidence=None,
+               *, historical=False):
         if serder.pvrsn.major != 2 or not ({serder.pre, serder.ked.get('ri')} & self.hby.prefixes):
             return False
         for nest in nests or []:
@@ -44,7 +45,7 @@ class IpexHandler(ipexing.IpexHandler):
                 except KeyError:
                     pass
         return super().verify(serder, attachments=attachments, nests=nests,
-                              sscs=sscs, evidence=evidence)
+                              sscs=sscs, evidence=evidence, historical=historical)
 
     def handle(self, serder, attachments=None, nests=None, sscs=None):
         if serder.pre not in self.hby.prefixes:
@@ -224,8 +225,36 @@ def _require_vault(vault, hab=None):
         raise ValueError('The identifier does not belong to this vault')
 
 
+def _require_graph_result(result):
+    """Authorize new use only with an explicit current semantic verdict."""
+    if result is None:
+        raise credentialing.RegistryEvidencePending('ACDC v2 graph evaluation is unresolved')
+    if result is not True:
+        raise kering.ValidationError('ACDC v2 graph policy refuses this action')
+
+
+def _validate_selected(vault, origin, artifacts):
+    """Check the exact selected disclosure before the Grant builder signs it."""
+    verification = vault.exc.routes['/ipex/grant'].verification
+    try:
+        result = verification.evaluateSelected(origin, artifacts=artifacts)
+    except (kering.MissingChainError, kering.MissingSchemaError) as error:
+        raise credentialing.RegistryEvidencePending(str(error)) from error
+    _require_graph_result(result)
+
+
+def _validate_grant_graph(vault, said):
+    """Reevaluate retained authenticated evidence before a new wallet action."""
+    try:
+        result = vault.exc.routes['/ipex/grant'].verification.evaluateGrant(said)
+    except (kering.MissingChainError, kering.MissingSchemaError) as error:
+        raise credentialing.RegistryEvidencePending(str(error)) from error
+    _require_graph_result(result)
+
+
 def _validate_outgoing_grant(vault, hab, grant):
     """Recheck retained proofs before a new or retried disclosure leaves the wallet."""
+    _validate_grant_graph(vault, grant.said)
     for nest in exchanging.loadParsedNestedSubstreams(vault.hby, grant.said):
         credentialing.require_registry_evidence(vault, nest.serder, hab)
         state = credentialing.authentication(vault, nest)
@@ -438,6 +467,7 @@ def grant(vault, hab, credential_said, recipient, message='', *, from_grant=None
     view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
         from_grant=from_grant, disclose=disclose, refresh=refresh, openings=openings, derive=derive, bound_event=bound_event)
     _require_presenter(SerderACDC(sad=view['sad']), hab.pre, recipient, vault=vault)
+    _validate_selected(vault, view['proof'], artifacts)
     return ipexing.grant(hab, recipient, message, origin=view['proof'], artifacts=artifacts,
                          modifiers={'dp': plan}, kind=kering.Kinds.json)
 
@@ -647,6 +677,7 @@ def respond(vault, said, action, message='', credential_said=None, *, from_grant
         else:
             if requested != plan:
                 raise ValueError('Credential evidence does not match the agreed disclosure plan')
+            _validate_selected(vault, view['proof'], artifacts)
             link = {'apply': prior} if prior.route == '/ipex/apply' else {'agree': prior}
             exn, atc = ipexing.grant(hab, prior.pre, message, view['proof'], artifacts=artifacts,
                                     modifiers={'dp': []}, ax=prior.sad['a'].get('ax'),
@@ -762,6 +793,7 @@ def _validate_credential(vault, credential, grant_said):
     Raise on missing, stale or invalid evidence; never admit a credential here."""
     grant = vault.hby.db.exns.get((grant_said,))
     _resolved_plan(vault, grant)
+    _validate_grant_graph(vault, grant_said)
     prior = vault.hby.db.exns.get((grant.sad['p'],)) if grant.sad['p'] else None
     if prior and prior.route == '/ipex/agree':
         prior = vault.hby.db.exns.get((prior.sad['p'],))
