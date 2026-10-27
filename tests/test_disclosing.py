@@ -1,4 +1,6 @@
 """Application negotiation uses exact held material and explicit capabilities."""
+import os
+
 import pytest
 from keri import kering
 from keri.acdc import Registrar
@@ -88,9 +90,15 @@ def test_application_graduates_one_held_view_without_custody(ipex_vaults, separa
     assert not list(presenter_app.vault.db.custody.getTopItemIter())
 
 
-def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaults):
-    """A new accepted blind requires its exact opening; older content remains held."""
-    source, target = ipex_vaults('opening-issuer'), ipex_vaults('opening-holder')
+@pytest.mark.parametrize('custodyState', ['absent', 'corrupt', 'old-aeid'])
+def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaults, custodyState):
+    """Held presentation and supplied openings ignore absent or unusable custody."""
+    from keri.app.registry_custody import EncryptedCustody
+    from keri.core import Signer
+
+    source = ipex_vaults('opening-issuer')
+    target = ipex_vaults('opening-holder',
+        bran='0123456789abcdefghijk' if custodyState != 'absent' else None)
     issuer, holder = source.hby.makeHab(name='issuer'), target.hby.makeHab(name='holder')
     schema = _load_schema(source, issuer)
     target.hby.db.schema.pin((schema.said,), schema)
@@ -102,6 +110,13 @@ def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaul
     registry = source.vault.rgy.regs[acdc.regid]
     evidence.processor(target.vault).ingest(evidence.processor(source.vault).clone([acdc.regid]))
     held = _grant(source, target, issuer, holder, said)
+    assert not list(target.vault.db.custody.getTopItemIter())
+    if custodyState != 'absent':
+        # Deliberately unusable local capability state; no secret is transferred.
+        aeid = (target.hby.mgr.aeid if custodyState == 'corrupt'
+                else Signer(transferable=False).verfer.qb64)
+        target.vault.db.custody.pin((acdc.regid,), EncryptedCustody(aeid, 'invalid ciphertext'))
+    _grant(target, source, holder, issuer, said, from_grant=held)
     old = Blinder(clan=BlindState, qb64=source.vault.db.issued.get((said,)).blinder)
     opening, event = Registrar(rgy=source.vault.rgy).issue(registry, acdc, state='issued')
     issuer.interact(data=[dict(s=event.sad['n'], d=event.said)])
@@ -117,18 +132,23 @@ def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaul
     for proofs in ((), [old.qb64b], [Blinder.blind(acdc='').qb64b]):
         with pytest.raises(kering.ConfigurationError, match='current registry opening unavailable'):
             disclosing.material(target.vault, view, refresh=True, openings=proofs)
+    if custodyState != 'absent':
+        with pytest.raises(kering.AuthError):
+            disclosing.material(target.vault, view, refresh=True, derive=True)
     refreshed = disclosing.material(target.vault, view, refresh=True, openings=[opening.qb64b])
     assert refreshed['sad'] == view['sad'] and refreshed['status']['et'] == 'issued'
     assert credentialing.credential(target.vault, said, grant=held)['proof'] == view['proof']
-    assert not list(target.vault.db.custody.getTopItemIter())
+    if custodyState == 'absent':
+        assert not list(target.vault.db.custody.getTopItemIter())
     with pytest.raises(ValueError, match='explicit state refresh'):
         disclosing.material(target.vault, view, openings=[opening.qb64b])
 
 
 @pytest.mark.parametrize('damage', ['corrupt', 'old-aeid'])
 @pytest.mark.parametrize('bound', [False, True])
-def test_optional_custody_derives_without_gating_held_proofs(ipex_vaults, tmp_path, damage, bound):
-    """Provision real encrypted per-registry custody, then isolate its failure."""
+@pytest.mark.skipif(os.name != 'posix', reason='protected plaintext custody handoff requires POSIX')
+def test_protected_custody_handoff_derives_without_gating_held_proofs(ipex_vaults, tmp_path, damage, bound):
+    """Preserve real POSIX handoff, bound derivation and ordinary proof use after damage."""
     from keri.acdc import acdcmap, blindate
     from keri.app.registry_custody import EncryptedCustody
     from keri.core import Signer, messagize

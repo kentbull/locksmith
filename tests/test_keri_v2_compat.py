@@ -1110,7 +1110,8 @@ def test_acdc_v2_ipex_submission_carries_foreign_issuer_kel(ipex_vaults, ipex_ma
     verifier.close_vault()
     verifier = ipex_vaults('presentation-verifier')
     assert verifier.hby.db.states.get(hh.pre) is not None
-    assert verifier.hby.kevers.get(hh.pre) is None  # Memory cache is still cold.
+    # Inspect resident state without invoking statedict's persisted-state hydration.
+    assert dict.get(verifier.hby.kevers, hh.pre) is None
     request, atc = ipexing.apply(hh, vh.pre, 'After reopening', modifiers={'dp': IPEX_PLAN})
     stream = prepare(holder.vault, hh, request, atc)
     ipex_mailbox(holder, verifier, hh, request, stream)
