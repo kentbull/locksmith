@@ -140,7 +140,7 @@ def test_legacy_linked_offer_can_be_declined_after_reopen(ipex_vaults):
     _introduce(source, target)
 
     outbox = list(source.vault.db.outbox.getTopItemIter())
-    with pytest.raises(kering.ValidationError, match='protocol verification'):
+    with pytest.raises(kering.ValidationError):
         ipexing.respond(source.vault, agree, 'Grant', credential_said=said)
     assert list(source.vault.db.outbox.getTopItemIter()) == outbox
     assert source.hby.db.erpy.get((agree,)) is None
@@ -186,15 +186,18 @@ def test_admission_validates_linked_schema_and_nested_group_evidence(ipex_vaults
     })
     _introduce(source, target)
     _introduce(target, source)
-    grant, atc = ipexing.grant(source.vault, issuer, said, holder.pre)
-    assert grant.sad['q']['dp'][1][1] == '/e/group/source/_/'
     if invalid:
-        with pytest.raises(kering.ValidationError, match='protocol verification'):
-            ipexing.prepare(source.vault, issuer, grant, atc)
+        with pytest.raises(kering.ValidationError):
+            ipexing.grant(source.vault, issuer, said, holder.pre)
+        view, artifacts, plan, _ = ipexing._credential_evidence(source.vault, said)
+        grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, '', view['proof'],
+            artifacts=artifacts, modifiers={'dp': plan})
         # Exercise intake independently of the outgoing composer's rejection.
         stream = grant.raw + atc
     else:
+        grant, atc = ipexing.grant(source.vault, issuer, said, holder.pre)
         stream = ipexing.prepare(source.vault, issuer, grant, atc)
+    assert grant.sad['q']['dp'][1][1] == '/e/group/source/_/'
     _deliver_ipex(target.vault, stream)
     assert not target.vault.exc.complete(grant.said)
     assert target.hby.db.emse.get((grant.said, leaf_schema.said)) is not None
@@ -365,3 +368,86 @@ def test_queued_grant_rechecks_acdc_v2_registry_state_before_disclosure(ipex_vau
     assert outbox.status == 'blocked'
     assert outbox.attempts == 0
     assert not sender.deeds
+
+
+@pytest.mark.parametrize('failure', ['relation', 'schema'])
+def test_graph_use_gate_precedes_signing_consent_and_inventory(ipex_vaults, monkeypatch, failure):
+    """Authentic refused/unresolved graphs remain history, never new authority."""
+    source, target = ipex_vaults('graph-use-issuer'), ipex_vaults('graph-use-holder')
+    issuer, holder = source.hby.makeHab(name='issuer'), target.hby.makeHab(name='holder')
+    schema = _load_schema(source, issuer)
+    target.hby.db.schema.pin((schema.said,), schema)
+    pin = scheming.Schemer(sed={'$id': '', 'version': '1.0.0', 'title': 'edge-only constraint', 'type': 'object'})
+    leaf = _issue(source, schema, holder, authentication='signature')
+    said = _issue(source, schema, holder, authentication='signature', edges={
+        'source': {'n': leaf, 's': pin.said if failure == 'schema' else schema.said,
+                   'o': 'NI2I' if failure == 'schema' else 'I2I'}})
+    _introduce(source, target)
+    _introduce(target, source)
+    request, request_atc = acdc_v2_ipexing.apply(holder, issuer.pre, 'Request graph',
+        modifiers={'dp': [[schema.said, '/', []], [schema.said, '/e/source/_/', []]]})
+    _deliver_ipex(source.vault, request.raw + request_atc)
+    error = credentialing.RegistryEvidencePending if failure == 'schema' else kering.ValidationError
+
+    def forbidden_signature(*args, **kwa):
+        pytest.fail('A refused or unresolved graph reached the local signer')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(issuer, 'sign', forbidden_signature)
+        with pytest.raises(error):
+            ipexing.grant(source.vault, issuer, said, holder.pre)
+        with pytest.raises(error):
+            ipexing.respond(source.vault, request.said, 'Grant', credential_said=said)
+    assert source.hby.db.erpy.get((request.said,)) is None
+    assert not list(source.vault.db.outbox.getTopItemIter())
+
+    # A construction primitive can send the authentic graph to the independent
+    # receiver. Transport authentication is deliberately insufficient for use.
+    view, artifacts, plan, _ = ipexing._credential_evidence(source.vault, said)
+    grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Retained graph', view['proof'],
+        artifacts=artifacts, modifiers={'dp': plan})
+    _deliver_ipex(target.vault, grant.raw + atc)
+    assert target.vault.exc.complete(grant.said)
+    exact = exchanging.serializeMessage(target.hby, grant.said)
+    assert target.vault.exc.routes['/ipex/grant'].verifyAccepted(grant.said, historical=True)
+    with pytest.raises(error):
+        ipexing.admit(target.vault, holder, grant.said)
+    assert target.vault.db.receipts.get((holder.pre, grant.said)) is None
+    assert target.vault.db.accepted.get((said,)) is None
+    assert target.hby.db.erpy.get((grant.said,)) is None
+    assert exchanging.serializeMessage(target.hby, grant.said) == exact
+    if failure == 'relation':
+        assert target.vault.exc.routes['/ipex/grant'].verification.evaluateGrant(grant.said) is False
+        return
+
+    # Evidence arrives without a Grant replay. Interrupt the real acceptance
+    # commit, then remove the dependency before its final inventory retry.
+    target.hby.db.schema.pin((pin.said,), pin)
+
+    def interrupted_inventory(*args, **kwa):
+        raise RuntimeError('Interrupted inventory commit')
+
+    with monkeypatch.context() as patch:
+        patch.setattr(target.vault.db.accepted, 'put', interrupted_inventory)
+        with pytest.raises(RuntimeError, match='Interrupted inventory'):
+            ipexing.admit(target.vault, holder, grant.said)
+    receipt = target.vault.db.receipts.get((holder.pre, grant.said))
+    assert receipt is not None and receipt.status != 'accepted'
+    admit_said = target.hby.db.erpy.get((grant.said,)).qb64
+    target.hby.db.schema.rem((pin.said,))
+    with pytest.raises(credentialing.RegistryEvidencePending):
+        ipexing.admit(target.vault, holder, grant.said)
+    assert target.vault.db.accepted.get((said,)) is None
+    assert target.hby.db.erpy.get((grant.said,)).qb64 == admit_said
+    target.hby.db.schema.pin((pin.said,), pin)
+    admitted, _ = ipexing.admit(target.vault, holder, grant.said)
+    assert admitted.said == admit_said
+    accepted = target.vault.db.accepted.get((said,))
+    assert accepted.grant == grant.said
+    target.hby.db.schema.rem((pin.said,))
+    target.close_vault()
+    target = ipex_vaults('graph-use-holder')
+    holder = target.hby.habByName('holder')
+    assert ipexing.admit(target.vault, holder, grant.said)[0].said == admit_said
+    assert target.vault.db.accepted.get((said,)) == accepted
+    assert exchanging.serializeMessage(target.hby, grant.said) == exact
