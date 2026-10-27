@@ -475,7 +475,7 @@ wheels = [
 [[package]]
 name = "keri"
 version = "2.1.0.dev1"
-source = { git = "https://github.com/kentbull/keripy.git?rev=860c4621e9078184a15009c68d77b5b70567167c#860c4621e9078184a15009c68d77b5b70567167c" }
+source = { git = "https://github.com/kentbull/keripy.git?rev=a4d1e92a6da07a597034ff28e1f063cf6fabf10f#a4d1e92a6da07a597034ff28e1f063cf6fabf10f" }
 dependencies = [
     { name = "apispec" },
     { name = "blake3" },
@@ -577,7 +577,7 @@ requires-dist = [
     { name = "cbor", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.3" },
     { name = "falcon", specifier = ">=4.2.0" },
-    { name = "keri", git = "https://github.com/kentbull/keripy.git?rev=860c4621e9078184a15009c68d77b5b70567167c" },
+    { name = "keri", git = "https://github.com/kentbull/keripy.git?rev=a4d1e92a6da07a597034ff28e1f063cf6fabf10f" },
     { name = "kerkle", specifier = ">=0.0.3" },
     { name = "mnemonic", specifier = "==0.21" },
     { name = "multicommand", specifier = "==1.0.0" },
