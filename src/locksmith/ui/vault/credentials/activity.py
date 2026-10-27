@@ -3,7 +3,7 @@ import json
 from datetime import datetime
 from collections.abc import Mapping
 
-from PySide6.QtCore import Qt, Signal
+from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
     QHBoxLayout, QHeaderView, QLabel, QScrollArea, QStackedWidget, QTabBar, QTextEdit,
@@ -13,6 +13,8 @@ from keri.help import helping
 from keri import kering
 from keri.core import SerderACDC
 from keri.peer import exchanging
+
+from locksmith.ui.vault.credentials.disclosure import DisclosureOptions
 
 from locksmith.core import credentialing, ipexing
 from locksmith.ui import colors
@@ -330,7 +332,7 @@ class CredentialActivityPage(BaseListPage):
             self.refresh()
 
     def _on_doer_event(self, doer_name, event_type, data):
-        if doer_name == 'Ipex':
+        if doer_name in ('Ipex', 'RegistryEvidence'):
             self.refresh()
 
     def _current_vault(self):
@@ -354,7 +356,10 @@ class CredentialActivityPage(BaseListPage):
                 schemer = self.vault.hby.db.schema.get((schema,))
                 return credential_name(schemer.sed) if schemer else origins[0], nest.serder.sad
         for exn in reversed(chain):
-            schema = ipexing.request_schema(exn)
+            try:
+                schema = ipexing.request_schema(exn, self.vault)
+            except ipexing.UnsupportedDisclosurePlan:
+                return 'Unsupported historical credential exchange', None
             schemer = self.vault.hby.db.schema.get((schema,)) if schema else None
             if schemer:
                 return credential_name(schemer.sed), None
@@ -442,7 +447,8 @@ class CredentialActivityPage(BaseListPage):
             return 'Acceptance needs to be resumed.'
         if record and local and record.status != 'submitted':
             label = {'pending': 'Queued', 'sending': 'Sending', 'failed': 'Send failed',
-                     'blocked': 'Sending blocked'}.get(record.status, record.status)
+                     'blocked': 'Sending blocked',
+                     'waiting_evidence': 'Waiting for observer evidence'}.get(record.status, record.status)
             if record.status == 'blocked' and record.missing_route:
                 label = 'Delivery details needed'
             if record.status == 'failed' and record.attempts <= len(ipexing.SendIpexDoer.RetryDelays):
@@ -636,10 +642,16 @@ class ExchangeResponseDialog(LocksmithDialog):
               'Agree': 'Agree and request', 'Spurn': 'Decline'}
     Help = {'Offer': 'Sends the issuer, credential type, and terms below. Credential values are sent after agreement.',
             'Grant': 'Sends the credential values now. The recipient can review them before adding the credential.',
-            'Agree': 'Credential values are not shared yet. Agree to request them, then review them before adding the credential.',
+            'Agree': 'Review the material already disclosed in this offer. Agree to request the credential proof; admission remains a separate step.',
             'Spurn': 'This ends the exchange.'}
 
     def __init__(self, page, row, action):
+        """Build a response preview for ``row`` in the current activity ``page``.
+
+        ``action`` is an allowed IPEX verb, or None to select the row default.
+        Retain the page's vault identity so later vault changes cannot submit
+        this dialog's stale choices. Credential/opening selection is explicit."""
+        self._approved_response = None
         self._default_response = action is None
         action = action or row['_actions'][0]
         self.page, self.vault, self.row, self.action = page, page.vault, row, action
@@ -679,6 +691,8 @@ class ExchangeResponseDialog(LocksmithDialog):
         self.credential = self.credential_field.combo_box
         self.credential.setAccessibleName('Credential to disclose')
         layout.addWidget(self.credential_field)
+        self.disclosure = DisclosureOptions(self.vault)
+        layout.addWidget(self.disclosure)
         self.create_button = LocksmithInvertedButton('Create another credential…')
         self.create_button.clicked.connect(self._create_credential)
         self.preview = QWidget()
@@ -723,8 +737,62 @@ class ExchangeResponseDialog(LocksmithDialog):
         self.credential_field.currentIndexChanged.connect(self._credential_changed)
         self.response.currentIndexChanged.connect(self._select_response)
         self.response.combo_box.activated.connect(self._keep_response_choice)
+        self.disclosure.changed.connect(self._preview)
         self._select_response()
         self._choose_default_response()
+        self.vault.signals.doer_event.connect(
+            self._preparation_event, Qt.ConnectionType.QueuedConnection)
+        self.finished.connect(self._cancel_preparation)
+
+    def _cancel_preparation(self, *_):
+        """Release this dialog's vault-owned wait and its signal subscription."""
+        if self._approved_response is not None:
+            self.vault.ipex_outbox.remove([self._approved_response])
+            self._approved_response = None
+        try:
+            self.vault.signals.doer_event.disconnect(self._preparation_event)
+        except (RuntimeError, TypeError):
+            pass
+
+    def _preparation_event(self, doer_name, event_type, data):
+        """Render domain progress without changing the approved selection."""
+        operation = self._approved_response
+        if operation is None or doer_name not in ('Ipex', 'RegistryEvidence'):
+            return
+        if not self.page._current_vault() or self.page.vault is not self.vault:
+            self.reject()
+            return
+        if operation.result:
+            self.accept()
+        elif operation.error:
+            self.show_error(operation.error)
+            if not operation.waiting:
+                self.vault.ipex_outbox.remove([operation])
+                self._approved_response = None
+                self.credential_field.setEnabled(True)
+                self.disclosure.setEnabled(True)
+                self.response.setEnabled(True)
+                self.decline_button.setEnabled(True)
+                self.create_button.setEnabled(True)
+                self.send_button.setEnabled(bool(ipexing.responses(self.vault, self.row['messages'][-1])))
+                self.page.refresh()
+                self._show_saved_reply_recovery()
+
+    def _show_saved_reply_recovery(self):
+        """Expose existing explicit recovery after interrupted outbox persistence."""
+        prior = self.row['messages'][-1]
+        reply = self.vault.hby.db.erpy.get((prior.said,))
+        saved = self.vault.hby.db.exns.get((reply.qb64,)) if reply else None
+        if (saved is None or saved.pre not in self.vault.hby.prefixes
+                or self.vault.db.outbox.get((saved.said,)) is not None):
+            return False
+        # A signature is not delivery consent. The existing action revalidates
+        # and authorizes this exact message only after another explicit choice.
+        self.reject()
+        self.page.summary.setText(
+            'Reply saved; delivery was not authorized. '
+            'Select the saved reply and choose Send saved message.')
+        return True
 
     def show_error(self, message):
         previous_height = self._current_banner_height if self._base_height is not None else 0
@@ -751,11 +819,11 @@ class ExchangeResponseDialog(LocksmithDialog):
         attrs = sad.get('a')
         if (said and not sad.get('r') and self.vault.db.issued.get((said,)) and sad.get('i') == tip.sad['ri']
                 and isinstance(attrs, Mapping) and attrs.get('i') == tip.pre
-                and ipexing.request_schema(tip) and 'Grant' in self.row['_actions']):
+                and ipexing.request_schema(tip, self.vault) and 'Grant' in self.row['_actions']):
             try:
                 _, artifacts, plan, _ = ipexing._credential_evidence(self.vault, said)
-                requested = tip.sad['q']['dp']
-                plan[0][0][2] = requested[0][0][2]
+                requested = ipexing._resolved_plan(self.vault, tip)
+                plan[0][2] = list(requested[0][2])
                 if plan == requested and not artifacts:
                     action = 'Grant'
             except Exception:
@@ -767,11 +835,21 @@ class ExchangeResponseDialog(LocksmithDialog):
         self._send()
 
     def _select_response(self, *_):
+        """Refresh available credentials and capabilities for the selected IPEX verb.
+
+        Ignore Qt signal arguments. Offers cannot refresh state proofs; grants
+        can opt into that capability. Preserve valid selections and expose
+        anchoring consequences before enabling submission."""
         self.action = self.response.currentData()
         self.send_button.setText(self.Labels[self.action])
         self.explanation.setText(self.Help[self.action])
         disclose = self.action in ('Offer', 'Grant')
         self.credential_field.setVisible(disclose)
+        self.disclosure.setVisible(disclose)
+        self.disclosure.refresh.setVisible(self.action == 'Grant')
+        if self.action != 'Grant':
+            with QSignalBlocker(self.disclosure):
+                self.disclosure.refresh.setChecked(False)
         tip = self.row['messages'][-1]
         anchored = self.action in ('Agree', 'Grant') and tip.sad['a'].get('ax', [False])[0]
         hab = self.vault.hby.habByPre(tip.sad['ri'])
@@ -781,7 +859,7 @@ class ExchangeResponseDialog(LocksmithDialog):
             if hab.kever.estOnly else 'This adds a permanent commitment to your key event log.'))
         self.anchor_notice.setVisible(anchored)
         request = self.vault.hby.db.exns.get((tip.sad['p'],)) if tip.route == '/ipex/agree' else tip
-        requested = ipexing.request_schema(request)
+        requested = ipexing.request_schema(request, self.vault) if disclose else None
         self._can_create = disclose and tip.route == '/ipex/apply' and requested is not None
         self._credentials = {}
         selected = self.credential.currentData()
@@ -789,10 +867,10 @@ class ExchangeResponseDialog(LocksmithDialog):
         self.credential.clear()
         if disclose:
             for view in credentialing.credentials(self.vault):
-                if view['status']['et'] not in ('issued', 'authenticated'):
+                if view['status']['et'] == 'revoked':
                     continue
                 try:
-                    ipexing._require_presenter(SerderACDC(sad=view['sad']), tip.sad['ri'], tip.pre)
+                    ipexing._require_presenter(SerderACDC(sad=view['sad']), tip.sad['ri'], tip.pre, vault=self.vault)
                 except kering.ValidationError:
                     continue
                 if requested and view['schema'].get('$id') != requested:
@@ -828,7 +906,7 @@ class ExchangeResponseDialog(LocksmithDialog):
         if ipexing.expiry_error(self.vault, tip):
             self._preview()
             return
-        schema = ipexing.request_schema(tip)
+        schema = ipexing.request_schema(tip, self.vault)
         if self.vault.db.issuers.get((schema,)) != tip.sad['ri']:
             self.show_error('Enable issuance for this schema with the identifier that received the request first.')
             return
@@ -849,6 +927,12 @@ class ExchangeResponseDialog(LocksmithDialog):
             self._preview()
 
     def _preview(self, *_):
+        """Recompute the exact outbound view and disable submission on any error.
+
+        Ignore signal arguments. Expiry, unavailable proofs and absent eligible
+        credentials are reflected in the dialog before the user can send."""
+        if self._approved_response is not None:
+            return
         expired = ipexing.expiry_error(self.vault, self.row['messages'][-1])
         disclose = self.action in ('Offer', 'Grant')
         self._needs_creation = self._can_create and self.credential.currentIndex() < 0
@@ -856,6 +940,8 @@ class ExchangeResponseDialog(LocksmithDialog):
         self.explanation.setText(
             'Create a credential for this application, then review and send it.'
             if self._needs_creation else self.Help[self.action])
+        with QSignalBlocker(self.disclosure):
+            self.disclosure.select(self.credential.currentData() if disclose else None)
         disclosure_error = self._show_credential(self._credentials.get(self.credential.currentData()) if disclose else None)
         offer_error = self._show_offer()
         self.credential_details.setVisible(disclose and (
@@ -879,6 +965,10 @@ class ExchangeResponseDialog(LocksmithDialog):
             self.show_error(error)
 
     def _show_offer(self):
+        """Render already disclosed Offer material when the response is Agree.
+
+        A reference-only offer cannot imply disclosed values or authenticated
+        admission. Clear the previous widgets before presenting this view."""
         layout = self.offer_review.layout()
         while layout.count():
             widget = layout.takeAt(0).widget()
@@ -900,16 +990,22 @@ class ExchangeResponseDialog(LocksmithDialog):
                 schemer = self.vault.hby.db.schema.get((schema,)) if isinstance(schema, str) else None
                 name = credential_name(schemer.sed if schemer else schema if isinstance(schema, Mapping) else {})
                 layout.addWidget(attribute_view('Linked credential', name))
+            if sad.get('u') != '':
+                layout.addWidget(credential_details(self.vault, sad))
             layout.addWidget(attribute_view('Declared issuer', self.page._name(sad.get('i'))))
             layout.addWidget(attribute_view('Terms', rules_text(sad['r']) if sad.get('r') else 'No rules attached.'))
         note = QLabel('Agreeing signs a response to this offer. The credential is checked when it arrives; '
-                      'adding it to your wallet is a separate step. Credential values '
-                      'are shown before you accept the Grant.')
+                      'adding it to your wallet is a separate step. Review the Grant before accepting it.')
         note.setWordWrap(True)
         note.setStyleSheet(f'color: {colors.TEXT_SECONDARY};')
         layout.addWidget(note)
 
     def _show_credential(self, sad):
+        """Render the selected ``sad`` using the same projection as submission.
+
+        Read requested fields and the exact admitted grant from the dialog.
+        Return an explanatory error if projection fails; never substitute a
+        fuller retained view. A metadata-only Offer remains explicitly labeled."""
         layout = self.preview.layout()
         while layout.count():
             widget = layout.takeAt(0).widget()
@@ -918,12 +1014,19 @@ class ExchangeResponseDialog(LocksmithDialog):
         if not sad:
             return
         try:
-            nodes = disclosed_credentials(self.vault, sad['d'], metadata=self.action == 'Offer')
+            tip = self.row['messages'][-1]
+            request = self.vault.hby.db.exns.get((tip.sad['p'],)) if tip.route == '/ipex/agree' else tip
+            fields = ipexing.request_fields(self.vault, request)
+            metadata = self.action == 'Offer' and not fields
+            nodes = disclosed_credentials(self.vault, sad['d'], metadata=metadata,
+                                          disclose=fields, preview=self.action == 'Offer', **self.disclosure.selection())
+            if self.action == 'Offer' and fields:
+                self.explanation.setText('This offer sends the selected credential values shown below, before agreement.')
         except Exception as error:
             self.credential_details.toggle_button.setText('  Credential options')
             return f'Cannot prepare disclosure: {error}'
         self.credential_details.toggle_button.setText(
-            '  Review metadata and terms to share' if self.action == 'Offer' else '  Review data and terms to share')
+            '  Review metadata and terms to share' if metadata else '  Review data and terms to share')
         if len(nodes) > 1:
             count = len(nodes) - 1
             timing = 'Their disclosed data and terms are shared with this message.'
@@ -933,6 +1036,12 @@ class ExchangeResponseDialog(LocksmithDialog):
             layout.addWidget(credential_details(self.vault, node))
 
     def _send(self):
+        """Submit the reviewed response only while its vault and exchange are current.
+
+        Pass explicit view/opening choices to the application operation, which
+        validates again. Keep failures visible and re-enable valid retry choices."""
+        if self._approved_response is not None:
+            return
         if self.page.app.vault is not self.vault or not self.page._current_vault():
             self.show_error('This vault is closed.')
             return
@@ -946,9 +1055,27 @@ class ExchangeResponseDialog(LocksmithDialog):
         self.send_button.setEnabled(False)
         try:
             ipexing.respond(self.vault, self.row['messages'][-1].said, self.action,
-                            credential_said=self.credential.currentData())
+                            credential_said=self.credential.currentData(),
+                            **(self.disclosure.selection() if self.action in ('Offer', 'Grant') else {}))
             self.accept()
+        except credentialing.RegistryEvidencePending as error:
+            # Consent belongs to the exact selection captured by the domain
+            # operation; widgets stay frozen until completion or cancellation.
+            self._approved_response = ipexing.ApprovedResponse(
+                self.vault, self.row['messages'][-1].said, self.action,
+                credential_said=self.credential.currentData(),
+                **(self.disclosure.selection() if self.action in ('Offer', 'Grant') else {}))
+            self.credential_field.setEnabled(False)
+            self.disclosure.setEnabled(False)
+            self.response.setEnabled(False)
+            self.decline_button.setEnabled(False)
+            self.create_button.setEnabled(False)
+            self.show_error(str(error))
+            self.vault.ipex_outbox.extend([self._approved_response])
         except Exception as error:
             self.show_error(str(error))
             self.page.refresh()
-            self.send_button.setEnabled(bool(ipexing.responses(self.vault, self.row['messages'][-1])))
+            if self._show_saved_reply_recovery():
+                return
+            prior = self.row['messages'][-1]
+            self.send_button.setEnabled(bool(ipexing.responses(self.vault, prior)))

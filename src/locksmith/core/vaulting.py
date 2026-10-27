@@ -8,6 +8,7 @@ from PySide6.QtCore import QTimer
 from hio.base import doing
 from hio.help import decking
 from keri import help
+from keri.acdc.ipexing import AcdcV2IpexVerification
 from keri.app import (
     agenting,
     organizing,
@@ -22,7 +23,7 @@ from keri.app import (
 from keri.core import routing as keriRouting, eventing, coring, kraming
 from keri.peer import exchanging
 
-from locksmith.core import indirecting, challenging, ipexing, registries
+from locksmith.core import indirecting, challenging, ipexing, registries, evidence
 from locksmith.core.adjudication import Watchmen, KeyStateVarianceAuthority
 from locksmith.core.configing import ENABLE_TURRET_BROWSER_PLUGIN
 from locksmith.core.grouping import CounselingCompletionDoer
@@ -149,9 +150,10 @@ class Vault(doing.DoDoer):
 
         # Load protocol handlers
         grouping.loadHandlers(exc=self.exc, mux=self.mux)
+        verification = AcdcV2IpexVerification(hby, rgy)
         for verb in ('apply', 'offer', 'agree', 'grant', 'admit', 'spurn'):
             self.exc.addHandler(ipexing.IpexHandler(f'/ipex/{verb}', hby, self.notifier, rgy,
-                                                  signals=self.signals))
+                                                  signals=self.signals, verification=verification))
         challenging.loadHandlers(db=self.hby.db, exc=self.exc, notifier=self.notifier)
 
         # KEL and credential verification
@@ -174,6 +176,7 @@ class Vault(doing.DoDoer):
             kvy=self.kvy,
             rvy=self.rvy,
             rgy=self.rgy,
+            evidence=evidence.processor(self),
         )
 
         # Notification toast doer
@@ -354,7 +357,7 @@ class NotificationToastDoer(doing.Doer):
                         title = 'Credential exchange'
                         tip = exn
                         while tip is not None:
-                            requested = ipexing.request_schema(tip)
+                            requested = ipexing.request_schema(tip, self.vault)
                             cached = self.vault.hby.db.schema.get((requested,)) if requested else None
                             if cached:
                                 title = cached.sed.get('title', title)

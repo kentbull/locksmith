@@ -101,7 +101,7 @@ class AcceptGrantDialog(LocksmithDialog):
 
 
     def _load_grant_message(self):
-        """Load a verified native grant and its disclosed credential."""
+        """Load a verified ACDC v2 IPEX grant and its disclosed credential."""
         exn = self.vault.hby.db.exns.get(keys=(self.grant_said,))
         if exn is None or exn.pvrsn.major != 2 or exn.route != '/ipex/grant':
             raise ValueError("A verified ACDC V2 grant is required")

@@ -134,3 +134,36 @@ To start with Apply, the holder chooses Received Credentials → Apply for
 credential…. Select the issuer and schema, then click Send application. The
 issuer opens Review application, creates or selects a credential, and chooses
 Send credential or Send offer. Continue with the matching steps above.
+
+Registry state publication
+--------------------------
+
+Registry-authenticated credentials offer three state-publication choices. Public
+state creates a blinded update and publishes that event's explicit opening; it
+does not create reusable opening custody. Blinded state keeps each event opening
+with the issued credential for selected disclosures. Future-opening derivation
+uses separately provisioned encrypted custody.
+
+Publishing a public registry sends the exact accepted KEL and TEL evidence,
+including retained public openings. A holder or observer verifies that stream
+independently and keeps accepted openings in the same registry store as their
+events, so current standing survives a wallet restart. Historical ``upd``
+events remain readable as evidence but cannot establish current standing or be
+extended by the authoring workflow.
+
+Configure registrar and observer URLs in Vault Settings when using registry
+services. Locksmith uses one service contract: it publishes a signed query
+containing complete KEL/TEL evidence and fetches evidence with a signed query.
+An observer response establishes current standing only when its observation
+time is recent and its advertised head matches the independently accepted
+registry head. No registry service profile setting is needed.
+
+Protocol compatibility
+----------------------
+
+Locksmith authors the maintained ACDC v2 IPEX ``q.dp`` form: a flat breadth-first
+list of ``[credential SAID, path prefix, disclosed paths]`` triples. Replies may
+use an empty list to inherit the signed plan from the prior exchange. Older
+nested disclosure plans remain exact signed history, but Locksmith does not
+reinterpret them. Activity marks such an exchange unsupported; start a new
+exchange with a compatible peer.
