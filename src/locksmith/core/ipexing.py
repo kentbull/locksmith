@@ -238,7 +238,9 @@ def _validate_selected(vault, origin, artifacts):
     verification = vault.exc.routes['/ipex/grant'].verification
     try:
         result = verification.evaluateSelected(origin, artifacts=artifacts)
-    except (kering.MissingChainError, kering.MissingSchemaError) as error:
+    except kering.MissingSchemaError as error:
+        raise credentialing.RegistryEvidencePending(f'Missing schema: {error}') from error
+    except kering.MissingChainError as error:
         raise credentialing.RegistryEvidencePending(str(error)) from error
     _require_graph_result(result)
 
@@ -247,7 +249,9 @@ def _validate_grant_graph(vault, said):
     """Reevaluate retained authenticated evidence before a new wallet action."""
     try:
         result = vault.exc.routes['/ipex/grant'].verification.evaluateGrant(said)
-    except (kering.MissingChainError, kering.MissingSchemaError) as error:
+    except kering.MissingSchemaError as error:
+        raise credentialing.RegistryEvidencePending(f'Missing schema: {error}') from error
+    except kering.MissingChainError as error:
         raise credentialing.RegistryEvidencePending(str(error)) from error
     _require_graph_result(result)
 
