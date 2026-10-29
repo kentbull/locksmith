@@ -30,7 +30,7 @@ classifiers = [
 dependencies = [
     "PySide6==6.10.3",
     "qasync>=0.28.0",
-    "keri @ git+https://github.com/kentbull/keripy.git@d5639ae105663115217afa2b7f0801bb4ff16c19",
+    "keri @ git+https://github.com/kentbull/keripy.git@d23112ad62282b1c3643faf9851a4a5e18501972",
     "qtawesome>=1.4.0",
     "mnemonic==0.21",
     "multicommand==1.0.0",
