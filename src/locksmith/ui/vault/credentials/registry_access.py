@@ -38,7 +38,9 @@ class RegistryAccessDialog(LocksmithDialog):
         self.form.addWidget(self.registry)
         self.recipient = FloatingLabelComboBox('Holder or discloser')
         self.recipient.addItem('Choose a known recipient', None)
-        for pre in self.vault.hby.kevers:
+        # Accepted foreign key states survive restart; the live Kever cache
+        # contains only identifiers already touched by this process.
+        for (pre,), _ in self.vault.hby.db.states.getTopItemIter():
             self.recipient.addItem(identifier_name(self.vault, pre), pre)
         self.form.addWidget(self.recipient)
         self.target = FloatingLabelLineEdit('Individual recipient AID (for a recipient group)')

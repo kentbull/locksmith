@@ -3,7 +3,7 @@ import pytest
 from PySide6.QtWidgets import QWidget
 from locksmith.core.salt_actions import SaltActionDoer, SaltActions
 from locksmith.ui.vault.credentials.registry_access import RegistryAccessPage
-from test_keri_v2_compat import ipex_vaults
+from test_keri_v2_compat import _deliver_ipex, ipex_vaults
 
 
 def finish(app, worker):
@@ -44,6 +44,32 @@ def test_registry_creation_uses_panel_codes_without_witness_prefix(ipex_vaults, 
         assert dialog.worker.auths.keys() == {witness.pre}
         assert dialog.worker.auths[witness.pre].split('#', 1)[0] == '123456'
         assert dialog.worker.create == (issuer.pre, 'authenticated-registry')
+    finally:
+        if page.dialog is not None:
+            page.dialog.close()
+        parent.close()
+
+
+def test_salt_recipient_choices_include_verified_peer_after_reopen(ipex_vaults, qapp):
+    """Accepted foreign KEL state remains selectable before its Kever is cached."""
+    from keri import kering
+    from keri.app.habbing import openHby
+
+    app = ipex_vaults('registry-known-recipient')
+    with openHby(name='registry-foreign-peer', temp=True) as peer_hby:
+        peer = peer_hby.makeHab(name='peer')
+        _deliver_ipex(app.vault, peer.replay(gvrsn=kering.Vrsn_2_0))
+        identifier = peer.pre
+    app.close_vault()
+    app = ipex_vaults('registry-known-recipient')
+    assert identifier not in dict(app.hby.kevers)  # Membership lookup itself loads stored key state.
+    assert app.hby.db.states.get((identifier,)) is not None
+    parent = QWidget()
+    parent.app = app
+    page = RegistryAccessPage(parent)
+    try:
+        page.open_action('share', None)
+        assert page.dialog.recipient.combo_box.findData(identifier) >= 0
     finally:
         if page.dialog is not None:
             page.dialog.close()
