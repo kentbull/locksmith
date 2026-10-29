@@ -44,8 +44,8 @@ class DisclosureOptions(QWidget):
         self.choose = LocksmithInvertedButton('Choose event-opening file…')
         self.choose.clicked.connect(self._choose)
         layout.addWidget(self.choose)
-        self.note = QLabel('Registry-state proof does not reveal withheld credential fields. '
-                           'Derivation uses local custody; it does not send the salt.')
+        self.note = QLabel('This shares an event-specific state opening. The registry salt stays private; '
+                           'withheld credential fields stay hidden.')
         self.note.setWordWrap(True)
         layout.addWidget(self.note)
         self.grant_field.currentIndexChanged.connect(lambda *_: self.changed.emit())
