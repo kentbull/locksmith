@@ -23,7 +23,7 @@ from keri.app import (
 from keri.core import routing as keriRouting, eventing, coring, kraming
 from keri.peer import exchanging
 
-from locksmith.core import indirecting, challenging, ipexing, registries, evidence
+from locksmith.core import indirecting, challenging, ipexing, registries, evidence, salting
 from locksmith.core.adjudication import Watchmen, KeyStateVarianceAuthority
 from locksmith.core.configing import ENABLE_TURRET_BROWSER_PLUGIN
 from locksmith.core.grouping import CounselingCompletionDoer
@@ -63,7 +63,11 @@ class Vault(doing.DoDoer):
         config['kram'] = {
             'enabled': True,
             'caches': {'~': (10000, 300000, 3600000, 86400000, 300000, 3600000, 86400000)},
-            'denials': [[[2, 0], 'qry', ''], [[2, 0], 'rpy', ''],
+            # Preserve existing ordinary reply exceptions while the six exact
+            # optional registry-salt routes use this same enabled KRAM policy.
+            'denials': [[[2, 0], 'qry', ''],
+                        [[2, 0], 'rpy', '/end/role'], [[2, 0], 'rpy', '/loc/scheme'],
+                        [[2, 0], 'rpy', '/ksn'], [[2, 0], 'rpy', '/watcher'],
                         [[2, 0], 'exn', '/multisig'], [[2, 0], 'exn', '/challenge']],
         }
         hby.cf.put(config)
@@ -141,20 +145,10 @@ class Vault(doing.DoDoer):
                 temp=self.hby.temp,
             ),
         )
-        self.mux = grouping.Multiplexor(hby=hby, notifier=self.notifier)
-
         # Exchange handling
         self.exc = exchanging.Exchanger(hby=hby, handlers=[])
         # Allow network evidence retrieval without changing the replay window.
         self.exc.TimeoutPSE = 300
-
-        # Load protocol handlers
-        grouping.loadHandlers(exc=self.exc, mux=self.mux)
-        verification = AcdcV2IpexVerification(hby, rgy)
-        for verb in ('apply', 'offer', 'agree', 'grant', 'admit', 'spurn'):
-            self.exc.addHandler(ipexing.IpexHandler(f'/ipex/{verb}', hby, self.notifier, rgy,
-                                                  signals=self.signals, verification=verification))
-        challenging.loadHandlers(db=self.hby.db, exc=self.exc, notifier=self.notifier)
 
         # KEL and credential verification
         self.rvy = keriRouting.Revery(db=hby.db, cues=self.cues)
@@ -162,6 +156,17 @@ class Vault(doing.DoDoer):
                                   cues=self.cues, kramer=self.kramer, exc=self.exc)
         self.kramer.cues = self.kram_cues
         self.kvy.registerReplyRoutes(router=self.rvy.rtr)
+
+        # Approved group children re-enter the same live reply/KRAM/evidence
+        # owners; no second domain router or escrow cadence is installed.
+        self.mux = grouping.Multiplexor(hby=hby, notifier=self.notifier, exc=self.exc,
+            rgy=evidence.processor(self).rever, kvy=self.kvy, rvy=self.rvy)
+        grouping.loadHandlers(exc=self.exc, mux=self.mux)
+        verification = AcdcV2IpexVerification(hby, rgy)
+        for verb in ('apply', 'offer', 'agree', 'grant', 'admit', 'spurn'):
+            self.exc.addHandler(ipexing.IpexHandler(f'/ipex/{verb}', hby, self.notifier, rgy,
+                                                  signals=self.signals, verification=verification))
+        challenging.loadHandlers(db=self.hby.db, exc=self.exc, notifier=self.notifier)
 
         watchmen = Watchmen(hby=hby, tock=15.0)
         kva = KeyStateVarianceAuthority(hby=hby, notifier=self.notifier, cues=watchmen.cues)
@@ -178,6 +183,7 @@ class Vault(doing.DoDoer):
             rgy=self.rgy,
             evidence=evidence.processor(self),
         )
+        self.salts = salting.RegistrySalts(self)
 
         # Notification toast doer
         self.toast_doer = NotificationToastDoer(vault=self)
@@ -204,6 +210,7 @@ class Vault(doing.DoDoer):
             watchmen,
             kva,
             self.mbx,
+            self.salts,
             self.registry_evidence,
             self.ipex_outbox,
             kraming.Pruner(self.kramer, tock=1.0),
