@@ -815,6 +815,7 @@ class IssueCredentialDialog(LocksmithDialog):
         # Skip if invalid selection
         if index <= 0:
             logger.info("No schema selected, clearing dynamic fields")
+            self.state_options.set_issuer(None)
             self._clear_dynamic_fields()
             return
 
@@ -831,6 +832,7 @@ class IssueCredentialDialog(LocksmithDialog):
         requires_registry = 'rd' in schemer.sed.get('required', [])
         permits_registry = 'rd' in properties or schemer.sed.get('additionalProperties', True)
         issuer = self.vault.hby.habByPre(self.vault.db.issuers.get(keys=(schema_said,)))
+        self.state_options.set_issuer(issuer.pre if issuer else None)
         modes = self.authentication_dropdown.combo_box
         for index in range(modes.count()):
             mode = modes.itemData(index)
@@ -996,6 +998,12 @@ class IssueCredentialDialog(LocksmithDialog):
         hab = self.vault.hby.habByPre(issuer_pre) if issuer_pre else None
         if hab is None:
             self.show_error("Select a local issuer for this schema first")
+            return
+
+        try:
+            self.state_options.selection()
+        except ValueError as error:
+            self.show_error(str(error))
             return
 
         if hab.kever.wits and self.authentication_dropdown.currentData() != 'signature':

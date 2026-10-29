@@ -1,4 +1,5 @@
 """Explicit registry publication capability choices for the issuance form."""
+from PySide6.QtCore import QSignalBlocker
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel
 
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, FloatingLabelLineEdit
@@ -11,6 +12,7 @@ class StatePublicationOptions(QWidget):
     def __init__(self, vault, parent=None):
         """Build controls over known identifiers without opening custody stores."""
         super().__init__(parent)
+        self.vault = vault
         self.registry = True
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -21,11 +23,12 @@ class StatePublicationOptions(QWidget):
             self.mode.addItem(label, value)
         self.mode.setCurrentIndex(1)  # Preserve the established issuance default.
         layout.addWidget(self.mode)
-        self.discloser = FloatingLabelComboBox('Designated state discloser')
-        self.discloser.addItem('Issuer retains derivation locally', None)
-        for prefix in vault.hby.kevers:
-            self.discloser.addItem(identifier_name(vault, prefix), prefix)
-        layout.addWidget(self.discloser)
+        self.established = FloatingLabelComboBox('Established registry')
+        self.established.addItem('Choose an established registry', None)
+        layout.addWidget(self.established)
+        self.party = QLabel()
+        self.party.setWordWrap(True)
+        layout.addWidget(self.party)
         self.bound_event = FloatingLabelLineEdit('Exact current issuee event (optional)')
         self.bound_event.setToolTip('Binds the state opening to a verified current issuee KEL event; does not transfer authority.')
         layout.addWidget(self.bound_event)
@@ -33,6 +36,26 @@ class StatePublicationOptions(QWidget):
         self.help.setWordWrap(True)
         layout.addWidget(self.help)
         self.mode.currentIndexChanged.connect(self._refresh)
+        self.established.currentIndexChanged.connect(self._refresh)
+        self._refresh()
+
+    def set_issuer(self, issuer):
+        """Show the domain's recorded registries for the selected schema issuer.
+
+        issuer is an AID or None. Preserve a still-eligible explicit selection;
+        changing schemas never silently selects a different established root.
+        This public snapshot neither decrypts custody nor promises usability.
+        """
+        selected = self.established.currentData()
+        selected = selected['registry'] if selected else None
+        with QSignalBlocker(self.established):
+            self.established.clear()
+            self.established.addItem('Choose an established registry', None)
+            if issuer:
+                for record in self.vault.salts.issuanceRegistries(issuer):
+                    self.established.addItem(record['registry'], record)
+                    if record['registry'] == selected:
+                        self.established.setCurrentIndex(self.established.count() - 1)
         self._refresh()
 
     def set_registry(self, enabled):
@@ -44,12 +67,16 @@ class StatePublicationOptions(QWidget):
     def _refresh(self, *_):
         """Explain the selected capability without implying salt transfer or delegation."""
         mode = self.mode.currentData()
-        self.discloser.setVisible(self.registry and mode == 'derived')
+        self.established.setVisible(self.registry and mode == 'derived')
+        self.party.setVisible(self.registry and mode == 'derived')
+        record = self.established.currentData()
+        self.party.setText('State discloser: ' + identifier_name(self.vault, record['discloser'])
+                           if record else 'Establish registry access before using future-opening derivation.')
         self.bound_event.setVisible(self.registry and mode != 'public')
         self.help.setText({
             'public': 'The event-specific status opening is published. No reusable derivation custody is created.',
             'blinded': 'Presentations reveal the specific state opening they need.',
-            'derived': 'Requires encrypted custody. Selecting a discloser does not send a secret or establish delegation; provision that capability separately.',
+            'derived': 'Uses the selected registry and its established state-disclosure capability. Issuing a credential does not change or share that capability.',
         }[mode])
 
     def selection(self):
@@ -57,8 +84,12 @@ class StatePublicationOptions(QWidget):
         if not self.registry:
             return {}
         mode = self.mode.currentData()
-        result = {'registry_mode': mode,
-                'discloser': self.discloser.currentData() if mode == 'derived' else None}
+        result = {'registry_mode': mode, 'discloser': None}
+        if mode == 'derived':
+            record = self.established.currentData()
+            if record is None:
+                raise ValueError('Choose an established registry before derived issuance')
+            result.update(registry_id=record['registry'], discloser=record['discloser'])
         if mode != 'public' and (event := self.bound_event.text().strip()):
             result['bound_event'] = event
         return result
