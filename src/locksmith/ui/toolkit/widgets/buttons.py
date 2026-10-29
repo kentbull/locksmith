@@ -847,9 +847,11 @@ class LocksmithRadioPanel(QFrame):
 
 
 class IconRightButton(QWidget):
+    """Render a clickable label with an optional trailing icon and menu."""
     clicked = Signal()
 
     def __init__(self, text, icon=None, parent=None):
+        """Create text/icon controls under parent; no menu is attached initially."""
         super().__init__(parent)
 
         self.menu = None

@@ -171,6 +171,7 @@ class AcceptGrantDialog(LocksmithDialog):
         close_button.clicked.connect(self.close)
 
     def _build_ui(self):
+        """Create the exact-Grant review and explicit acceptance/decline controls."""
         self.content = QWidget()
         layout = QVBoxLayout(self.content)
         layout.setContentsMargins(0, 12, 0, 0)
@@ -242,11 +243,13 @@ class AcceptGrantDialog(LocksmithDialog):
         self.button_row.addWidget(self.admit_button)
 
     def _can_decline(self):
+        """Return whether this exact Grant remains eligible for an explicit Spurn response."""
         grant = self.vault.hby.db.exns.get((self.grant_said,))
         return (not self.save and self.vault.db.receipts.get((self.recipient, self.grant_said)) is None
                 and 'Spurn' in ipexing.responses(self.vault, grant))
 
     def _on_decline(self):
+        """Revalidate the current vault and Grant, then send the explicitly chosen Spurn."""
         if self.app.vault is not self.vault or getattr(self.vault, 'closed', False):
             self.show_error('This vault is closed')
             return
@@ -370,6 +373,7 @@ class AcceptGrantDialog(LocksmithDialog):
                         "Acceptance preparation is saved. See Credentials → Activity for its status.")
 
     def _disconnect(self):
+        """Release this acceptance dialog's doer-event subscription once."""
         if self._listening:
             self.vault.signals.doer_event.disconnect(self._on_doer_event)
             self._listening = False

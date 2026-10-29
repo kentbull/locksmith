@@ -425,6 +425,12 @@ class CredentialUpdateDoer(doing.DoDoer):
             raise kering.ValidationError('Registry anchor is still pending')
 
     def receipt(self, hab, anchor, receiptor, auths):
+        """Yield until anchor has its accepted historical witness threshold.
+
+        hab supplies the controller, receiptor owns the ordinary receipt generator,
+        and auths supplies explicit witness authentication. Close that generator on
+        completion or cancellation; timeout or missing quorum prevents the update.
+        """
         threshold = hab.kvy.fetchEstEvent(hab.pre, anchor.sn).bner.num
         receipt = receiptor.receipt(hab.pre, sn=anchor.sn, auths=auths)
         deadline = self.tyme + 30.0

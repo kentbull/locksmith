@@ -234,11 +234,17 @@ class VaultPage(BasePage):
     # -------------------------------------------------------------------------
 
     def show_credential_activity(self, said, *, received=None, open_dialog=True):
+        """Navigate to said and optionally open its received/outgoing exchange review."""
         self.nav_menu.switch_to_credentials_menu()
         self.nav_menu.activity_button.click()
         self._pages['credential_activity'].show_exchange(said, received=received, open_dialog=open_dialog)
 
     def start_credential_exchange(self, action, *, schema=None, credential_said=None, received=False):
+        """Open the requested IPEX action using explicit schema/credential context.
+
+        received selects the retained inventory direction. Submission navigates to
+        activity; navigation alone never accepts a Grant or sends another response.
+        """
         from locksmith.ui.vault.credentials.start import StartExchangeDialog
         self._credential_exchange_dialog = StartExchangeDialog(
             self.app, self, action, schema=schema, credential_said=credential_said, received=received)

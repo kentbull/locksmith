@@ -134,6 +134,7 @@ class ViewIdentifierDialog(IdentifierViewSectionsMixin, LocksmithDialog):
             logger.info("ViewIdentifierDialog: Connected to vault signal bridge")
 
     def _refresh_receiving(self):
+        """Render current listener/mailbox status or stop the status timer on vault close."""
         if self.app.vault is not self.vault or getattr(self.vault, 'closed', False):
             self.status_timer.stop()
             self.receiving_status.setText('Vault closed')
@@ -148,5 +149,6 @@ class ViewIdentifierDialog(IdentifierViewSectionsMixin, LocksmithDialog):
         self.receiving_status.setText(text)
 
     def _share_introduction(self):
+        """Export the selected identifier introduction only from its still-current vault."""
         if self.app.vault is self.vault and not getattr(self.vault, 'closed', False):
             export_identifier_to_cesr(self, self.app, self.identifier_alias)

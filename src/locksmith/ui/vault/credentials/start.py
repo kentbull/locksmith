@@ -102,6 +102,7 @@ class StartExchangeDialog(LocksmithDialog):
         self._update_recipients()
 
     def _name(self, pre):
+        """Resolve pre to the vault's human-readable identifier label."""
         return identifier_name(self.vault, pre)
 
     def _update_recipients(self, *_):
@@ -157,6 +158,7 @@ class StartExchangeDialog(LocksmithDialog):
         self._check_route()
 
     def _check_route(self, *_):
+        """Enable sending only for a current vault, valid selection and known peer route."""
         if self.app.vault is not self.vault or getattr(self.vault, 'closed', False):
             self.send_button.setEnabled(False)
             return
@@ -179,12 +181,14 @@ class StartExchangeDialog(LocksmithDialog):
                                          and self.selection.currentData() and not error))
 
     def _repair_route(self):
+        """Open existing identifier import and hide this request until it returns."""
         self._repair_dialog = AddRemoteIdentifierDialog(self.app, self)
         self._repair_dialog.finished.connect(self._return_from_repair)
         self.hide()
         self._repair_dialog.open()
 
     def _return_from_repair(self, *_):
+        """Refresh recipients and reopen only while the original vault remains current."""
         if self.app.vault is self.vault and not getattr(self.vault, 'closed', False):
             self._update_recipients()
             self.open()

@@ -35,6 +35,7 @@ from locksmith.ui.vault.remotes.add import AddRemoteIdentifierDialog
 
 
 def action_dot(parent=None):
+    """Return a parent-owned, accessible attention dot that ignores mouse events."""
     dot = QLabel(parent)
     dot.setFixedSize(8, 8)
     dot.setStyleSheet(f'background: {colors.BLUE_ACCENT}; border: none; border-radius: 4px;')
@@ -44,17 +45,21 @@ def action_dot(parent=None):
 
 
 class ActivityTable(PaginatedTableWidget):
+    """Render exchange rows with explicit status and action controls."""
     def _display_empty_state(self):
+        """Show the inherited empty view and hide the unused exchange table."""
         super()._display_empty_state()
         self.table.hide()
 
     def _create_empty_state(self):
+        """Return the empty exchange-history label for the table owner."""
         label = QLabel('No credential exchanges yet.')
         label.setStyleSheet(f'color: {colors.TEXT_SECONDARY}; padding: 12px 0;')
         label.setFixedHeight(48)
         return label
 
     def _display_data(self, data):
+        """Render data rows, status labels and action-column width for this view."""
         super()._display_data(data)
         action_column = self.columns.index('Actions')
         self.table.horizontalHeader().setSectionResizeMode(action_column, QHeaderView.ResizeMode.Fixed)
@@ -103,6 +108,7 @@ class ActivityTabs(QTabBar):
     """Keep each indicator eight pixels after its tab text."""
 
     def __init__(self):
+        """Create the outgoing/incoming direction tabs and their attention indicators."""
         super().__init__()
         self.setExpanding(False)
         self.setDrawBase(False)
@@ -120,9 +126,15 @@ class ActivityTabs(QTabBar):
 
 
 class CredentialActivityPage(BaseListPage):
+    """Present vault exchange history and route explicit user review decisions."""
     attention_changed = Signal(bool)
 
     def __init__(self, parent):
+        """Bind the parent wallet page and create exchange review controls.
+
+        parent owns app/navigation. The active vault is attached separately; this
+        constructor neither accepts a Grant nor authorizes delivery.
+        """
         super().__init__(parent)
         self.app = parent.app
         self.wallet_page = parent
@@ -259,9 +271,11 @@ class CredentialActivityPage(BaseListPage):
 
     @property
     def table(self):
+        """Return the active outgoing or incoming paginated exchange table."""
         return self.tables[self.stack.currentIndex()]
 
     def _set_direction(self, index):
+        """Select direction index in the stack and synchronize both tab controls."""
         self.stack.setCurrentIndex(index)
         for tabs in self.tabs:
             tabs.blockSignals(True)
@@ -269,10 +283,12 @@ class CredentialActivityPage(BaseListPage):
             tabs.blockSignals(False)
 
     def _clear_credential_filter(self):
+        """Clear the selected credential scope and rebuild visible activity rows."""
         self._credential_filter = None
         self.refresh()
 
     def _update_sections(self, index):
+        """Update direction index headings and active/history visibility from row counts."""
         table, history = self.tables[index], self.history_tables[index]
         self.active_headings[index].setText(f'In progress ({table.total_items})')
         self.active_headings[index].setVisible(bool(table.total_items))
@@ -293,10 +309,12 @@ class CredentialActivityPage(BaseListPage):
         table.empty_state.setVisible(not table.total_items and not history.total_items)
 
     def _toggle_history(self, index, expanded):
+        """Retain the user-selected expanded state for direction index and redraw it."""
         self._history_expanded[index] = expanded
         self._update_sections(index)
 
     def _view_credential(self):
+        """Open retained inventory for the selected row only while its vault is current."""
         row = next((row for row in self._rows if row['_key'] == self._selected), None)
         if not row or not row['_inventory_said'] or not self._current_vault():
             return
@@ -308,6 +326,11 @@ class CredentialActivityPage(BaseListPage):
         self._credential_dialog.open()
 
     def set_vault_name(self, vault_name):
+        """Rebind this page to app.vault and disconnect the previous vault signals.
+
+        vault_name is the navigation callback argument. Close old dialogs and clear
+        selection before subscribing to the new owner; do not reuse its pending UI.
+        """
         self._detail_dialog.close()
         if self._response_dialog is not None:
             self._response_dialog.close()
@@ -325,6 +348,7 @@ class CredentialActivityPage(BaseListPage):
         self.refresh()
 
     def showEvent(self, event):
+        """Refresh on Qt event, rebinding first if navigation selected another vault."""
         super().showEvent(event)
         if self.vault is not self.app.vault:
             self.set_vault_name('')
@@ -332,17 +356,25 @@ class CredentialActivityPage(BaseListPage):
             self.refresh()
 
     def _on_doer_event(self, doer_name, event_type, data):
+        """Refresh on relevant IPEX/evidence events; callback payload adds no consent."""
         if doer_name in ('Ipex', 'RegistryEvidence'):
             self.refresh()
 
     def _current_vault(self):
+        """Return whether this page still refers to the open application vault."""
         return (self.vault is not None and self.vault is self.app.vault
                 and not getattr(self.vault, 'closed', False) and self.vault.db.opened)
 
     def _name(self, pre):
+        """Return the current vault contact/local label for identifier pre."""
         return identifier_name(self.vault, pre)
 
     def _credential(self, chain):
+        """Return a title and disclosed credential body from the exact exchange chain.
+
+        Search retained nested evidence first, then request schemas for display only.
+        Missing material remains absent; do not substitute a fuller inventory view.
+        """
         for exn in reversed(chain):
             origins = exn.sad['a'].get('o', [])
             if not origins:
@@ -366,6 +398,11 @@ class CredentialActivityPage(BaseListPage):
         return 'Credential request', None
 
     def refresh(self, *_):
+        """Rebuild both direction views from the current vault's exchange records.
+
+        Ignore Qt signal arguments. Derive labels, available actions and attention
+        from retained consent/submission state; refreshing itself authorizes nothing.
+        """
         rows = [[], []]
         if self._current_vault():
             for exchange in ipexing.exchanges(self.vault):
@@ -434,6 +471,7 @@ class CredentialActivityPage(BaseListPage):
         self._show_details(next((row for row in self._rows if row['_key'] == self._selected), None))
 
     def _outcome(self, row):
+        """Describe row state while distinguishing local submission from peer admission."""
         if row.get('expired'):
             return 'Start a new application or offer.'
         if not row['messages']:
@@ -466,6 +504,7 @@ class CredentialActivityPage(BaseListPage):
         return 'Awaiting your decision.' if row['_actions'] else f'Waiting for {self._name(tip.sad["ri"])}.'
 
     def _get_row_actions(self, row):
+        """Return review/inventory actions and icons permitted by the current row."""
         action = 'Review' if row['_actions'] else 'View exchange'
         actions = [action]
         if row['_inventory_said']:
@@ -474,6 +513,11 @@ class CredentialActivityPage(BaseListPage):
                          'View credential': ':/assets/material-icons/in-badge.svg'}
 
     def _show_details(self, row):
+        """Render row history and recovery controls without sending a message.
+
+        row is the selected exchange summary or None. Preserve exact message IDs and
+        separate saved, authorized, submitted and acceptance states in the view.
+        """
         self._selected = row['_key'] if row else None
         while self.response_buttons.count():
             self.response_buttons.takeAt(0).widget().deleteLater()
@@ -532,18 +576,21 @@ class CredentialActivityPage(BaseListPage):
         self._update_retry()
 
     def _repair_route(self):
+        """Open the existing remote-identifier importer for missing delivery details."""
         self._repair_dialog = AddRemoteIdentifierDialog(self.app, self)
         self._repair_dialog.finished.connect(lambda _, vault=self.vault: self._return_from_repair(vault))
         self._detail_dialog.hide()
         self._repair_dialog.open()
 
     def _return_from_repair(self, vault):
+        """Refresh and reopen details only if vault is still the page owner."""
         if self._current_vault() and self.vault is vault:
             self.refresh()
             self._detail_dialog.open()
             self._detail_dialog.fit_content(580)
 
     def _update_retry(self):
+        """Label and enable the saved-message action from its retained authorization state."""
         said = self.messages.currentData()
         record = self.vault.db.outbox.get((said,)) if said and self._current_vault() else None
         exn = self.vault.hby.db.exns.get((said,)) if said and self._current_vault() else None
@@ -556,6 +603,11 @@ class CredentialActivityPage(BaseListPage):
                                           and (record is None or record.status in ('pending', 'failed', 'blocked'))))
 
     def _retry_selected(self):
+        """Explicitly validate and queue the exact message selected in the UI.
+
+        This user action can authorize a saved-but-unqueued message; merely rendering
+        its signature cannot. Report errors and refresh the current exchange view.
+        """
         said = self.messages.currentData()
         if not self._current_vault() or not said:
             return
@@ -578,6 +630,11 @@ class CredentialActivityPage(BaseListPage):
             self.summary.setText(f'Could not send the saved message: {error}')
 
     def _on_row_action(self, row, action):
+        """Revalidate row and open the review selected by action.
+
+        Discard stale-vault rows. Mark matching notifications read separately from
+        consent, then route to retained credential, acceptance or response dialogs.
+        """
         if row['_vault'] is not self.vault or not self._current_vault():
             return
         self._selected = row['_key']
@@ -616,6 +673,11 @@ class CredentialActivityPage(BaseListPage):
         self._response_dialog.open()
 
     def show_exchange(self, said, *, received=None, open_dialog=True):
+        """Focus said as an exchange/message or retained credential identifier.
+
+        received optionally selects direction. open_dialog controls review display;
+        selection and navigation do not authorize a response or delivery.
+        """
         self._credential_filter = None
         self.refresh()
         if self._current_vault() and (self.vault.db.issued.get((said,)) or self.vault.db.accepted.get((said,))):
@@ -795,6 +857,7 @@ class ExchangeResponseDialog(LocksmithDialog):
         return True
 
     def show_error(self, message):
+        """Show message and resize the dialog to include its error banner."""
         previous_height = self._current_banner_height if self._base_height is not None else 0
         super().show_error(message)
         self._base_content_height += self._current_banner_height - previous_height
@@ -802,9 +865,11 @@ class ExchangeResponseDialog(LocksmithDialog):
         self._update_dialog_height(self._calculate_target_height())
 
     def _keep_response_choice(self, *_):
+        """Retain the user-selected response instead of choosing another default."""
         self._default_response = False
 
     def _credential_changed(self, *_):
+        """Reconsider the default response and exact preview after a selection signal."""
         self._choose_default_response()
         self._preview()
 
@@ -831,6 +896,7 @@ class ExchangeResponseDialog(LocksmithDialog):
         self.response.setCurrentIndex(self.response.combo_box.findData(action))
 
     def _decline(self):
+        """Select Spurn and submit through the same explicit response validation path."""
         self.response.setCurrentIndex(self.response.combo_box.findData('Spurn'))
         self._send()
 
@@ -899,6 +965,11 @@ class ExchangeResponseDialog(LocksmithDialog):
         self._preview()
 
     def _create_credential(self):
+        """Open issuance for the current, unexpired request after validating vault ownership.
+
+        Use the requested schema and return to this exchange on completion; creating
+        a credential does not silently authorize its subsequent IPEX delivery.
+        """
         if not self.page._current_vault() or self.page.vault is not self.vault:
             self.show_error('This vault is closed.')
             return
@@ -917,11 +988,13 @@ class ExchangeResponseDialog(LocksmithDialog):
         self._issue_dialog.open()
 
     def _use_created_credential(self, said):
+        """Select the newly issued credential said and reconsider the response default."""
         self._select_response()
         self.credential.setCurrentIndex(self.credential.findData(said))
         self._choose_default_response()
 
     def _return_from_issuance(self, *_):
+        """Reopen and revalidate the response only while its original vault stays current."""
         if self.page._current_vault() and self.page.vault is self.vault:
             self.open()
             self._preview()

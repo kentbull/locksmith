@@ -77,6 +77,7 @@ class IssuedCredential:
 
 @dataclass
 class AcceptedCredential:
+    """Reference the exact admitted Grant, its signed Admit and local acceptance time."""
     grant: str
     admit: str
     accepted_at: str = ''
@@ -111,6 +112,7 @@ class IpexSubmission:
 
 @dataclass
 class MailboxFrame:
+    """Retain one raw mailbox frame for this application intake boundary."""
     raw: str
 
 

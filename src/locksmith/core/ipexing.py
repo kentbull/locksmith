@@ -28,11 +28,18 @@ class IpexHandler(ipexing.IpexHandler):
     """Apply the wallet's endpoint and incoming-notification policy."""
 
     def __init__(self, *args, signals=None, **kwa):
+        """Pass protocol arguments to the base handler and borrow optional UI signals."""
         super().__init__(*args, **kwa)
         self.signals = signals
 
     def verify(self, serder, attachments=None, nests=None, sscs=None, evidence=None,
                *, historical=False):
+        """Apply local v2 intake policy before the inherited proof verification.
+
+        serder and its attachments/nests/sscs/evidence are retained protocol inputs;
+        historical selects the existing historical verification path. Return False
+        outside this local v2 path. Load known issuer state before core validation.
+        """
         if serder.pvrsn.major != 2 or not ({serder.pre, serder.ked.get('ri')} & self.hby.prefixes):
             return False
         for nest in nests or []:
@@ -48,6 +55,11 @@ class IpexHandler(ipexing.IpexHandler):
                               sscs=sscs, evidence=evidence, historical=historical)
 
     def handle(self, serder, attachments=None, nests=None, sscs=None):
+        """Record incoming serder through the base handler and emit its saved UI event.
+
+        attachments/nests/sscs retain their protocol meanings. A local outgoing message
+        is not reclassified as a new incoming notification or peer acceptance.
+        """
         if serder.pre not in self.hby.prefixes:
             super().handle(serder, attachments=attachments, nests=nests, sscs=sscs)
         if self.signals is not None:
@@ -219,6 +231,11 @@ def _require_route(hab, recipient, reply=True):
 
 
 def _require_vault(vault, hab=None):
+    """Reject a closed vault or an optional hab owned by another environment.
+
+    Return None on success; raise ValueError before an operation can use detached
+    stores or authorize a message with a different local identity.
+    """
     if getattr(vault, 'closed', False) or not vault.db.opened or not vault.hby.db.opened:
         raise ValueError('The vault is closed')
     if hab is not None and hab is not vault.hby.habByPre(hab.pre):
@@ -484,6 +501,11 @@ def _offer_preview(original):
             'This wallet cannot yet offer their terms while keeping credential references private.')
 
     def public_rules(rules):
+        """Check nested disclosed rules for unsupported blinded terms.
+
+        rules may be a mapping, list or scalar. Raise ValidationError for staged
+        blinded terms rather than presenting a commitment as reviewable consent.
+        """
         if isinstance(rules, Mapping):
             if rules.get('u'):
                 raise kering.ValidationError('Blinded rules require staged terms negotiation, which this wallet does not support')
@@ -915,6 +937,12 @@ class IpexOutboxDoer(doing.DoDoer):
     ScanDelay = 1.0
 
     def __init__(self, vault, **kwa):
+        """Attach the vault's existing submission worker using HIO options kwa.
+
+        Resume explicitly retained acceptance work and normalize interrupted local
+        sending states. A signed exchange without an outbox record still supplies no
+        delivery consent. This application owner creates no protocol acceptance rule.
+        """
         self.vault = vault
         for keys, receipt in list(vault.db.receipts.getTopItemIter()):
             try:
@@ -931,6 +959,12 @@ class IpexOutboxDoer(doing.DoDoer):
         super().__init__(doers=[doing.doify(self.sendDo)], **kwa)
 
     def sendDo(self, tymth=None, tock=0.0, **kwa):
+        """Yield between due, authorized submissions while the vault remains open.
+
+        tymth/tock provide HIO scheduling. Close read iterators before network work,
+        reconsider evidence waits without transport backoff, and stop on vault close.
+        Ordinary protocol processors retain responsibility for evidence acceptance.
+        """
         self.wind(tymth)
         yield self.tock
         while not getattr(self.vault, 'closed', False):
@@ -980,10 +1014,17 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
     RetryDelays = (30.0, 60.0, 120.0)
 
     def __init__(self, vault, said, **kwa):
+        """Bind vault and exact retained message said; kwa supplies HIO scheduling options."""
         self.vault, self.said = vault, said
         super().__init__(doers=[doing.doify(self.sendDo)], **kwa)
 
     def sendDo(self, tymth=None, tock=0.0, **kwa):
+        """Submit one explicitly authorized retained message under current readiness.
+
+        tymth/tock provide scheduler timing. Recheck message age, route, proof and
+        witness readiness before transport; evidence waits do not consume a transport
+        attempt. Cancellation closes the owned delivery and receipt generators.
+        """
         self.wind(tymth)
         yield self.tock
         delivery = None
