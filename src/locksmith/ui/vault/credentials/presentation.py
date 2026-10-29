@@ -11,6 +11,7 @@ from locksmith.ui import colors
 
 
 def credential_name(schema):
+    """Return the schema title or the neutral Credential label for absent metadata."""
     schema = schema or {}
     return schema.get('title', 'Credential')
 
@@ -23,6 +24,7 @@ def attribute_label(name, schema):
 
 
 def identifier_name(vault, pre):
+    """Resolve pre in vault contacts/local habitats, disambiguating repeated aliases."""
     if not pre:
         return 'Not specified'
     hab = vault.hby.habByPre(pre)
@@ -36,6 +38,7 @@ def identifier_name(vault, pre):
 
 
 def date_label(stamp):
+    """Format ISO stamp in local time; retain malformed input for honest display."""
     if not stamp:
         return '—'
     try:
@@ -45,6 +48,7 @@ def date_label(stamp):
 
 
 def status_label(status):
+    """Return a human label for status.et without guessing unknown registry state."""
     return {'issued': 'Active', 'revoked': 'Revoked', 'pending': 'Pending verification',
             'authenticated': 'Authenticated'}.get(status.get('et'), 'Unknown state')
 

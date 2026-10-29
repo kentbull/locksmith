@@ -77,6 +77,7 @@ class RevokeCredentialDialog(LocksmithDialog):
         self.vault.extend([doer])
 
     def _on_event(self, name, event, data):
+        """Handle matching revocation completion/failure data for this still-open vault."""
         if (self._closed or self.app.vault is not self.vault or self.vault.closed
                 or name != 'RevokeCredentialDoer' or data.get('revocation_id') != self._revocation_id):
             return
@@ -89,6 +90,7 @@ class RevokeCredentialDialog(LocksmithDialog):
             self.show_error(data.get('error', 'Revocation failed'))
 
     def _finish(self, result):
+        """Release the revocation-event subscription when the dialog finishes with result."""
         self._closed = True
         try:
             self.vault.signals.doer_event.disconnect(self._on_event)

@@ -332,6 +332,7 @@ class GrantCredentialDialog(LocksmithDialog):
         self.action_button.setText("Sending...")
 
     def _disconnect(self):
+        """Release this dialog's doer-event subscription once on completion or closure."""
         if self._listening:
             self.vault.signals.doer_event.disconnect(self._on_doer_event)
             self._listening = False

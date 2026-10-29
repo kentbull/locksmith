@@ -16,7 +16,7 @@ from keri.peer import exchanging
 
 
 def custody(vault):
-    """Compose optional encrypted derivation over the wallet's existing table.
+    """Compose optional encrypted derivation over the identity's existing Keeper.
 
     Args:
         vault: Open vault owning Habery, Regery and LocksmithBaser.
@@ -25,7 +25,7 @@ def custody(vault):
         RegistryCustody: Adapter that authenticates Keeper only when used. Merely
             viewing or presenting held material never calls this function.
     """
-    return RegistryCustody(vault.hby, vault.rgy, db=vault.db)
+    return RegistryCustody(vault.hby, vault.rgy)
 
 
 def material(vault, view, *, paths=(), refresh=False, openings=(), derive=False, bound_event=None):

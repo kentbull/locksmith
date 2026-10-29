@@ -18,7 +18,7 @@ from keri.help import helping
 from keri.peer import exchanging
 
 from locksmith.core.receipting import LocksmithReceiptor
-from locksmith.core import registry_authoring, disclosing
+from locksmith.core import registry_authoring
 from locksmith.db.basing import IssuedCredential
 
 logger = help.ogler.getLogger(__name__)
@@ -425,6 +425,12 @@ class CredentialUpdateDoer(doing.DoDoer):
             raise kering.ValidationError('Registry anchor is still pending')
 
     def receipt(self, hab, anchor, receiptor, auths):
+        """Yield until anchor has its accepted historical witness threshold.
+
+        hab supplies the controller, receiptor owns the ordinary receipt generator,
+        and auths supplies explicit witness authentication. Close that generator on
+        completion or cancellation; timeout or missing quorum prevents the update.
+        """
         threshold = hab.kvy.fetchEstEvent(hab.pre, anchor.sn).bner.num
         receipt = receiptor.receipt(hab.pre, sn=anchor.sn, auths=auths)
         deadline = self.tyme + 30.0
@@ -444,7 +450,8 @@ class IssueCredentialDoer(CredentialUpdateDoer):
 
     def __init__(self, app, schema_said, recipient_pre, attributes, edges=None, rules=None,
                  codes=None, signal_bridge=None, authentication='registry', nonce=None,
-                 registry_mode='blinded', discloser=None, auths=None, bound_event=None):
+                 registry_mode='blinded', discloser=None, auths=None, bound_event=None,
+                 registry_id=None):
         """Configure issuance without opening optional custody.
 
         app owns the vault; schema_said/recipient_pre select issuer policy and
@@ -454,9 +461,10 @@ class IssueCredentialDoer(CredentialUpdateDoer):
         remain transient. signal_bridge receives completion.
         authentication selects registry, anchor or signature. nonce is optional
         credential entropy. registry_mode explicitly selects public, per-event
-        blinded, or derived state; discloser binds newly provisioned derivation
-        custody in derived mode only. bound_event selects an exact current issuee
-        KEL event for blinded state. No salt is shared by issuance itself.
+        blinded, or derived state; registry_id selects an already accepted,
+        established registry for derived mode. discloser optionally checks its
+        original party binding. bound_event selects an exact current issuee KEL
+        event for blinded state. Issuance never establishes or replaces a root.
         """
         self.vault = app.vault
         self.schema_said, self.recipient_pre = schema_said, recipient_pre
@@ -474,10 +482,13 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             raise ValueError('State capabilities require registry authentication')
         if discloser and registry_mode != 'derived':
             raise ValueError('A derivation discloser requires derived state')
+        if registry_id is not None and (authentication != 'registry' or registry_mode != 'derived'):
+            raise ValueError('An established registry is selected only for derived state')
         if bound_event and (authentication != 'registry' or registry_mode == 'public'):
             raise ValueError('Bound state requires blinded registry authentication')
         self.bound_event = bound_event
         self.registry_mode, self.discloser = registry_mode, discloser
+        self.registry_id = registry_id
         self.signals = signal_bridge if signal_bridge is not None else self.vault.signals
         super().__init__(doers=[doing.doify(self.issue_credential_do)])
 
@@ -535,8 +546,19 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                 raise kering.ValidationError('KEL anchors require a transferable issuer identifier')
             registry = None
             if self.authentication == 'registry':
-                registrar = Registrar(rgy=self.vault.rgy)
-                registry = registrar.makeRegistry(name=uuid.uuid4().hex, prefix=hab.pre)
+                if self.registry_mode == 'derived':
+                    if self.registry_id is None:
+                        raise kering.ConfigurationError('Select an established registry before derived issuance')
+                    from locksmith.core.salting import require_custody
+                    require_custody(self.vault, self.registry_id,
+                                        issuer=hab.pre)
+                    registry = self.vault.rgy.regs.get(self.registry_id)
+                    rip = self.vault.rgy.store.seqEvent(self.registry_id, 0)
+                    if registry is None or rip is None or rip.israid != hab.pre:
+                        raise kering.ConfigurationError('Select an accepted registry controlled by this issuer')
+                else:
+                    registrar = Registrar(rgy=self.vault.rgy)
+                    registry = registrar.makeRegistry(name=uuid.uuid4().hex, prefix=hab.pre)
             edges = complete_block(properties.get('e', {}), {'d': '', **self.edges}) if self.edges else None
             rules = complete_block(properties.get('r', {}), self.rules) if self.rules is not None else None
             acdc = acdcmap(israid=hab.pre, uuid=nonce, regid=registry.regk if registry else None, schema=self.schema_said,
@@ -553,10 +575,9 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                 receiptor = LocksmithReceiptor(hby=self.vault.hby)
                 self.extend([receiptor])
             if registry is not None:
-                rip = self.vault.rgy.store.event(registry.regk)
-                yield from self.anchor(registry, rip, receiptor, auths)
-                if self.registry_mode == 'derived':
-                    disclosing.custody(self.vault).createCustody(registry.regk, self.discloser or hab.pre)
+                if self.registry_mode != 'derived':
+                    rip = self.vault.rgy.store.event(registry.regk)
+                    yield from self.anchor(registry, rip, receiptor, auths)
                 blinder, update, stream = registry_authoring.stage(
                     self.vault, registry, acdc, 'issued', self.registry_mode, bound_event=self.bound_event)
                 record = IssuedCredential(acdc.raw.decode(), blinder.qb64 if blinder else '',

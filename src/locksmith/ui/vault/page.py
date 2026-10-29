@@ -15,6 +15,7 @@ from locksmith.ui.vault.credentials.issued.list import IssuedCredentialsListPage
 from locksmith.ui.vault.credentials.received.list import ReceivedCredentialsListPage
 from locksmith.ui.vault.credentials.schema.list import SchemaListPage
 from locksmith.ui.vault.credentials.activity import CredentialActivityPage
+from locksmith.ui.vault.credentials.registry_access import RegistryAccessPage
 from locksmith.ui.vault.identifiers.list import IdentifierListPage
 from locksmith.ui.vault.groups.list import GroupIdentifierListPage
 from locksmith.ui.vault.menu import VaultNavMenu
@@ -94,6 +95,7 @@ class VaultPage(BasePage):
         self.register_page("issued_credentials", IssuedCredentialsListPage(self))
         self.register_page("received_credentials", ReceivedCredentialsListPage(self))
         self.register_page("credential_activity", CredentialActivityPage(self))
+        self.register_page('registry_access', RegistryAccessPage(self))
         self.register_page("schema", SchemaListPage(self))
         self.register_page("notifications", NotificationsListPage(self))
 
@@ -147,6 +149,8 @@ class VaultPage(BasePage):
         self.nav_menu.activity_clicked.connect(
             lambda: self._show_credentials_page("credential_activity")
         )
+        self.nav_menu.registry_access_clicked.connect(
+            lambda: self._show_credentials_page('registry_access'))
 
         self._pages['credential_activity'].attention_changed.connect(
             self.nav_menu.activity_button.set_attention)
@@ -230,11 +234,17 @@ class VaultPage(BasePage):
     # -------------------------------------------------------------------------
 
     def show_credential_activity(self, said, *, received=None, open_dialog=True):
+        """Navigate to said and optionally open its received/outgoing exchange review."""
         self.nav_menu.switch_to_credentials_menu()
         self.nav_menu.activity_button.click()
         self._pages['credential_activity'].show_exchange(said, received=received, open_dialog=open_dialog)
 
     def start_credential_exchange(self, action, *, schema=None, credential_said=None, received=False):
+        """Open the requested IPEX action using explicit schema/credential context.
+
+        received selects the retained inventory direction. Submission navigates to
+        activity; navigation alone never accepts a Grant or sends another response.
+        """
         from locksmith.ui.vault.credentials.start import StartExchangeDialog
         self._credential_exchange_dialog = StartExchangeDialog(
             self.app, self, action, schema=schema, credential_said=credential_said, received=received)
@@ -249,6 +259,13 @@ class VaultPage(BasePage):
         notifications_page = self._pages.get("notifications")
         if notifications_page and hasattr(notifications_page, "on_show"):
             notifications_page.on_show()
+
+    def show_registry_access(self, proposal=None):
+        """Open registry access; proposal optionally selects exact retained review."""
+        self.nav_menu.switch_to_credentials_menu()
+        self.nav_menu.registry_access_button.click()
+        if proposal:
+            self._pages['registry_access'].show_proposal(proposal)
 
     # -------------------------------------------------------------------------
     # Vault deletion

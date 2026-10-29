@@ -142,6 +142,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
             vault_page._show_page(page_key)
 
     def on_vault_opened(self, vault: Any) -> None:
+        """Attach provider state and background work to the newly opened vault owner."""
         self._closing_vault = False
         self._db = KFBaser(name=f"kf_{vault.hby.name}", base=vault.hby.base,
                           temp=vault.hby.temp, headDirPath=vault.hby.db.headDirPath,
@@ -171,6 +172,11 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         service.delete_vault_account()
 
     def on_vault_closed(self, vault: Any, *, clear: bool = False) -> None:
+        """Stop vault-scoped provider work and detach its state from the UI.
+
+        vault identifies the closing owner; clear requests application-owned storage
+        cleanup only after its stateful background tasks have stopped.
+        """
         self._closing_vault = True
         stopped = self._shutdown_background_work(require_onboarding_stopped=False)
         stateful_tasks = self._stateful_shutdown_tasks()

@@ -90,3 +90,13 @@ Plugins
 -------
 
 See :doc:`plugin-authoring` for the provider integration contract.
+
+Registry evidence synchronization
+---------------------------------
+
+Native v2 synchronization verifies the returned CESR evidence through the vault's
+existing KERIpy processors. Observer-specific freshness headers and observation-age
+acceptance deadlines are not used. KRAM continues to govern protocol-message timing.
+The registry worker's local polling timer schedules acquisition of newer evidence;
+it does not invalidate an already accepted registry head. Changing the configured
+source or reopening a vault requires a new synchronization with that source.

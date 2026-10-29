@@ -7,6 +7,7 @@ from locksmith.ui import colors
 
 
 class CollapsibleSection(QWidget):
+    """Own an expandable content area and notify its caller of expansion changes."""
     def __init__(
             self,
             button: QWidget | None = None,
@@ -14,6 +15,11 @@ class CollapsibleSection(QWidget):
             title: str = "",
             parent: QWidget | None = None
     ):
+        """Create parent-owned content with an optional button and title.
+
+        on_expand_changed receives the new boolean expansion state. This widget only
+        controls presentation; it does not approve the content's domain operation.
+        """
         super().__init__(parent)
 
         self._content_height = 0

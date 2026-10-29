@@ -121,6 +121,8 @@ def wallet(qapp, mailbox_routes):
             queued = []
             vault = SimpleNamespace(hby=hby, rgy=rgy, db=db, org=organizing.Organizer(hby=hby),
                                     exc=exc, signals=signals, notifier=notifier, extend=queued.extend, doers=queued, kvy=hby.kvy)
+            # Ordinary issuance fixtures have no separately established DH registry.
+            vault.salts = SimpleNamespace(issuanceRegistries=lambda issuer: [])
             vault.mbx = SimpleNamespace(parser=parsing.Parser(kvy=hby.kvy, exc=exc, version=kering.Vrsn_2_0))
             app = SimpleNamespace(hby=hby, vault=vault, queued=queued)
             return app
@@ -1979,7 +1981,7 @@ def test_issue_controls_select_state_capability(wallet, qapp, mode):
     dialog._dynamic_field_widgets['nickname']['widget'].setText('Alice')
     options = dialog.state_options
     options.mode.setCurrentIndex(options.mode.combo_box.findData(mode))
-    assert not list(app.vault.db.custody.getTopItemIter())
+    assert not list(app.vault.hby.ks.custody.getTopItemIter())
     dialog.show()
     qapp.processEvents()
     QTest.keyClick(dialog.issue_button, Qt.Key.Key_Space)
@@ -1988,10 +1990,11 @@ def test_issue_controls_select_state_capability(wallet, qapp, mode):
     rows = list(app.vault.db.issued.getTopItemIter())
     assert len(rows) == 1 and rows[0][1].registry_mode == mode
     assert bool(rows[0][1].blinder)
-    assert not list(app.vault.db.custody.getTopItemIter())
+    assert not list(app.vault.hby.ks.custody.getTopItemIter())
     options.mode.setCurrentIndex(options.mode.combo_box.findData('derived'))
-    options.discloser.setCurrentIndex(options.discloser.combo_box.findData(recipient.pre))
-    assert options.selection() == {'registry_mode': 'derived', 'discloser': recipient.pre}
+    with pytest.raises(ValueError, match='Choose an established registry'):
+        options.selection()
+    options.mode.setCurrentIndex(options.mode.combo_box.findData('blinded'))
     options.bound_event.line_edit.setFocus()
     QTest.keyClicks(options.bound_event.line_edit, recipient.kever.serder.said)
     assert options.selection()['bound_event'] == recipient.kever.serder.said

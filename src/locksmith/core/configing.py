@@ -46,6 +46,7 @@ DEFAULT_PASSCODE = "DoB2-e4Rr-gVOr-Nb1Y-7yBl-gI3n-i4cB-gf07"  # Development only
 
 @dataclass
 class LocksmithConfig:
+    """Hold local UI, environment and endpoint defaults for the Locksmith application."""
     _instance = None
     appName = 'Locksmith'
     # Flet assets directory for pictures, fonts, and the like.
@@ -87,6 +88,7 @@ class LocksmithConfig:
         return cls._instance
 
     def __init__(self):
+        """Load deployment environment and local configuration defaults without opening a vault."""
         self.base = os.environ.get('LOCKSMITH_BASE', '')
         environment = os.environ.get('LOCKSMITH_ENVIRONMENT')
         match environment:

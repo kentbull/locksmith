@@ -209,6 +209,7 @@ class IssueCredentialDialog(LocksmithDialog):
             self.remote_radio.setEnabled(False)
 
     def _disconnect_doer_event_signal(self):
+        """Release this issuance dialog's active doer-event subscription once."""
         if not getattr(self, '_doer_event_connected', False):
             return
         try:
@@ -221,6 +222,7 @@ class IssueCredentialDialog(LocksmithDialog):
         self._disconnect_doer_event_signal()
 
     def _on_primary_clicked(self):
+        """Dispatch the visible primary action for the current issuance workflow step."""
         if not self._current_vault():
             return
         if self._workflow_mode == 'issued':
@@ -241,6 +243,7 @@ class IssueCredentialDialog(LocksmithDialog):
             self.close()
 
     def _show_auth_step(self, hab):
+        """Show witness authentication controls for hab before attempting issuance."""
         self.clear_error(resize_dialog=False)
         if self._dialog_resize_animation is not None:
             self._dialog_resize_animation.stop()
@@ -279,6 +282,7 @@ class IssueCredentialDialog(LocksmithDialog):
         )
 
     def _show_issue_step(self):
+        """Restore the credential form and release the previous authentication panel."""
         self.clear_error(resize_dialog=False)
         if self._dialog_resize_animation is not None:
             self._dialog_resize_animation.stop()
@@ -309,6 +313,7 @@ class IssueCredentialDialog(LocksmithDialog):
             self.issue_button.setText("Issue Credential")
 
     def _submit_auth_step(self):
+        """Validate the current witness-code choices, then continue explicit issuance."""
         if not self._current_vault():
             return
         if self._auth_panel is None:
@@ -327,6 +332,7 @@ class IssueCredentialDialog(LocksmithDialog):
         self._complete_issuance(codes=codes)
 
     def _current_vault(self):
+        """Return whether the original vault is current; show an error when it is closed."""
         if self.app.vault is self.vault and not getattr(self.vault, 'closed', False):
             return True
         self.show_error("This vault is closed")
@@ -449,6 +455,11 @@ class IssueCredentialDialog(LocksmithDialog):
 
     @staticmethod
     def _field_definition(name, prop, required):
+        """Map schema property prop into a readable form definition for name.
+
+        required supplies its mandatory flag. Preserve the schema/constant constraints
+        and infer legacy timestamp hints only for display input selection.
+        """
         detail = credentialing.schema_detail(prop) or credentialing.schema_detail(prop, 'array') or prop
         definition = dict(name=name, description=attribute_label(name, detail),
                           type=detail.get('type', 'string'), format=detail.get('format'),
@@ -466,6 +477,7 @@ class IssueCredentialDialog(LocksmithDialog):
         return definition
 
     def _parse_rules_from_schema(self, schema_said):
+        """Return the entered rules or None; schema_said is the existing caller context."""
         if self._rules_widget is None:
             return None
         return self._get_field_value(*self._rules_widget)
@@ -815,6 +827,7 @@ class IssueCredentialDialog(LocksmithDialog):
         # Skip if invalid selection
         if index <= 0:
             logger.info("No schema selected, clearing dynamic fields")
+            self.state_options.set_issuer(None)
             self._clear_dynamic_fields()
             return
 
@@ -831,6 +844,7 @@ class IssueCredentialDialog(LocksmithDialog):
         requires_registry = 'rd' in schemer.sed.get('required', [])
         permits_registry = 'rd' in properties or schemer.sed.get('additionalProperties', True)
         issuer = self.vault.hby.habByPre(self.vault.db.issuers.get(keys=(schema_said,)))
+        self.state_options.set_issuer(issuer.pre if issuer else None)
         modes = self.authentication_dropdown.combo_box
         for index in range(modes.count()):
             mode = modes.itemData(index)
@@ -973,6 +987,7 @@ class IssueCredentialDialog(LocksmithDialog):
         return attributes
 
     def _extract_edge_credentials(self):
+        """Return the entered edge material or None when no edge widget is present."""
         if self._edge_widget is None:
             return None
         return self._get_field_value(*self._edge_widget)
@@ -996,6 +1011,12 @@ class IssueCredentialDialog(LocksmithDialog):
         hab = self.vault.hby.habByPre(issuer_pre) if issuer_pre else None
         if hab is None:
             self.show_error("Select a local issuer for this schema first")
+            return
+
+        try:
+            self.state_options.selection()
+        except ValueError as error:
+            self.show_error(str(error))
             return
 
         if hab.kever.wits and self.authentication_dropdown.currentData() != 'signature':

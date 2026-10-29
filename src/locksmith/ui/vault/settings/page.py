@@ -103,6 +103,7 @@ class SettingsPage(QWidget):
         logger.info("SettingsPage initialized")
 
     def _create_registry_section(self, layout):
+        """Add vault-specific registrar/observer endpoint controls to layout."""
         layout.addWidget(QLabel('Credential status services'))
         description = QLabel('Publish issuer registry updates to a registrar. Check received credential status '
                              'through an observer. These settings apply to this vault.')
@@ -120,6 +121,7 @@ class SettingsPage(QWidget):
         layout.addWidget(save)
 
     def _save_registry_services(self):
+        """Validate entered service URLs and persist them only in the open vault."""
         vault = self.app.vault if self.app else None
         if vault is None or vault.closed:
             self.registry_notice.setText('Open a vault first.')
