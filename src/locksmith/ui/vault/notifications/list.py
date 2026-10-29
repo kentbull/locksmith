@@ -112,6 +112,8 @@ class NotificationsListPage(QWidget):
         # For MULTISIG_ROT notifications, add the Join action at the start
         elif notification_type == "MULTISIG_ROT":
             actions = ["Join"] + self._base_row_actions
+        elif notification_type == 'MULTISIG_REGISTRY':
+            actions = ['Review registry access'] + self._base_row_actions
         else:
             actions = self._base_row_actions
 
@@ -423,6 +425,18 @@ class NotificationsListPage(QWidget):
             elif '/multisig/ixn' in route:
                 message_type = "MULTISIG_IXN"
                 formatted_message = "Multisig interaction request"
+            elif route in ('/multisig/rip', '/multisig/bup'):
+                message_type = 'MULTISIG_REGISTRY'
+                formatted_message = 'Review exact registry event and group anchor'
+            elif route == '/multisig/rpy':
+                from keri.app.registry_salt_service import ROUTES
+                children = exchanging.loadParsedNestedSubstreams(hby, said)
+                if len(children) == 1 and children[0].serder.route in ROUTES[:4]:
+                    message_type = 'MULTISIG_REGISTRY'
+                    formatted_message = 'Review exact registry access statement'
+                else:
+                    message_type = 'MULTISIG'
+                    formatted_message = f'Multisig notification: {route}'
             else:
                 message_type = "MULTISIG"
                 formatted_message = f"Multisig notification: {route}"
@@ -496,6 +510,8 @@ class NotificationsListPage(QWidget):
             if not is_read:
                 self._mark_as_read(rid)
             self._parent.show_credential_activity(row_data.get('_said', ''))
+        elif action == 'Review registry access':
+            self._parent.show_registry_access(row_data.get('_said', ''))
         elif action == "Admit":
             self._show_accept_grant_dialog(row_data)
         elif action == "Join":
