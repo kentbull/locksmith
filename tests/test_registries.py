@@ -394,7 +394,7 @@ def test_full_observer_fetch_verifies_kels_without_signer_put(wallets, service, 
         from locksmith.core import credentialing
         assert receiver.rgy.store.opening(event.said) == opening.qb64
         assert credentialing.credential_state(receiver, acdc).state == 'revoked'
-        assert not list(receiver.db.custody.getTopItemIter())
+        assert not list(receiver.hby.ks.custody.getTopItemIter())
 
 
 def test_full_reply_requires_resolved_issuer_evidence(wallets):

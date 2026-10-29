@@ -87,7 +87,7 @@ def test_group_rip_and_bup_review_uses_existing_approval_without_offline_third(i
         assert all(app.rgy.store.seqEvent(rip.said, 0).said == rip.said for app in apps[:2])
         roots = [app.vault.salts.custody._load(rip.said).salt for app in apps[:2]]
         assert roots[0] == roots[1]
-        assert not apps[2].vault.db.custody.get((rip.said,))
+        assert not apps[2].vault.hby.ks.custody.get((rip.said,))
         # A public opening is independent of the retained reusable salt.
         registry = apps[0].rgy.regs[rip.said]
         acdc = acdcmap(israid=groups[0].pre, regid=rip.said, attribute={'d': '', 'value': 'test'})

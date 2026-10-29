@@ -64,7 +64,7 @@ def test_registry_mode_survives_reopen_and_revocation_retry(ipex_vaults, mode, b
     view = credentialing.credential(app.vault, said)
     regid = view['sad']['rd']
     assert record.registry_mode == mode and view['status']['et'] == 'issued'
-    assert bool(list(app.vault.db.custody.getTopItemIter())) is (mode == 'derived')
+    assert bool(list(app.vault.hby.ks.custody.getTopItemIter())) is (mode == 'derived')
     assert record.blinder
     head = app.vault.rgy.store.headEvent(regid)
     assert head.ilk == 'bup'
@@ -101,7 +101,7 @@ def test_registry_mode_survives_reopen_and_revocation_retry(ipex_vaults, mode, b
                 app.vault.rgy.store.headEvent(regid).said) == opening.qb64
             assert app.vault.rgy.store.opening(
                 app.vault.rgy.store.headEvent(regid).said) == opening.qb64
-            assert not list(app.vault.db.custody.getTopItemIter())
+            assert not list(app.vault.hby.ks.custody.getTopItemIter())
             # A holder's retained issuance proof is augmented only by the
             # accepted public head opening after an observer refresh.
             assert credentialing.credential_state(

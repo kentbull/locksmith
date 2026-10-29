@@ -1981,7 +1981,7 @@ def test_issue_controls_select_state_capability(wallet, qapp, mode):
     dialog._dynamic_field_widgets['nickname']['widget'].setText('Alice')
     options = dialog.state_options
     options.mode.setCurrentIndex(options.mode.combo_box.findData(mode))
-    assert not list(app.vault.db.custody.getTopItemIter())
+    assert not list(app.vault.hby.ks.custody.getTopItemIter())
     dialog.show()
     qapp.processEvents()
     QTest.keyClick(dialog.issue_button, Qt.Key.Key_Space)
@@ -1990,7 +1990,7 @@ def test_issue_controls_select_state_capability(wallet, qapp, mode):
     rows = list(app.vault.db.issued.getTopItemIter())
     assert len(rows) == 1 and rows[0][1].registry_mode == mode
     assert bool(rows[0][1].blinder)
-    assert not list(app.vault.db.custody.getTopItemIter())
+    assert not list(app.vault.hby.ks.custody.getTopItemIter())
     options.mode.setCurrentIndex(options.mode.combo_box.findData('derived'))
     with pytest.raises(ValueError, match='Choose an established registry'):
         options.selection()

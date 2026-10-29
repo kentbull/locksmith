@@ -204,7 +204,7 @@ class SaltActionDoer(CredentialUpdateDoer):
                                     break
                     if copies is None:
                         root = (Salter(qb64=custody._load(registry.regk).salt)
-                                if self.vault.db.custody.get((registry.regk,)) else Salter())
+                                if self.vault.hby.ks.custody.get((registry.regk,)) else Salter())
                         copies = custody.sealMembers(hab, root)
                     if registry.store.seqEvent(registry.regk, 0) is None:
                         wrapper, attachments = self.actions.registryApproval(party).approve(self.body, salts=copies)

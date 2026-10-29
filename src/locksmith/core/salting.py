@@ -43,14 +43,14 @@ class RegistrySalts:
     def __init__(self, vault):
         """Borrow existing owners; the vault mailbox already processes reply escrows."""
         self.vault = vault
-        self.custody = RegistryCustody(vault.hby, vault.rgy, db=vault.db)
+        self.custody = RegistryCustody(vault.hby, vault.rgy)
         self.service = RegistrySaltService(vault.hby, vault.rgy, self.custody, vault.rvy)
         self.service.register()
         vault.exc.addHandler(VaultEssrReplies(vault.hby, vault.mbx.parser))
 
     def status(self, registry):
         """Report local encrypted-row presence, without implying usable keys or delivery."""
-        return dict(root_recorded=self.vault.db.custody.get((registry,)) is not None)
+        return dict(root_recorded=self.vault.hby.ks.custody.get((registry,)) is not None)
 
     def issuanceRegistries(self, issuer=None):
         """List accepted local issuer registries with encrypted derivation material.
@@ -63,7 +63,7 @@ class RegistrySalts:
             rip = self.vault.rgy.store.seqEvent(regid, 0)
             if (rip is not None and (issuer is None or rip.israid == issuer)
                     and self.vault.hby.habByPre(rip.israid) is not None
-                    and self.vault.db.custody.get((regid,)) is not None):
+                    and self.vault.hby.ks.custody.get((regid,)) is not None):
                 choices.append(dict(registry=regid, issuer=rip.israid))
         return sorted(choices, key=lambda choice: choice['registry'])
 
@@ -77,6 +77,6 @@ def require_custody(vault, registry, *, issuer=None):
     rip = vault.rgy.store.seqEvent(registry, 0)
     if (rip is None or (issuer is not None and rip.israid != issuer)
             or vault.hby.habByPre(rip.israid) is None
-            or vault.db.custody.get((registry,)) is None):
+            or vault.hby.ks.custody.get((registry,)) is None):
         raise kering.ConfigurationError('Choose an accepted issuer registry with local salt custody')
     return rip

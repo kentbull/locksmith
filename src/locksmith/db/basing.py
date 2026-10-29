@@ -164,10 +164,6 @@ class LocksmithBaser(dbing.LMDBer):
         self.issued = koming.Komer(db=self, subkey='issued.', klas=IssuedCredential)
         self.accepted = koming.Komer(db=self, subkey='accepted.', klas=AcceptedCredential)
         self.receipts = koming.Komer(db=self, subkey='receipts.', klas=GrantReceipt)
-        # Opening this schema never reads/decrypts a salt. Only explicit optional
-        # derivation/provisioning operations use RegistryCustody over this table.
-        from keri.app.registry_custody import EncryptedCustody
-        self.custody = koming.Komer(db=self, subkey='custody.', klas=EncryptedCustody)
         self.outbox = koming.Komer(db=self, subkey='outbox.', klas=IpexSubmission)
         self.inbox = koming.Komer(db=self, subkey='inbox.', klas=MailboxFrame)
 

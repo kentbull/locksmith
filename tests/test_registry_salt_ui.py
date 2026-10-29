@@ -17,7 +17,7 @@ def test_derived_issuance_uses_explicit_established_registry(ipex_vaults, qapp):
     issuer = app.hby.makeHab(name='issuer')
     holder = app.hby.makeHab(name='holder')
     registry = establish(app.vault, issuer, holder)
-    retained = app.vault.db.custody.get((registry.regk,))
+    retained = app.vault.hby.ks.custody.get((registry.regk,))
     schemer = schema()
     app.hby.db.schema.pin((schemer.said,), schemer)
     app.vault.db.issuers.pin((schemer.said,), issuer.pre)
@@ -50,7 +50,7 @@ def test_derived_issuance_uses_explicit_established_registry(ipex_vaults, qapp):
         record = rows[0][1]
         assert SerderACDC(raw=record.raw.encode()).sad['rd'] == registry.regk
         assert record.registry_mode == 'derived'
-        assert app.vault.db.custody.get((registry.regk,)) == retained
+        assert app.vault.hby.ks.custody.get((registry.regk,)) == retained
     finally:
         dialog.close()
 

@@ -85,13 +85,13 @@ def test_application_graduates_one_held_view_without_custody(ipex_vaults, separa
     assert isinstance(snapshots[0]['sad']['a']['private'], str)
     assert snapshots[1]['sad']['a']['private']['value'] == 'private-field'
     assert credentialing.credential(verifier.vault, said, grant=snapshots[0]['grant'])['proof'] == snapshots[0]['proof']
-    assert not list(presenter_app.vault.db.custody.getTopItemIter())
+    assert not list(presenter_app.vault.hby.ks.custody.getTopItemIter())
 
 
 @pytest.mark.parametrize('custodyState', ['absent', 'corrupt', 'old-aeid'])
 def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaults, custodyState):
     """Held presentation and supplied openings ignore absent or unusable custody."""
-    from keri.app.registry_custody import EncryptedCustody
+    from keri.app.keeping import EncryptedCustody
     from keri.core import Signer
 
     source = ipex_vaults('opening-issuer')
@@ -108,12 +108,12 @@ def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaul
     registry = source.vault.rgy.regs[acdc.regid]
     evidence.processor(target.vault).ingest(evidence.processor(source.vault).clone([acdc.regid]))
     held = _grant(source, target, issuer, holder, said)
-    assert not list(target.vault.db.custody.getTopItemIter())
+    assert not list(target.vault.hby.ks.custody.getTopItemIter())
     if custodyState != 'absent':
         # Deliberately unusable local capability state; no secret is transferred.
         aeid = (target.hby.mgr.aeid if custodyState == 'corrupt'
                 else Signer(transferable=False).verfer.qb64)
-        target.vault.db.custody.pin((acdc.regid,), EncryptedCustody(aeid, 'invalid ciphertext'))
+        target.vault.hby.ks.custody.pin((acdc.regid,), EncryptedCustody(aeid, 'invalid ciphertext'))
     _grant(target, source, holder, issuer, said, from_grant=held)
     old = Blinder(clan=BlindState, qb64=source.vault.db.issued.get((said,)).blinder)
     opening, event = Registrar(rgy=source.vault.rgy).issue(registry, acdc, state='issued')
@@ -137,7 +137,7 @@ def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaul
     assert refreshed['sad'] == view['sad'] and refreshed['status']['et'] == 'issued'
     assert credentialing.credential(target.vault, said, grant=held)['proof'] == view['proof']
     if custodyState == 'absent':
-        assert not list(target.vault.db.custody.getTopItemIter())
+        assert not list(target.vault.hby.ks.custody.getTopItemIter())
     with pytest.raises(ValueError, match='explicit state refresh'):
         disclosing.material(target.vault, view, openings=[opening.qb64b])
 
@@ -147,7 +147,7 @@ def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaul
 def test_encrypted_salt_reply_derives_without_gating_held_proofs(ipex_vaults, damage, bound):
     """Signed encrypted sharing enables derivation; custody damage leaves held proofs usable."""
     from keri.acdc import acdcmap, blindate
-    from keri.app.registry_custody import EncryptedCustody
+    from keri.app.keeping import EncryptedCustody
     from keri.core import Signer, messagize
     from locksmith.db.basing import IssuedCredential
     password = '0123456789abcdefghijk'
@@ -223,10 +223,10 @@ def test_encrypted_salt_reply_derives_without_gating_held_proofs(ipex_vaults, da
         _grant(target, source, holder, issuer, acdc.said, **controls.selection())
         controls.close()
     current = _grant(source, target, issuer, holder, acdc.said, message='Current opening')
-    stored = target.vault.db.custody.get((registry.regk,))
+    stored = target.vault.hby.ks.custody.get((registry.regk,))
     damaged = (EncryptedCustody(stored.aeid, 'invalid ciphertext') if damage == 'corrupt'
                else EncryptedCustody(Signer(transferable=False).verfer.qb64, stored.cipher))
-    target.vault.db.custody.pin((registry.regk,), damaged)
+    target.vault.hby.ks.custody.pin((registry.regk,), damaged)
     with pytest.raises(kering.AuthError):
         disclosing.material(target.vault, earlier, refresh=True, derive=True, **options)
     # This retained event-2 opening is sufficient; ordinary presentation never

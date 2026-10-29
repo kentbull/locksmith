@@ -28,7 +28,7 @@ def test_vault_borrows_live_reply_owner_without_opening_private_root(ipex_vaults
     assert vault.hby.db.kramCTYP.get('~').sl == 300000
     for route in ROUTES:
         assert vault.rvy.rtr._find(route)[0].resource is salts.service
-    assert salts.custody.db is vault.db
+    assert salts.custody.db is vault.hby.ks
     assert salts.status(Diger(ser=b'unknown registry').qb64) == dict(root_recorded=False)
 
 
@@ -61,7 +61,7 @@ def test_corrupt_custody_does_not_stop_ordinary_vault_processing(ipex_vaults):
     app = ipex_vaults('bad-optional-custody', bran='0123456789abcdefghijk')
     issuer, peer = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='peer')
     registry = establish(app.vault, issuer, peer)
-    table = app.vault.db.custody
+    table = app.vault.hby.ks.custody
     row = table.get((registry.regk,))
     row.cipher = 'invalid cipher'
     table.pin((registry.regk,), row)
@@ -111,7 +111,7 @@ def test_derived_issuance_requires_explicit_registry_before_authoring(ipex_vault
     assert 'established registry' in events[-1][1]['error']
     assert issuer.kever.sn == 0 and app.vault.rgy.regs == {}
     assert not list(app.vault.db.issued.getTopItemIter())
-    assert not list(app.vault.db.custody.getTopItemIter())
+    assert not list(app.vault.hby.ks.custody.getTopItemIter())
 
 
 
@@ -120,12 +120,12 @@ def test_local_root_supports_derived_authoring_without_additional_agreement(ipex
     app = ipex_vaults('local-root', bran='0123456789abcdefghijk')
     issuer, peer = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='peer')
     registry = establish(app.vault, issuer, peer)
-    before = app.vault.db.custody.get((registry.regk,))
+    before = app.vault.hby.ks.custody.get((registry.regk,))
     acdc = acdcmap(israid=issuer.pre, regid=registry.regk, attribute=dict(d='', value='test'))
     opening, event, _ = registry_authoring.stage(app.vault, registry, acdc, 'issued', 'derived')
     assert event.ilk == 'bup' and event.sad['n'] == '1'
     assert opening.qb64 == app.vault.salts.custody.derive(registry.regk, 1, acdc.said, 'issued').qb64
-    assert app.vault.db.custody.get((registry.regk,)) == before
+    assert app.vault.hby.ks.custody.get((registry.regk,)) == before
     assert app.vault.rgy.store.headEvent(registry.regk).sn == 0
 
 

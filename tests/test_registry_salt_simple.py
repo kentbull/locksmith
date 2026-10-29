@@ -22,7 +22,7 @@ def test_unencrypted_vault_composes_optional_salt_route(ipex_vaults):
     app = ipex_vaults('simple-salt-plain')
     assert not app.hby.mgr.aeid
     assert app.vault.salts.service.rvy is app.vault.rvy
-    assert app.vault.salts.custody.db is app.vault.db
+    assert app.vault.salts.custody.db is app.vault.hby.ks
 
 
 def test_create_and_preview_freezes_exact_encrypted_reply(ipex_vaults, qapp):
@@ -94,7 +94,7 @@ def test_encrypted_salt_http_delivery_is_verified_by_independent_vault(ipex_vaul
             sleep(0.001)
         assert worker.done and not worker.error, worker.error
         assert received
-        assert holder_app.vault.db.custody.get((regid,)) is None
+        assert holder_app.vault.hby.ks.custody.get((regid,)) is None
         root = issuer_app.vault.salts.custody._load(regid).salt
         assert root.encode() not in b''.join(received)
         for wire in received:
