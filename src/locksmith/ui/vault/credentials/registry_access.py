@@ -152,6 +152,9 @@ class RegistryAccessDialog(LocksmithDialog):
     def _members(self, key, combo):
         """Prefill only an individual or trusted accepted ordered group mapping."""
         _, field = self.maps[key]
+        if not combo.currentData():
+            field.clear()
+            return
         try:
             field.setPlainText('\n'.join(self.actions.roster(combo.currentData())))
         except kering.KeriError as ex:
@@ -161,6 +164,9 @@ class RegistryAccessDialog(LocksmithDialog):
     def _local_members(self, *_):
         """Display the current accepted local map for explicit reconciliation."""
         if self.action == 'reconcile':
+            if not self.local.currentData():
+                self.local_members.clear()
+                return
             try:
                 self.local_members.setPlainText('\n'.join(self.actions.roster(self.local.currentData())))
             except kering.KeriError:
@@ -228,6 +234,8 @@ class RegistryAccessDialog(LocksmithDialog):
                 self.close()
                 return
             party = self.local.currentData()
+            if not party:
+                raise ValueError('Choose an accepted local identifier')
             self.actions.local(party)
             if self.action == 'reconcile':
                 self._trust(party, self.local_members.toPlainText())

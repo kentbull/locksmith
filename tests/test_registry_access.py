@@ -132,6 +132,24 @@ def test_independent_wallet_buttons_supply_public_rip_dependencies(ipex_vaults, 
             credential = Diger(ser=b'independent UI future credential').qb64
             assert issuer_app.vault.salts.custody.derive(registry.regk, 1, credential, 'issued').qb64 == (
                 peer_app.vault.salts.custody.derive(registry.regk, 1, credential, 'issued').qb64)
+            # The remote issuer on the registry row is not a local approval choice.
+            pages[1].refresh()
+            row = next(row for row in pages[1].rows if row['kind'] == 'registry')
+            assert row['party'] == issuer.pre
+            pages[1].open_action('reconcile', row)
+            replication = pages[1].dialog
+            assert replication.local.currentData() is None
+            assert not replication.local_members.toPlainText()
+            before = peer_app.vault.salts.status(registry.regk)
+            replication.submit.click()
+            assert replication.error_label.text() == 'Choose an accepted local identifier'
+            assert replication.worker is None
+            assert peer_app.vault.salts.status(registry.regk) == before
+            choose(replication.local, discloser.pre)
+            assert replication.local_members.toPlainText() == discloser.pre
+            replication.submit.click()
+            assert not replication.isVisible()
+            assert peer_app.vault.salts.state.origin(registry.regk).confirm == confirm.said
     finally:
         for page, parent in zip(pages, parents):
             if page.dialog:
