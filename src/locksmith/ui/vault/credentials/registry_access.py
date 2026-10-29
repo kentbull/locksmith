@@ -113,7 +113,12 @@ class RegistryAccessDialog(LocksmithDialog):
                     valid, codes, error = self.auth.validate_authentication_codes()
                     if not valid:
                         raise ValueError(error)
-                    auths = {wit: f'{code}#{helping.nowIso8601()}' for wit, code in zip(hab.kever.wits, codes)}
+                    # The shared panel returns witness-AID:code entries, as
+                    # consumed by IssueCredentialDoer. Preserve each explicit
+                    # witness binding instead of using the whole entry as OTP.
+                    for entry in codes:
+                        witness, code = entry.split(':', 1)
+                        auths[witness] = f'{code}#{helping.nowIso8601()}'
                 self.worker = SaltActionDoer(self.vault, create=(party, name), auths=auths)
             elif self.body is None:
                 self.body = self.actions.prepare(self.local.currentData(), self.registry.currentData(),

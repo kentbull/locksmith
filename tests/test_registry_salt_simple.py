@@ -25,6 +25,31 @@ def test_unencrypted_vault_composes_optional_salt_route(ipex_vaults):
     assert app.vault.salts.custody.db is app.vault.hby.ks
 
 
+def test_registry_creation_uses_panel_codes_without_witness_prefix(ipex_vaults, qapp):
+    """The actual shared Qt panel supplies witness:code, not a raw OTP list."""
+    app = ipex_vaults('registry-auth-panel', bran='0123456789abcdefghijk')
+    witness = app.hby.makeHab(name='witness', transferable=False)
+    issuer = app.hby.makeHab(name='issuer', wits=[witness.pre], toad=1)
+    parent = QWidget()
+    parent.app = app
+    page = RegistryAccessPage(parent)
+    try:
+        page.open_action('create', None)
+        dialog = page.dialog
+        dialog.local.setCurrentIndex(dialog.local.combo_box.findData(issuer.pre))
+        dialog.name.line_edit.setText('authenticated-registry')
+        dialog._submit()
+        dialog.auth.passcode_fields[witness.pre].line_edit.setText('123456')
+        dialog._submit()
+        assert dialog.worker.auths.keys() == {witness.pre}
+        assert dialog.worker.auths[witness.pre].split('#', 1)[0] == '123456'
+        assert dialog.worker.create == (issuer.pre, 'authenticated-registry')
+    finally:
+        if page.dialog is not None:
+            page.dialog.close()
+        parent.close()
+
+
 def test_create_and_preview_freezes_exact_encrypted_reply(ipex_vaults, qapp):
     """Creation retains issuer custody; preview does not sign or send the reply."""
     app = ipex_vaults('simple-salt-encrypted', bran='0123456789abcdefghijk')
