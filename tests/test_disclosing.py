@@ -1,6 +1,4 @@
 """Application negotiation uses exact held material and explicit capabilities."""
-import os
-
 import pytest
 from keri import kering
 from keri.acdc import Registrar
@@ -146,9 +144,8 @@ def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaul
 
 @pytest.mark.parametrize('damage', ['corrupt', 'old-aeid'])
 @pytest.mark.parametrize('bound', [False, True])
-@pytest.mark.skipif(os.name != 'posix', reason='protected plaintext custody handoff requires POSIX')
-def test_protected_custody_handoff_derives_without_gating_held_proofs(ipex_vaults, tmp_path, damage, bound):
-    """Preserve real POSIX handoff, bound derivation and ordinary proof use after damage."""
+def test_encrypted_salt_reply_derives_without_gating_held_proofs(ipex_vaults, damage, bound):
+    """Signed encrypted sharing enables derivation; custody damage leaves held proofs usable."""
     from keri.acdc import acdcmap, blindate
     from keri.app.registry_custody import EncryptedCustody
     from keri.core import Signer, messagize
@@ -190,10 +187,9 @@ def test_protected_custody_handoff_derives_without_gating_held_proofs(ipex_vault
 
     advance(1)
     held = _grant(source, target, issuer, holder, acdc.said)
-    transfer = tmp_path / 'custody.json'
-    provider.exportCustody(registry.regk, transfer)
-    disclosing.custody(target.vault).importCustody(transfer, regid=registry.regk,
-                                                 controller=issuer.pre, discloser=holder.pre)
+    salt_reply = source.vault.salts.service.makeReply(issuer, registry.regk, holder.pre)
+    _deliver_ipex(target.vault, issuer.endorse(salt_reply, gvrsn=kering.Vrsn_2_0))
+    assert target.hby.db.rpys.get((salt_reply.said,)).raw == salt_reply.raw
     if bound:
         holder.rotate()
         selected = holder.kever.serder

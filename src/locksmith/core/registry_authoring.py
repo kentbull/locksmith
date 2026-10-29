@@ -11,7 +11,7 @@ from keri.app.credential_disclosing import boundEvent
 from keri.core import messagize
 
 from locksmith.core.disclosing import custody
-from locksmith.core.salting import require_established
+from locksmith.core.salting import require_custody
 
 MODES = ('public', 'blinded', 'derived')
 
@@ -64,7 +64,7 @@ def stage(vault, registry, acdc, state, mode, *, bound_event=None):
         if mode == 'public':
             vault.rgy.store.retainOpening(event, opening)
     else:
-        require_established(vault, registry.regk, issuer=acdc.israid)
+        require_custody(vault, registry.regk, issuer=acdc.israid)
         opening = custody(vault).derive(registry.regk, head.sn + 1, acdc.said,
                                         state, **coordinates)
         event = messaging.blindate(registry.regk, head.said, opening.said,

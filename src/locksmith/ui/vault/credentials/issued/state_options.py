@@ -70,8 +70,8 @@ class StatePublicationOptions(QWidget):
         self.established.setVisible(self.registry and mode == 'derived')
         self.party.setVisible(self.registry and mode == 'derived')
         record = self.established.currentData()
-        self.party.setText('State discloser: ' + identifier_name(self.vault, record['discloser'])
-                           if record else 'Establish registry access before using future-opening derivation.')
+        self.party.setText('Local registry salt is available for state derivation.'
+                           if record else 'Receive the registry salt before using state derivation.')
         self.bound_event.setVisible(self.registry and mode != 'public')
         self.help.setText({
             'public': 'The event-specific status opening is published. No reusable derivation custody is created.',
@@ -89,7 +89,7 @@ class StatePublicationOptions(QWidget):
             record = self.established.currentData()
             if record is None:
                 raise ValueError('Choose an established registry before derived issuance')
-            result.update(registry_id=record['registry'], discloser=record['discloser'])
+            result.update(registry_id=record['registry'])
         if mode != 'public' and (event := self.bound_event.text().strip()):
             result['bound_event'] = event
         return result

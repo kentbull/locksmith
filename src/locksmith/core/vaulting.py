@@ -63,8 +63,8 @@ class Vault(doing.DoDoer):
         config['kram'] = {
             'enabled': True,
             'caches': {'~': (10000, 300000, 3600000, 86400000, 300000, 3600000, 86400000)},
-            # Preserve existing ordinary reply exceptions while the six exact
-            # optional registry-salt routes use this same enabled KRAM policy.
+            # Preserve existing ordinary reply exceptions while encrypted
+            # registry-salt replies use this same enabled KRAM policy.
             'denials': [[[2, 0], 'qry', ''],
                         [[2, 0], 'rpy', '/end/role'], [[2, 0], 'rpy', '/loc/scheme'],
                         [[2, 0], 'rpy', '/ksn'], [[2, 0], 'rpy', '/watcher'],
@@ -210,7 +210,6 @@ class Vault(doing.DoDoer):
             watchmen,
             kva,
             self.mbx,
-            self.salts,
             self.registry_evidence,
             self.ipex_outbox,
             kraming.Pruner(self.kramer, tock=1.0),

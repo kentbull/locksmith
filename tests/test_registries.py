@@ -284,7 +284,7 @@ def test_registry_worker_rebuilds_requests_and_refreshes_revocation(wallets, ser
         state['respond'] = lambda method, path, body: (503, b'')
         worker._fetched[registry.regk] = (worker._fetched[registry.regk][0], monotonic() - 1)
         until(lambda: registry.regk in worker.errors)
-        assert any(name == 'RegistryEvidence' and event == 'status_checked' and not data['success'] and not fresh
+        assert any(name == 'RegistryEvidence' and event == 'status_checked' and not data['success'] and fresh
                    for name, event, data, fresh in checks)
         receiver.hby.cf.put({'registries': {'observer': url + '/changed'}})
         assert not worker.ensure(registry.regk, holder)
@@ -360,15 +360,12 @@ def test_registry_worker_publishes_owned_history_without_registry_cache(wallets,
 
 
 def _full_reply(sender, registry):
-    """Export real accepted evidence and receiver-observation headers for the fixture."""
+    """Export real accepted evidence with its ordinary CESR media type."""
     from locksmith.core import evidence
     from keri.help import helping
     stream = evidence.processor(sender).clone([registry.regk])
     return stream, {
         'content-type': 'application/cesr',
-        'observer-evidence-state': 'fresh',
-        'observer-observed-at': helping.nowIso8601(),
-        'observer-registry-head': sender.rgy.store.headEvent(registry.regk).said,
     }
 
 
@@ -389,7 +386,7 @@ def test_full_observer_fetch_verifies_kels_without_signer_put(wallets, service, 
     doer = registries.RegistrySyncDoer(receiver, holder, registry.regk, observer_url=url)
     _run(doer, qapp)
     assert doer.error == ''
-    assert doer.result.said == headers['observer-registry-head']
+    assert doer.result.said == sender.rgy.store.headEvent(registry.regk).said
     assert [(method, path) for method, path, _ in requests] == [('POST', '/')]
     assert issuer.pre in receiver.hby.kevers
     assert receiver.evidence.reger is receiver.rgy.baser
@@ -400,33 +397,17 @@ def test_full_observer_fetch_verifies_kels_without_signer_put(wallets, service, 
         assert not list(receiver.db.custody.getTopItemIter())
 
 
-@pytest.mark.parametrize('failure', ['head', 'stale', 'future', 'missing', 'pending'])
-def test_full_reply_cannot_claim_freshness_without_matching_proof(wallets, failure):
-    """Neither a fresh header nor authentic older bytes alone imply a current head."""
-    from datetime import timedelta
+def test_full_reply_requires_resolved_issuer_evidence(wallets):
+    """Authentic TEL bytes without their issuer KEL remain unresolved dependencies."""
     from locksmith.core import evidence
-    from keri.help import helping
+    from keri.core import Counter, Codens
     sender, receiver = wallets
     _, _, registry, _ = _issue(sender)
-    stream, headers = _full_reply(sender, registry)
-    if failure == 'head':
-        headers['observer-registry-head'] = Diger(ser=b'unrelated head').qb64
-    elif failure in ('stale', 'future'):
-        offset = -60 if failure == 'stale' else 60
-        headers['observer-observed-at'] = helping.toIso8601(helping.nowUTC() + timedelta(seconds=offset))
-    elif failure == 'missing':
-        del headers['observer-observed-at']
-    else:
-        from keri.core import Counter, Codens
-        # Authentic TEL bodies without their issuer KEL remain durable dependencies.
-        stream = b''.join(raw + Counter(Codens.AttachmentGroup, count=0,
-                         version=kering.Vrsn_2_0).qb64b
-                         for raw in sender.rgy.store.cloneTelIter(registry.regk))
+    stream = b''.join(raw + Counter(Codens.AttachmentGroup, count=0,
+                     version=kering.Vrsn_2_0).qb64b
+                     for raw in sender.rgy.store.cloneTelIter(registry.regk))
     with pytest.raises(kering.ValidationError):
-        evidence.receive(receiver, registry.regk, stream, headers)
-    if failure == 'pending':
-        assert receiver.rgy.store.head(registry.regk) is None
-        assert list(receiver.rgy.baser.maes.getTopItemIter())
+        evidence.receive(receiver, registry.regk, stream, {'content-type': 'application/cesr'})
 
 
 def test_default_service_publishes_signed_complete_evidence(wallets, service, qapp):
@@ -463,9 +444,8 @@ def test_default_service_publishes_signed_complete_evidence(wallets, service, qa
     assert [(method, path) for method, path, _ in requests] == [('POST', '/ingest')]
 
 
-def test_full_observation_cache_does_not_restart_age(wallets, service, qapp, monkeypatch):
-    """A nearly expired observation gets only its remaining lifetime locally."""
-    from datetime import timedelta
+def test_synchronized_head_remains_ready_when_next_poll_is_due(wallets, service, qapp):
+    """Acquisition scheduling does not impose an evidence validity deadline."""
     from keri.help import helping
     sender, receiver = wallets
     _, _, registry, _ = _issue(sender)
@@ -473,14 +453,11 @@ def test_full_observation_cache_does_not_restart_age(wallets, service, qapp, mon
     url, state, requests = service
     receiver.hby.cf.put({'registries': {'observer': url}})
     stream, headers = _full_reply(sender, registry)
-    headers['observer-observed-at'] = helping.toIso8601(helping.nowUTC() - timedelta(seconds=14))
     state['respond'] = lambda method, path, body: (200, stream, headers)
     worker = registries.RegistrySyncDoer(receiver, holder, registry.regk, observer_url=url)
     _run(worker, qapp)
     assert not worker.error
-    assert 0 < worker.fresh_until - monotonic() < 1
     cache = registries.RegistryEvidenceDoer(receiver)
-    cache._fetched[registry.regk] = (worker.result.said, worker.fresh_until)
+    cache._fetched[registry.regk] = (worker.result.said, monotonic() - 1)
     assert cache.ensure(registry.regk, holder)
-    monkeypatch.setattr(registries, 'monotonic', lambda: worker.fresh_until + .01)
-    assert not cache.ensure(registry.regk, holder)
+    assert cache.ensure(registry.regk, holder)

@@ -12,12 +12,12 @@ from test_keri_v2_compat import ipex_vaults as ipex_vaults
 
 
 def test_derived_issuance_uses_explicit_established_registry(ipex_vaults, qapp):
-    """A real button issues against the selected DH registry and original discloser."""
+    """A real button issues against the selected registry without changing its salt."""
     app = ipex_vaults('derived-issuance-controls', bran='0123456789abcdefghijk')
     issuer = app.hby.makeHab(name='issuer')
     holder = app.hby.makeHab(name='holder')
     registry = establish(app.vault, issuer, holder)
-    origin = app.vault.salts.state.origin(registry.regk)
+    retained = app.vault.db.custody.get((registry.regk,))
     schemer = schema()
     app.hby.db.schema.pin((schemer.said,), schemer)
     app.vault.db.issuers.pin((schemer.said,), issuer.pre)
@@ -35,8 +35,8 @@ def test_derived_issuance_uses_explicit_established_registry(ipex_vaults, qapp):
         assert options.established.count() == 2
         options.established.setCurrentIndex(1)
         assert options.selection() == dict(registry_mode='derived',
-            registry_id=registry.regk, discloser=holder.pre)
-        assert 'holder' in options.party.text()
+            registry_id=registry.regk, discloser=None)
+        assert 'Local registry salt' in options.party.text()
         dialog.show()
         qapp.processEvents()
         QTest.keyClick(dialog.issue_button, Qt.Key.Key_Space)
@@ -50,8 +50,7 @@ def test_derived_issuance_uses_explicit_established_registry(ipex_vaults, qapp):
         record = rows[0][1]
         assert SerderACDC(raw=record.raw.encode()).sad['rd'] == registry.regk
         assert record.registry_mode == 'derived'
-        assert app.vault.salts.state.origin(registry.regk) == origin
-        assert len(app.vault.salts.state.origins()) == 1
+        assert app.vault.db.custody.get((registry.regk,)) == retained
     finally:
         dialog.close()
 
@@ -78,6 +77,6 @@ def test_changing_issuer_clears_inapplicable_registry_selection(ipex_vaults, qap
             options.selection()
         options.set_registry(False)
         assert options.selection() == {}
-        assert len(app.vault.salts.state.origins()) == 1
+        assert len(app.vault.salts.issuanceRegistries(issuer.pre)) == 1
     finally:
         options.close()

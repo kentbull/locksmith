@@ -167,19 +167,7 @@ class LocksmithBaser(dbing.LMDBer):
         # Opening this schema never reads/decrypts a salt. Only explicit optional
         # derivation/provisioning operations use RegistryCustody over this table.
         from keri.app.registry_custody import EncryptedCustody
-        from keri.app.registry_salt_state import (SaltOrigin, SaltDelivery, SaltRoster,
-            SaltProof, SaltAssignment, SaltReceiptIntent, SaltAttempt)
         self.custody = koming.Komer(db=self, subkey='custody.', klas=EncryptedCustody)
-        # Reuse KERIpy's exact feature records/subkeys in this existing wallet
-        # transaction boundary. Opening schema never decrypts optional custody.
-        self.saltPending = koming.Komer(db=self, subkey='salt-pending.', klas=EncryptedCustody)
-        self.saltOrigins = koming.Komer(db=self, subkey='salt-origins.', klas=SaltOrigin)
-        self.saltDeliveries = koming.Komer(db=self, subkey='salt-deliveries.', klas=SaltDelivery)
-        self.saltRosters = koming.Komer(db=self, subkey='salt-rosters.', klas=SaltRoster)
-        self.saltProofs = koming.Komer(db=self, subkey='salt-proofs.', klas=SaltProof)
-        self.saltAssignments = koming.Komer(db=self, subkey='salt-assignments.', klas=SaltAssignment)
-        self.saltReceipts = koming.Komer(db=self, subkey='salt-receipts.', klas=SaltReceiptIntent)
-        self.saltAttempts = koming.Komer(db=self, subkey='salt-attempts.', klas=SaltAttempt)
         self.outbox = koming.Komer(db=self, subkey='outbox.', klas=IpexSubmission)
         self.inbox = koming.Komer(db=self, subkey='inbox.', klas=MailboxFrame)
 

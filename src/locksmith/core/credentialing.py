@@ -543,9 +543,9 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                 if self.registry_mode == 'derived':
                     if self.registry_id is None:
                         raise kering.ConfigurationError('Select an established registry before derived issuance')
-                    from locksmith.core.salting import require_established
-                    require_established(self.vault, self.registry_id,
-                                        issuer=hab.pre, discloser=self.discloser)
+                    from locksmith.core.salting import require_custody
+                    require_custody(self.vault, self.registry_id,
+                                        issuer=hab.pre)
                     registry = self.vault.rgy.regs.get(self.registry_id)
                     rip = self.vault.rgy.store.seqEvent(self.registry_id, 0)
                     if registry is None or rip is None or rip.israid != hab.pre:
