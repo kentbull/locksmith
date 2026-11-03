@@ -371,7 +371,7 @@ wheels = [
 [[package]]
 name = "hio"
 version = "0.7.20"
-source = { registry = "https://pypi.org/simple" }
+source = { git = "https://github.com/kentbull/hio.git?rev=5483e3cc16b7b9b44a30d3e26dac067c1569c0f5#5483e3cc16b7b9b44a30d3e26dac067c1569c0f5" }
 dependencies = [
     { name = "blake3" },
     { name = "cbor2" },
@@ -383,7 +383,6 @@ dependencies = [
     { name = "pysodium" },
     { name = "sortedcontainers" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/ce/71/1abecf7fcc42bf84c81b35ca9cfcee84f63b81b72bd0115577ebc18d31cb/hio-0.7.20.tar.gz", hash = "sha256:f88bd74fa5d680697f24b565cdfbc543224607222720687e2fc0d2cd67ccd70f", size = 210443, upload-time = "2026-09-10T20:35:30.718Z" }
 
 [[package]]
 name = "hjson"
@@ -548,6 +547,7 @@ dependencies = [
     { name = "cbor" },
     { name = "cryptography" },
     { name = "falcon" },
+    { name = "hio" },
     { name = "keri" },
     { name = "kerkle" },
     { name = "mnemonic" },
@@ -577,6 +577,7 @@ requires-dist = [
     { name = "cbor", specifier = ">=1.0.0" },
     { name = "cryptography", specifier = ">=46.0.3" },
     { name = "falcon", specifier = ">=4.2.0" },
+    { name = "hio", git = "https://github.com/kentbull/hio.git?rev=5483e3cc16b7b9b44a30d3e26dac067c1569c0f5" },
     { name = "keri", git = "https://github.com/kentbull/keripy.git?rev=8f9734326314287a3dbd548b3e0cf4b8a6571add" },
     { name = "kerkle", specifier = ">=0.0.3" },
     { name = "mnemonic", specifier = "==0.21" },
