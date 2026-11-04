@@ -141,7 +141,8 @@ class NotificationsListPage(QWidget):
                 route = note.pad.get('a', {}).get('r', '')
                 if '/multisig' in route:
                     notification_row = self._format_multisig_notification(note, rid, timestamp_display)
-                elif route.startswith('/exn/ipex'):
+                elif (route.rsplit('/', 1)[0] in ('/exn/ipex', '/xip/ipex')
+                      and route.rsplit('/', 1)[-1] in ('apply', 'offer', 'agree', 'grant', 'admit', 'spurn')):
                     notification_row = self._format_ipex_notification(note, rid, timestamp_display)
                 elif route.startswith('/challenge/response'):
                     notification_row = self._format_challenge_response_notification(note, rid, timestamp_display)

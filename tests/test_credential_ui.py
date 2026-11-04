@@ -1952,15 +1952,32 @@ def test_notifications_do_not_replay_history_and_exchange_read_keeps_decision(wa
     request = ipexing.start(app.vault, holder, issuer.pre, 'Apply', schema=acdc.schema)
     offer = ipexing.respond(app.vault, request, 'Offer', credential_said=acdc.said)
     agree = ipexing.respond(app.vault, offer, 'Agree')
-    for stage, said, sender in [('Apply', request, 'holder'), ('Offer', offer, 'issuer'), ('Agree', agree, 'holder')]:
-        notifier.add({'r': '/exn/ipex/' + stage.lower(), 'd': said})
+    parent = QWidget()
+    parent.app = app
+    notifications = NotificationsListPage(parent)
+    for stage, said, sender, route in [('Apply', request, 'holder', '/xip/ipex/apply'),
+                                       ('Offer', offer, 'issuer', '/xip/ipex/offer'),
+                                       ('Agree', agree, 'holder', '/exn/ipex/agree')]:
+        notifier.add({'r': route, 'd': said})
         doer.recur(3)
         assert events[-1][2]['message'] == f'{stage} from {sender}: Native Credential'
+        notifications._load_notifications()
+        rid = next(rid for (_, rid), note in notifier.noter.notes.getTopItemIter()
+                   if note.attrs == {'r': route, 'd': said})
+        row = next(row for row in notifications.table._static_data if row['_rid'] == rid)
+        assert row['Type'] == stage.upper()
+        assert 'View Activity' in notifications._get_row_actions(row)[0]
+
+    # A route that merely contains the IPEX prefix remains a generic notice.
+    notifier.add({'r': '/exn/ipex/offer/extra', 'd': offer, 'message': 'Other route'})
+    doer.recur(4)
+    assert events[-1][2]['message'] == 'Other route'
+    notifications._load_notifications()
+    assert next(row for row in notifications.table._static_data
+                if row['Message'] == 'Other route')['Type'] == 'General'
     grant, atc = ipexing.grant(app.vault, issuer, acdc.said, holder.pre)
     ipexing.prepare(app.vault, issuer, grant, atc)
     notifier.add({'r': '/exn/ipex/grant', 'd': grant.said})
-    parent = QWidget()
-    parent.app = app
     page = CredentialActivityPage(parent)
     page.set_vault_name('toast-ui')
     row = next(row for row in page.tables[1]._static_data if row['root'] == grant.said)
