@@ -185,13 +185,47 @@ endorsed file, then register it locally. Resume permits authentication additions
 only: body, nested proofs, SAID and deadline remain unchanged. Ordinary enabled,
 nonexempt KRAM must actually accept the final conversation; a native presentation
 context alone is insufficient. Existing accepted registration is refused rather
-than retried. Sending that registered Grant is a separate future action.
+than retried. Sending that registered Grant is a separate action.
 
 The existing vault policy is selected before creation (pending lifetime 300
 seconds and default single-key KRAM lag five minutes); operator configuration
 remains authoritative. Nothing renews the original timestamp or deadline.
-Closing clears inspected files, not signatures already exported. This file-only
-workflow has no delivery, live Unblind or verified-Admit completion claim.
+Closing clears inspected files, not signatures already exported. File creation
+and registration never imply delivery, opening-release approval or Admit.
+
+Live delivery of an endorsed presentation
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+After registration, **Deliver selected registered Grant** explicitly sends that
+same Grant through the vault's live Auxiliary owner. It preserves the exact
+signed body, proofs and original deadline; pending Grants never enter the
+accepted-message outbox. Mailbox HTTP success means submission, not recipient
+verification or acceptance. The Activity state-opening view shows progress and
+the original local deadline.
+
+The verifier separately chooses **Request state openings**. An authenticated
+request enables the discloser's **Approve state openings** action in Activity;
+delivery consent alone cannot release proofs. Native Unblind selects minimal
+event proofs, verifies and retains the sender's exact live Grant before the
+reply leaves, then independently verifies the same Grant at the recipient.
+Authenticated revocation replies are still delivered; protocol completion does
+not establish issued state. The verifier displays its refusal and cannot Add.
+Encrypted registry roots stay in the discloser's Keeper. Only complete native
+issuer-endorsed scope authorizes a separate discloser; root possession and local
+presenter policy are not substitutes for that authority.
+
+State verification still does not add the credential. The verifier must choose
+**Review credential**, then **Add**. Current issued-state policy is rechecked at
+that decision; revoked evidence refuses use. The sender reports recipient Admit
+only after actual native verification of the exact returned signed response.
+Prior admissions keep their original proofs.
+
+**Cancel request** removes the selected live operation's queued/inflight
+transport and abandons its proof-release authority. Vault close does the same
+for unfinished operations. Closing the file dialog leaves explicitly authorized
+delivery under Activity's control. Already delivered bytes and accepted history
+remain. Failures do not silently retry, renew the original deadline or revive
+authority after restart. Groups remain outside this wallet workflow.
 
 Regression disposition
 ~~~~~~~~~~~~~~~~~~~~~~

@@ -13,7 +13,7 @@ from test_auxiliary import pending_issuance
 from test_keri_v2_compat import ipex_vaults as ipex_vaults, _deliver_ipex
 
 
-def live_presentation(open_vault, *, blinded=False, accepted=False):
+def live_presentation(open_vault, *, blinded=False, accepted=False, state='issued'):
     """Admit a witnessed issuance, then send its exact held view in a NEW Grant."""
     issuer, holder, ih, hh, registrar, registry, acdc, issuance, atc, seal = pending_issuance(open_vault)
     io, ho = issuer.vault.auxiliary, holder.vault.auxiliary
@@ -43,7 +43,8 @@ def live_presentation(open_vault, *, blinded=False, accepted=False):
 
     # Presenter still knows a valid issued head. The verifier independently
     # receives a newer witnessed head before receiving this unchanged held view.
-    opening, event = registrar.issue(registry, acdc, **({} if blinded else {'salt': root.qb64}))
+    opening, event = registrar.issue(registry, acdc, state=state,
+                                    **({} if blinded else {'salt': root.qb64}))
     if accepted:
         # Exercise the same Offer/Agree/Grant chain as Received Credentials -> Offer.
         for hab, target in ((hh, verifier.vault), (vh, holder.vault)):

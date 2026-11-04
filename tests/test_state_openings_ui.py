@@ -123,3 +123,31 @@ def test_wrong_event_opening_is_visibly_refused(qapp, ipex_vaults):
     assert dialog.error.text() and not dialog.review.isVisible()
     assert not verifier.vault.exc.complete(message.said)
     assert verifier.vault.db.accepted.get((acdc.said,)) is None
+
+
+def test_revoked_opening_is_delivered_but_never_enables_admit(qapp, ipex_vaults):
+    """Native protocol completion does not authorize issued use of a revoked credential."""
+    holder, verifier, hh, vh, acdc, _, issuance, retained, message, _, _ = live_presentation(
+        ipex_vaults, state='revoked')
+    ho, vo = holder.vault.auxiliary, verifier.vault.auxiliary
+    window = QWidget()
+    window.app = verifier
+    page = CredentialActivityPage(window)
+    page.set_vault_name(verifier.name)
+    page.show()
+    QTest.mouseClick(page.opening_buttons[(vh.pre, message.said)], Qt.MouseButton.LeftButton)
+    dialog = page._response_dialog
+    QTest.mouseClick(dialog.request, Qt.MouseButton.LeftButton)
+    _, _, query, _ = vo.outgoing.popleft()
+    _deliver_ipex(holder.vault, query)
+    ho.approve_openings(hh, message.said)
+    assert holder.hby.db.exrs.get((message.said, acdc.said)).state == 'revoked'
+    assert ho.status(hh.pre, message.said)['phase'] == 'answered'
+    _, _, reply, _ = ho.outgoing.popleft()
+    _deliver_ipex(verifier.vault, reply)
+    qapp.processEvents()
+    assert dialog.state.text() == 'State openings refused'
+    assert 'revoked' in dialog.error.text() and not dialog.review.isVisible()
+    assert verifier.vault.db.accepted.get((acdc.said,)) is None
+    assert verifier.hby.db.erpy.get((message.said,)) is None
+    assert credentialing.credential(holder.vault, acdc.said, grant=issuance.said)['proof'] == retained
