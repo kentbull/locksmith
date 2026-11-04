@@ -127,6 +127,7 @@ class GrantFilesDialog(LocksmithDialog):
             self.raw = raw
         except Exception as error:
             self.status.setText(str(error))
+        self.fit_content(680)
 
     def _options(self):
         return dict(aid=self.identity.currentData(), said=self.said,
@@ -152,6 +153,7 @@ class GrantFilesDialog(LocksmithDialog):
         with Path(path).open('xb') as output:
             output.write(raw)
         self.status.setText(status)
+        self.fit_content(680)
 
     def _act(self):
         try:
@@ -169,6 +171,7 @@ class GrantFilesDialog(LocksmithDialog):
                     self.write_file(path)
         except Exception as error:
             self.status.setText(str(error))
+        self.fit_content(680)
 
     def _deliver(self):
         """Authorize transport only; Activity obtains separate proof-release approval."""
@@ -184,3 +187,4 @@ class GrantFilesDialog(LocksmithDialog):
                 'Review state openings in Activity when the recipient requests them; release needs separate approval.')
         except Exception as error:
             self.status.setText(str(error))
+        self.fit_content(680)

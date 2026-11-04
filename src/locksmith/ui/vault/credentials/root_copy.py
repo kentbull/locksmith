@@ -99,6 +99,7 @@ class RootCopyDialog(LocksmithDialog):
             self.action.setEnabled(True)
         except Exception as error:
             self.status.setText(str(error))
+        self.fit_content(640)
 
     def _act(self):
         try:
@@ -117,6 +118,7 @@ class RootCopyDialog(LocksmithDialog):
                     self.export_file(path)
         except Exception as error:
             self.status.setText(str(error))
+        self.fit_content(640)
 
     def export_file(self, path):
         """Write ciphertext exclusively; the sender cannot observe recipient retention."""
@@ -126,6 +128,7 @@ class RootCopyDialog(LocksmithDialog):
         with Path(path).open('xb') as output:
             output.write(wire)
         self.status.setText('Encrypted copy exported; recipient retention unconfirmed')
+        self.fit_content(640)
 
     def _cancel(self, *_):
         self.inspected = None
