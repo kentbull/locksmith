@@ -22,7 +22,7 @@ from keri.app import (
 from keri.core import eventing, coring, kraming
 from keri.peer import exchanging
 
-from locksmith.core import indirecting, challenging, ipexing, registries, evidence, auxiliary
+from locksmith.core import indirecting, challenging, ipexing, registries, evidence, auxiliary, root_copying
 from locksmith.core.adjudication import Watchmen, KeyStateVarianceAuthority
 from locksmith.core.configing import ENABLE_TURRET_BROWSER_PLUGIN
 from locksmith.core.grouping import CounselingCompletionDoer
@@ -174,6 +174,7 @@ class Vault(doing.DoDoer):
         self.kramer.cues = self.kram_cues
         self.kvy.registerReplyRoutes(router=self.rvy.rtr)
         auxiliary.install(self)
+        self.root_copies = root_copying.RootCopies(self)
 
         watchmen = Watchmen(hby=hby, tock=15.0)
         kva = KeyStateVarianceAuthority(hby=hby, notifier=self.notifier, cues=watchmen.cues)
@@ -243,6 +244,10 @@ class Vault(doing.DoDoer):
         self.doers.extend(list(self.counseling_completion_doers.values()))
 
         logger.info(f"Vault initialized for {hby.name} with {len(self.doers)} doers")
+
+    def exit(self, **kwa):
+        self.root_copies.close()
+        super().exit(**kwa)
 
     def update_plugin_identifier(self, plugin_identifier):
         if not ENABLE_TURRET_BROWSER_PLUGIN:

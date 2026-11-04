@@ -73,7 +73,7 @@ class IssuedCredentialsListPage(BaseListPage):
             show_search=True,
             show_add_button=True,
             add_button_text="Issue Credential",
-            row_actions=["View", "Offer", "Grant", "View exchange history", "Revoke", "Delete"],
+            row_actions=["View", "Offer", "Grant", "Export encrypted registry root", "View exchange history", "Revoke", "Delete"],
             row_action_icons={
                 "View": ":/assets/material-icons/view.svg",
                 "Offer": ":/assets/material-icons/share.svg",
@@ -145,6 +145,10 @@ class IssuedCredentialsListPage(BaseListPage):
             self.parent.show_credential_activity(credential_said, received=False)
         elif action == "Offer":
             self.parent.start_credential_exchange('Offer', credential_said=credential_said)
+        elif action == "Export encrypted registry root":
+            from locksmith.ui.vault.credentials.root_copy import RootCopyDialog
+            self._root_copy_dialog = RootCopyDialog(self.app, self.parent, credential_said)
+            self._root_copy_dialog.open()
         elif action == "View":
             # Open view credential dialog
             try:

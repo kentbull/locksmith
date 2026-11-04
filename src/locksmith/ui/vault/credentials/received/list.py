@@ -74,7 +74,7 @@ class ReceivedCredentialsListPage(BaseListPage):
             show_add_button=True,
             add_button_text="Apply for credential…",
             separate_toolbar=True,
-            row_actions=["View", "Offer", "View exchange history", "Delete"],
+            row_actions=["View", "Offer", "Import encrypted registry root", "View exchange history", "Delete"],
             row_action_icons={
                 "View": ":/assets/material-icons/view.svg",
                 "Offer": ":/assets/material-icons/share.svg",
@@ -131,7 +131,7 @@ class ReceivedCredentialsListPage(BaseListPage):
                     "Status": status_text,
                     "Accepted": date_label(credential['accepted_at']),
                     "SAID": sad['d'],
-                    "_actions": (["View", "Offer", "View exchange history", "Delete"]
+                    "_actions": (["View", "Offer", "Import encrypted registry root", "View exchange history", "Delete"]
                                  if credential['held'] else ["View", "View exchange history", "Delete"]),
                 }
                 received_credentials_data.append(cred_dict)
@@ -159,6 +159,10 @@ class ReceivedCredentialsListPage(BaseListPage):
             self.parent.show_credential_activity(credential_said, received=True)
         elif action == "Offer":
             self.parent.start_credential_exchange('Offer', credential_said=credential_said, received=True)
+        elif action == "Import encrypted registry root":
+            from locksmith.ui.vault.credentials.root_copy import RootCopyDialog
+            self._root_copy_dialog = RootCopyDialog(self.app, self.parent, credential_said, received=True)
+            self._root_copy_dialog.open()
         elif action == "View":
             dialog = ViewIssuedCredentialDialog(icon_path=self.icon_path, app=self.app,
                                                 credential_said=credential_said,

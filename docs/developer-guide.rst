@@ -130,7 +130,35 @@ verification finishes the same Grant; Admit remains a separate decision, and kno
 revoked state still prevents application use. A later presentation starts with a
 new Grant from the exact selected admitted view, never the old terminal exchange.
 Closing or cancelling discards unfinished approvals and queued proofs. Unblind
-does not transfer a Keeper root. ``RegistrySalt`` root transfer remains unimplemented.
+does not transfer a Keeper root.
+
+Individual encrypted root files
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On an Issued Credentials row, choose **Export encrypted registry root**, select
+the intended introduced individual recipient, then export a new CESR file. The
+issuer must already hold the registry root in its unlocked encrypted Keeper.
+Export reports only that an encrypted copy was written; recipient retention is
+unconfirmed. Deliver this ciphertext file separately. A root permits deriving
+future state openings, not issuer signing authority.
+
+On the recipient's Received Credentials row, choose **Import encrypted registry
+root**. Select the local recipient, exact received disclosure and held opening
+for an accepted registry BUP. Inspect the file and review its claimed sender,
+recipient, registry and reply SAID. Inspection does not authenticate or consume
+the reply. **Approve and import** gives native ``RegistrySalt`` that exact scope,
+then sends the unchanged reply through the vault's ordinary Parser/KRAM/Revery.
+Only native successful encrypted retention reports success; an existing root or
+retained reply row is insufficient. Admission and historical proofs are unchanged.
+
+Missing accepted public evidence, an unavailable held opening, changed keys or
+expired message timing refuse import. There is no acquisition, automatic retry,
+new root generation or timestamp renewal. Normal operator KRAM policy applies
+(the wallet's default single-key reply lag is five minutes); Exchanger's pending
+Grant timeout does not govern root replies. Cancellation, refusal, completion
+and vault close abandon process-local approval. Closing after successful import
+does not undo the retained root. Groups and network delivery/acknowledgment are
+outside this file workflow.
 
 Regression disposition
 ~~~~~~~~~~~~~~~~~~~~~~
@@ -145,7 +173,7 @@ The admitted-view regression retains actual selection controls and reopen checks
 Observer header/age-policy cases are retired and replaced by exact scope, complete
 proof, rollback and header-nonauthority checks. Registry socket timeout,
 cancellation, publication head and current full-evidence observer checks remain.
-The plaintext custody handoff scenario is retired pending RegistrySalt transfer;
+The plaintext custody handoff scenario is retired;
 rootless held proofs, supplied-opening independence and damaged-root isolation
 remain. Existing encrypted-root fixtures cover native derivation, explicit bound
 coordinates and reopen without claiming to test root provisioning.
