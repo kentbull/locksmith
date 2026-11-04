@@ -44,13 +44,27 @@ def live_presentation(open_vault, *, blinded=False, accepted=False):
     # Presenter still knows a valid issued head. The verifier independently
     # receives a newer witnessed head before receiving this unchanged held view.
     opening, event = registrar.issue(registry, acdc, **({} if blinded else {'salt': root.qb64}))
-    message, attachment = ipexing.grant(holder.vault, hh, acdc.said, vh.pre,
-        from_grant=issuance.said)
-    wire = ipexing.prepare(holder.vault, hh, message, attachment)
     if accepted:
+        # Exercise the same Offer/Agree/Grant chain as Received Credentials -> Offer.
+        for hab, target in ((hh, verifier.vault), (vh, holder.vault)):
+            _deliver_ipex(target, hab.makeLocScheme(url='http://127.0.0.1:1', scheme='http')
+                          + hab.makeEndRole(eid=hab.pre, role='mailbox'))
+        offer = ipexing.start(holder.vault, hh, vh.pre, 'Offer',
+            credential_said=acdc.said, from_grant=issuance.said)
+        _deliver_ipex(verifier.vault, exchanging.serializeMessage(holder.hby, offer))
+        agree = ipexing.respond(verifier.vault, offer, 'Agree')
+        _deliver_ipex(holder.vault, exchanging.serializeMessage(verifier.hby, agree))
+        selected = ipexing.respond(holder.vault, agree, 'Grant',
+            credential_said=acdc.said, from_grant=issuance.said)
+        message = holder.hby.db.exns.get((selected,))
+        wire = exchanging.serializeMessage(holder.hby, selected)
         _deliver_ipex(verifier.vault, wire)
         assert verifier.vault.exc.complete(message.said)
         assert not any(row['grant'] == message.said for row in verifier.vault.auxiliary.pending(vh))
+    else:
+        message, attachment = ipexing.grant(holder.vault, hh, acdc.said, vh.pre,
+            from_grant=issuance.said)
+        wire = ipexing.prepare(holder.vault, hh, message, attachment)
     seal(event, recipients=(verifier.vault,))
     # Public source KEL support travels independently of the stale TEL view.
     _deliver_ipex(holder.vault, b''.join(issuer.hby.db.clonePreIter(ih.pre, gvrsn=kering.Vrsn_2_0)))
@@ -147,8 +161,13 @@ def test_cancelled_request_and_expired_presenter_consent_do_not_resume(ipex_vaul
 
 
 def test_accepted_live_grant_rechecks_after_newer_witnessed_head(ipex_vaults):
-    holder, verifier, hh, vh, acdc, _, issuance, retained, message, _, _ = live_presentation(ipex_vaults, accepted=True)
+    holder, verifier, hh, vh, acdc, registry, issuance, retained, message, event, _ = live_presentation(ipex_vaults, accepted=True)
     ho, vo = holder.vault.auxiliary, verifier.vault.auxiliary
+    agree = verifier.hby.db.exns.get((message.sad['p'],))
+    assert agree.route == '/ipex/agree'
+    assert message.sad['x'] == agree.sad['p'] != message.said
+    deadline = verifier.hby.db.epsd.get((message.said,)).dts
+    previous = exchanging.serializeParsedSubstream(exchanging.loadParsedNestedSubstreams(verifier.hby, message.said)[0])
     assert next(row for row in vo.pending(vh) if row['grant'] == message.said)['phase'] == 'request_required'
     vo.request_openings(vh, message.said)
     _, _, query, _ = vo.outgoing.popleft()
@@ -158,5 +177,13 @@ def test_accepted_live_grant_rechecks_after_newer_witnessed_head(ipex_vaults):
     _deliver_ipex(verifier.vault, reply)
     status = vo.status(vh.pre, message.said)
     assert status['phase'] == 'verified', status
+    assert verifier.hby.db.exns.get((message.said,)).raw == message.raw
+    assert verifier.hby.db.epsd.get((message.said,)).dts == deadline
+    assert verifier.hby.db.erpy.get((agree.said,)).qb64 == message.said
+    updated = exchanging.serializeParsedSubstream(exchanging.loadParsedNestedSubstreams(verifier.hby, message.said)[0])
+    assert updated != previous
+    observed = verifier.hby.db.exrs.get((message.said, acdc.said))
+    assert (observed.regid, observed.said, observed.sn, observed.state) == (registry.regk, event.said, 2, 'issued')
+    assert verifier.vault.db.accepted.get((acdc.said,)) is None
     assert credentialing.credential(holder.vault, acdc.said, grant=issuance.said)['proof'] == retained
     ipexing.admit(verifier.vault, vh, message.said)
