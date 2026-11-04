@@ -16,6 +16,7 @@ from keri.peer import exchanging
 
 from locksmith.ui.vault.credentials.disclosure import DisclosureOptions
 from locksmith.ui.vault.credentials.registry_setup import RegistrySetupDialog, SETUP_PHASES
+from locksmith.ui.vault.credentials.state_openings import StateOpeningsDialog, OPENING_PHASES
 
 from locksmith.core import credentialing, ipexing
 from locksmith.ui import colors
@@ -143,6 +144,11 @@ class CredentialActivityPage(BaseListPage):
         self.registry_layout.setContentsMargins(0, 0, 0, 0)
         self.registry_buttons = {}
         layout.addWidget(self.registry_requests)
+        self.opening_requests = QWidget()
+        self.opening_layout = QVBoxLayout(self.opening_requests)
+        self.opening_layout.setContentsMargins(0, 0, 0, 0)
+        self.opening_buttons = {}
+        layout.addWidget(self.opening_requests)
         self.stack = QStackedWidget()
         layout.addWidget(self.stack)
         self.tables, self.tabs, self.dots = [], [], []
@@ -375,7 +381,7 @@ class CredentialActivityPage(BaseListPage):
         rows = [[], []]
         requests = []
         if self._current_vault():
-            requests = [status for status in self.vault.auxiliary.pending() if status['kind'] == 'dh']
+            requests = self.vault.auxiliary.pending()
             for exchange in ipexing.exchanges(self.vault):
                 chain = exchange['messages']
                 tip = chain[-1] if chain else None
@@ -422,7 +428,8 @@ class CredentialActivityPage(BaseListPage):
                     if exchange.get('expired'):
                         row['Status'] = 'Expired'
                     rows[index].append(row)
-        self._show_registry_requests(requests)
+        self._show_registry_requests([status for status in requests if status['kind'] == 'dh'])
+        self._show_opening_requests([status for status in requests if status['kind'] == 'unblind'])
         self._rows = rows[0] + rows[1]
         for index, table in enumerate(self.tables):
             ordered = sorted(rows[index], key=lambda row: row['_updated'], reverse=True)
@@ -477,6 +484,42 @@ class CredentialActivityPage(BaseListPage):
             self.refresh()
             return
         self._response_dialog = RegistrySetupDialog(self, hab, grant)
+        self._response_dialog.finished.connect(self.refresh)
+        self._response_dialog.open()
+
+    def _show_opening_requests(self, requests):
+        """Keep event-opening consent separate from registry setup and credential Admit."""
+        while self.opening_layout.count():
+            self.opening_layout.takeAt(0).widget().deleteLater()
+        self.opening_buttons.clear()
+        self.opening_requests.setVisible(bool(requests))
+        if not requests:
+            return
+        self.opening_layout.addWidget(QLabel('State openings'))
+        for status in requests:
+            card = QWidget()
+            row = QHBoxLayout(card)
+            text = QLabel(f"{self._name(status['aid'])} · {OPENING_PHASES[status['phase']]}")
+            text.setTextFormat(Qt.TextFormat.PlainText)
+            text.setWordWrap(True)
+            row.addWidget(text)
+            button = LocksmithInvertedButton('Review state openings')
+            button.clicked.connect(lambda checked=False, aid=status['aid'], grant=status['grant']:
+                                   self._review_state_openings(aid, grant))
+            row.addWidget(button)
+            self.opening_buttons[(status['aid'], status['grant'])] = button
+            self.opening_layout.addWidget(card)
+
+    def _review_state_openings(self, aid, grant):
+        """Open only the core-authenticated local presentation snapshot."""
+        if not self._current_vault():
+            return
+        hab = self.vault.hby.habByPre(aid)
+        status = self.vault.auxiliary.status(aid, grant) if hab is not None else None
+        if status is None or status['kind'] != 'unblind':
+            self.refresh()
+            return
+        self._response_dialog = StateOpeningsDialog(self, hab, grant)
         self._response_dialog.finished.connect(self.refresh)
         self._response_dialog.open()
 
