@@ -15,6 +15,7 @@ from keri.core import SerderACDC
 from keri.peer import exchanging
 
 from locksmith.ui.vault.credentials.disclosure import DisclosureOptions
+from locksmith.ui.vault.credentials.registry_setup import RegistrySetupDialog, SETUP_PHASES
 
 from locksmith.core import credentialing, ipexing
 from locksmith.ui import colors
@@ -137,6 +138,11 @@ class CredentialActivityPage(BaseListPage):
         self.setAutoFillBackground(True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        self.registry_requests = QWidget()
+        self.registry_layout = QVBoxLayout(self.registry_requests)
+        self.registry_layout.setContentsMargins(0, 0, 0, 0)
+        self.registry_buttons = {}
+        layout.addWidget(self.registry_requests)
         self.stack = QStackedWidget()
         layout.addWidget(self.stack)
         self.tables, self.tabs, self.dots = [], [], []
@@ -332,7 +338,7 @@ class CredentialActivityPage(BaseListPage):
             self.refresh()
 
     def _on_doer_event(self, doer_name, event_type, data):
-        if doer_name in ('Ipex', 'RegistryEvidence'):
+        if doer_name in ('Ipex', 'RegistryEvidence', 'Auxiliary'):
             self.refresh()
 
     def _current_vault(self):
@@ -367,7 +373,9 @@ class CredentialActivityPage(BaseListPage):
 
     def refresh(self, *_):
         rows = [[], []]
+        requests = []
         if self._current_vault():
+            requests = [status for status in self.vault.auxiliary.pending() if status['kind'] == 'dh']
             for exchange in ipexing.exchanges(self.vault):
                 chain = exchange['messages']
                 tip = chain[-1] if chain else None
@@ -414,6 +422,7 @@ class CredentialActivityPage(BaseListPage):
                     if exchange.get('expired'):
                         row['Status'] = 'Expired'
                     rows[index].append(row)
+        self._show_registry_requests(requests)
         self._rows = rows[0] + rows[1]
         for index, table in enumerate(self.tables):
             ordered = sorted(rows[index], key=lambda row: row['_updated'], reverse=True)
@@ -427,11 +436,49 @@ class CredentialActivityPage(BaseListPage):
             self.scope_labels[index].setVisible(bool(self._credential_filter))
             self.clear_buttons[index].setVisible(bool(self._credential_filter))
         attention = [any(row['_attention'] for row in direction) for direction in rows]
+        for status in requests:
+            if status['actions'] or status['phase'] in ('refused', 'expired', 'interrupted'):
+                attention[int(status['recipient'] == status['aid'])] = True
         for dots in self.dots:
             for index, dot in enumerate(dots):
                 dot.setVisible(attention[index])
         self.attention_changed.emit(any(attention))
         self._show_details(next((row for row in self._rows if row['_key'] == self._selected), None))
+
+    def _show_registry_requests(self, requests):
+        """Keep authenticated setup requests visibly separate from accepted credentials."""
+        while self.registry_layout.count():
+            self.registry_layout.takeAt(0).widget().deleteLater()
+        self.registry_buttons.clear()
+        self.registry_requests.setVisible(bool(requests))
+        if not requests:
+            return
+        self.registry_layout.addWidget(QLabel('Registry setup'))
+        for status in requests:
+            card = QWidget()
+            row = QHBoxLayout(card)
+            text = QLabel(f"{self._name(status['aid'])} · {SETUP_PHASES[status['phase']]}")
+            text.setTextFormat(Qt.TextFormat.PlainText)
+            text.setWordWrap(True)
+            row.addWidget(text)
+            button = LocksmithInvertedButton('Review registry setup')
+            button.clicked.connect(lambda checked=False, aid=status['aid'], grant=status['grant']:
+                                   self._review_registry_setup(aid, grant))
+            row.addWidget(button)
+            self.registry_buttons[(status['aid'], status['grant'])] = button
+            self.registry_layout.addWidget(card)
+
+    def _review_registry_setup(self, aid, grant):
+        """Open an authenticated local request without implying credential consent."""
+        if not self._current_vault():
+            return
+        hab = self.vault.hby.habByPre(aid)
+        if hab is None or self.vault.auxiliary.status(aid, grant) is None:
+            self.refresh()
+            return
+        self._response_dialog = RegistrySetupDialog(self, hab, grant)
+        self._response_dialog.finished.connect(self.refresh)
+        self._response_dialog.open()
 
     def _outcome(self, row):
         if row.get('expired'):

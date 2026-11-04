@@ -14,7 +14,7 @@ from keri.app import habbing, notifying, organizing
 from keri.core import Noncer, messagize, parsing, scheming, SerderACDC, SerderKERI
 from keri.peer import exchanging
 
-from locksmith.core import ipexing
+from locksmith.core import auxiliary, ipexing
 from locksmith.core.credentialing import IssueCredentialDoer
 from locksmith.core.signals import DoerSignalBridge
 from locksmith.db.basing import GrantReceipt, IpexSubmission, IssuedCredential, LocksmithBaser
@@ -122,6 +122,7 @@ def wallet(qapp, mailbox_routes):
             vault = SimpleNamespace(hby=hby, rgy=rgy, db=db, org=organizing.Organizer(hby=hby),
                                     exc=exc, signals=signals, notifier=notifier, extend=queued.extend, doers=queued, kvy=hby.kvy)
             vault.mbx = SimpleNamespace(parser=parsing.Parser(kvy=hby.kvy, exc=exc, version=kering.Vrsn_2_0))
+            vault.auxiliary = auxiliary.Auxiliary(vault)
             app = SimpleNamespace(hby=hby, vault=vault, queued=queued)
             return app
         yield create
