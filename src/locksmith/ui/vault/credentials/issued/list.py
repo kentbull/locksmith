@@ -19,6 +19,7 @@ from locksmith.ui.vault.credentials.issued.delete import DeleteIssuedCredentialD
 from locksmith.ui.vault.credentials.issued.grant import GrantCredentialDialog
 from locksmith.ui.vault.credentials.issued.issue import IssueCredentialDialog
 from locksmith.ui.vault.credentials.issued.revoke import RevokeCredentialDialog
+from locksmith.ui.vault.credentials.issued.refresh import RefreshCredentialDialog
 from locksmith.ui.vault.credentials.issued.view import ViewIssuedCredentialDialog
 
 if TYPE_CHECKING:
@@ -73,7 +74,7 @@ class IssuedCredentialsListPage(BaseListPage):
             show_search=True,
             show_add_button=True,
             add_button_text="Issue Credential",
-            row_actions=["View", "Offer", "Grant", "Export encrypted registry root", "View exchange history", "Revoke", "Delete"],
+            row_actions=["View", "Offer", "Grant", "Export encrypted registry root", "View exchange history", "Refresh state commitment", "Revoke", "Delete"],
             row_action_icons={
                 "View": ":/assets/material-icons/view.svg",
                 "Offer": ":/assets/material-icons/share.svg",
@@ -178,6 +179,10 @@ class IssuedCredentialsListPage(BaseListPage):
                 dialog.open()
             except Exception as e:
                 logger.exception(f"Error opening grant dialog: {e}")
+        elif action == "Refresh state commitment":
+            self._refresh_dialog = RefreshCredentialDialog(
+                self.app, credential_said, credential_schema, parent=self.parent)
+            self._refresh_dialog.open()
         elif action == "Revoke":
             dialog = RevokeCredentialDialog(self.app, credential_said, credential_schema, parent=self.parent)
             dialog.open()
@@ -245,6 +250,9 @@ class IssuedCredentialsListPage(BaseListPage):
         # Refresh list when a credential is revoked
         elif doer_name == "RevokeCredentialDoer" and event_type in ("credential_revoked", "credential_revocation_failed"):
             logger.info(f"Credential revoked: {data.get('schema')}, refreshing list")
+            self._load_issued_credentials_data()
+
+        elif doer_name == 'RefreshCredentialDoer' and event_type in ('credential_refreshed', 'credential_refresh_failed'):
             self._load_issued_credentials_data()
 
         # Refresh list when an issued credential is deleted

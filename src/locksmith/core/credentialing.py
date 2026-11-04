@@ -604,6 +604,101 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                 self.remove([receiptor])
 
 
+def refresh_context(vault, said):
+    """Inspect one issuer-owned commitment without authoring or inferring retry consent."""
+    if vault.closed or not vault.db.opened:
+        raise ValueError('The vault is closed')
+    record = vault.db.issued.get((said,))
+    if record is None:
+        raise ValueError('This credential was not issued by this wallet')
+    acdc = SerderACDC(raw=record.raw.encode())
+    hab = vault.hby.habByPre(acdc.israid)
+    registry = vault.rgy.regs.get(acdc.regid)
+    if acdc.said != said or hab is None or isinstance(hab, GroupHab) or registry is None:
+        raise ValueError('Refresh requires an individual local issuer and registry')
+    update = vault.rgy.store.event(record.update)
+    opening = disclosing.opening(record.blinder)
+    if (update is None or update.ilk != 'bup' or update.sad['rd'] != acdc.regid
+            or regeventing.vetBlind(opening, blid=update.sad['b']) != (said, 'issued')):
+        raise kering.ValidationError('Only an issued-state commitment can be refreshed or resumed')
+    head = vault.rgy.store.headEvent(acdc.regid)
+    accepted = vault.rgy.store.seqEvent(acdc.regid, update.sn)
+    pending = accepted is None
+    if pending:
+        if (update.sn < 2 or head is None or head.ilk != 'bup'
+                or update.sn != head.sn + 1 or update.sad['p'] != head.said):
+            raise kering.ValidationError('Pending state update has no unchanged accepted predecessor')
+    elif (accepted.said != update.said or head is None or head.said != update.said
+          or credential_state(vault, acdc, opening).state != 'issued'):
+        raise kering.ValidationError('The current registry head has changed or is not issued')
+    return dict(record=record, acdc=acdc, hab=hab, registry=registry,
+                opening=opening, update=update, resume=pending)
+
+
+class RefreshCredentialDoer(CredentialUpdateDoer):
+    """Explicitly author a new issued commitment or resume one exact saved update."""
+
+    def __init__(self, app, credential_said, *, expected_update, resume=False,
+                 codes=None, bound_event=None):
+        self.app, self.vault = app, app.vault
+        self.credential_said, self.expected_update = credential_said, expected_update
+        self.resume, self.codes, self.bound_event = resume, codes or [], bound_event
+        self.refresh_id = uuid.uuid4().hex
+        self.target_update = expected_update if resume else ''
+        super().__init__(doers=[doing.doify(self.refresh_do)])
+
+    def _open(self):
+        if self.app.vault is not self.vault or self.vault.closed or not self.vault.db.opened:
+            raise ValueError('This vault is closed; review the credential in the current vault')
+
+    def refresh_do(self, tymth, tock=0.0, **opts):
+        """Retain the new proof before asynchronous receipts; retries never restage."""
+        self.wind(tymth)
+        yield self.tock
+        receiptor = None
+        try:
+            self._open()
+            context = refresh_context(self.vault, self.credential_said)
+            record, acdc = context['record'], context['acdc']
+            registry, opening, update = context['registry'], context['opening'], context['update']
+            if record.update != self.expected_update:
+                raise kering.ValidationError('The selected state commitment changed; review it again')
+            auths = {wit: f'{code}#{helping.nowIso8601()}'
+                     for wit, code in (entry.split(':', 1) for entry in self.codes)}
+            if not self.resume:
+                if context['resume']:
+                    raise kering.ValidationError('Resume the saved state update before creating another')
+                selected = self.bound_event or (opening.bd if opening.clan == BoundState else None)
+                opening, update, stream = registry_authoring.stage(
+                    self.vault, registry, acdc, 'issued', record.registry_mode, bound_event=selected)
+                record.blinder, record.update, record.stream = opening.qb64, update.said, stream.decode()
+                self.vault.db.issued.pin((acdc.said,), record)
+            self.target_update = update.said
+            if not self.resume or context['resume']:
+                receiptor = LocksmithReceiptor(hby=self.vault.hby)
+                self.extend([receiptor])
+                yield from self.anchor(registry, update, receiptor, auths)
+            self._open()
+            current = self.vault.db.issued.get((acdc.said,))
+            head = self.vault.rgy.store.headEvent(acdc.regid)
+            if (current is None or current.update != self.target_update or head.said != self.target_update
+                    or credential_state(self.vault, acdc, opening).state != 'issued'):
+                raise kering.ValidationError('The current state commitment changed during refresh')
+            if record.registry_mode == 'public':
+                self.vault.rgy.store.putOpening(update.said, opening)
+            self.vault.signals.emit_doer_event('RefreshCredentialDoer', 'credential_refreshed', {
+                'refresh_id': self.refresh_id, 'credential_said': acdc.said,
+                'update': self.target_update, 'success': True})
+        except Exception as error:
+            logger.exception('Credential state refresh failed')
+            self.vault.signals.emit_doer_event('RefreshCredentialDoer', 'credential_refresh_failed', {
+                'refresh_id': self.refresh_id, 'credential_said': self.credential_said,
+                'update': self.target_update, 'error': str(error), 'success': False})
+        finally:
+            if receiptor is not None:
+                self.remove([receiptor])
+
+
 class RevokeCredentialDoer(CredentialUpdateDoer):
     """Retain and anchor one revocation, including retries after a vault close."""
 

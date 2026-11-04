@@ -138,6 +138,21 @@ Send credential or Send offer. Continue with the matching steps above.
 Registry state publication
 --------------------------
 
+On an Issued Credentials row, **Refresh state commitment** explicitly creates a
+new ``issued`` BUP for a currently verified issued credential. It preserves the
+credential SAID, content, original creation time and registry mode. Earlier
+presentations keep their exact proofs and may require a new state opening.
+Witnessed issuers use the ordinary witness authentication panel. Bound state
+requires an eligible current issuee event; derivation uses existing custody.
+
+The selected commitment is fixed when confirmation opens. A changed selection,
+revoked or unknown state refuses new authoring. A pending saved issued update is
+offered as **Resume state update**, including after reopening the vault. Resume
+keeps its exact BUP, proof and anchor; it does not create another commitment.
+Another refresh after completion requires a new explicit confirmation. Existing
+registry publication/acquisition handles dissemination; refresh neither sends a
+new presentation nor changes an earlier admission.
+
 Registry-authenticated credentials offer three state-publication choices. Public
 state creates a blinded update and publishes that event's explicit opening; it
 does not create reusable opening custody. Blinded state keeps each event opening
