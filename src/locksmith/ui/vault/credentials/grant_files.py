@@ -45,16 +45,18 @@ class GrantFilesDialog(LocksmithDialog):
                        self.fields, self.preparation, self.preview, self.status):
             layout.addWidget(widget)
         self.choose = LocksmithInvertedButton('Inspect signed Grant file…')
+        self.deliver = LocksmithInvertedButton('Deliver selected registered Grant')
         self.action = LocksmithButton('Prepare file…' if said else 'Endorse and export…')
-        close = LocksmithInvertedButton('Cancel')
+        close = self.close_button = LocksmithInvertedButton('Cancel')
         buttons = QHBoxLayout()
-        for button in (self.choose, self.action, close):
+        for button in (self.choose, self.action, self.deliver, close):
             buttons.addWidget(button)
         super().__init__(parent=parent, title='Signed presentation files', content=content, buttons=buttons)
         close.clicked.connect(self.close)
         self.finished.connect(lambda *_: setattr(self, 'raw', None))
         self.choose.clicked.connect(self._choose)
         self.action.clicked.connect(self._act)
+        self.deliver.clicked.connect(self._deliver)
         self.mode.currentIndexChanged.connect(self._mode)
         self.disclosure.changed.connect(self._view)
         self.fields.changed.connect(self._view)
@@ -83,6 +85,7 @@ class GrantFilesDialog(LocksmithDialog):
             widget.setVisible(mode != 'endorse')
         self.preparation.setVisible(mode == 'resume')
         self.choose.setVisible(mode != 'prepare')
+        self.deliver.setVisible(mode == 'resume')
         self.action.setText({'prepare': 'Prepare file…', 'endorse': 'Endorse and export…',
                              'resume': 'Register endorsed Grant locally'}[mode])
         self.raw = None
@@ -164,5 +167,20 @@ class GrantFilesDialog(LocksmithDialog):
                 path, _ = QFileDialog.getSaveFileName(self, self.action.text(), '', 'CESR (*.cesr)')
                 if path:
                     self.write_file(path)
+        except Exception as error:
+            self.status.setText(str(error))
+
+    def _deliver(self):
+        """Authorize transport only; Activity obtains separate proof-release approval."""
+        try:
+            self._current()
+            options = self._options()
+            hab = self.vault.hby.habByPre(options.pop('aid'))
+            if hab is None:
+                raise ValueError('Select the local discloser')
+            self.vault.auxiliary.deliver_prepared(hab, self.preparation.currentData(), **options)
+            self.close_button.setText('Close')
+            self.status.setText('Delivery authorized for the exact registered Grant. '
+                'Review state openings in Activity when the recipient requests them; release needs separate approval.')
         except Exception as error:
             self.status.setText(str(error))

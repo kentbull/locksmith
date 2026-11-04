@@ -4,7 +4,7 @@ from copy import deepcopy
 import pytest
 from keri import kering
 from keri.acdc import acdcmap, ipexing as acdc_v2_ipexing
-from keri.core import Noncer, eventing, scheming
+from keri.core import Noncer, SerderACDC, eventing, scheming
 from keri.peer import exchanging
 
 from locksmith.core import credentialing, ipexing
@@ -64,6 +64,14 @@ def test_only_issuee_can_represent_targeted_credential(ipex_vaults):
         ipexing.grant(verifier.vault, reviewer, said, issuer.pre)
     with pytest.raises(kering.ValidationError, match='must address'):
         ipexing.grant(source.vault, issuer, said, reviewer.pre)
+    wrong_target, atc = acdc_v2_ipexing.grant(issuer, reviewer.pre, 'Wrong target',
+        origin=credentialing.credential(source.vault, said)['proof'],
+        modifiers={'dp': [[[schema.said, '/', []]]]}, kind=kering.Kinds.json)
+    _deliver_ipex(verifier.vault, wrong_target.raw + atc)
+    assert verifier.vault.exc.complete(wrong_target.said)
+    with pytest.raises(kering.ValidationError, match='must address'):
+        ipexing.admit(verifier.vault, reviewer, wrong_target.said)
+    assert verifier.vault.db.receipts.get((reviewer.pre, wrong_target.said)) is None
 
     # Bypass the local composer. Authentic issuer evidence is insufficient to
     # authorize a different presenter at the receiving wallet's admission step.
@@ -229,6 +237,9 @@ def test_untargeted_issuer_delivery_does_not_confer_presentation_rights(ipex_vau
     assert not ipexing.presentation_eligible(credential, recipient.pre)
     with pytest.raises(kering.ValidationError):
         ipexing._require_presenter(credential, recipient.pre, issuer.pre)
+    opaque = SerderACDC(sad=dict(credential.sad, a=credential.sad['a']['d']), makify=True)
+    with pytest.raises(kering.ValidationError, match='Disclose the issuee'):
+        ipexing._require_presenter(opaque, issuer.pre, recipient.pre)
 
 
 @pytest.mark.parametrize('profile', ['organizational-unit', 'issuing-agent'])

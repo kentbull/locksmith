@@ -385,6 +385,7 @@ def test_encrypted_root_file_requires_inspected_consent_and_actual_retention(ipe
     assert target.vault.root_copies.active is None
 
 
+@pytest.mark.real_routes
 def test_separate_discloser_prepares_issuer_endorses_and_resumes_exact_files(ipex_vaults, qapp, tmp_path):
     """Four independent roles retain one witnessed stale-proof Grant without delivery consent."""
     from time import sleep
@@ -515,6 +516,112 @@ def test_separate_discloser_prepares_issuer_endorses_and_resumes_exact_files(ipe
     assert verifier.hby.mgr.getRegistryRoot(vh.pre, registry.regk) is None
     assert credentialing.credential(discloser.vault, acdc.said, grant=held)['proof'] == before
     assert credentialing.credential(holder.vault, acdc.said, grant=issuance.said)['proof'] == old_holder
+
+    # Real signed mailbox endpoints carry Grant, query, reply and separately approved Admit.
+    from hio.base import doing
+    from hio.core import http
+    from keri.app import habbing, indirecting, storing
+    from keri.db import openLMDB
+    from locksmith.ui.vault.credentials.activity import CredentialActivityPage
+    from locksmith.ui.vault.credentials.state_openings import StateOpeningsDialog
+    from time import monotonic
+    import socket
+
+    with habbing.openHab(name='s4-mailbox', temp=True, transferable=False,
+                         version=kering.Vrsn_2_0) as (mail_hby, mailbox), \
+            openLMDB(cls=storing.Mailboxer, name='s4-mailbox', temp=True) as mail:
+        with socket.socket() as reserve:
+            reserve.bind(('127.0.0.1', 0))
+            port = reserve.getsockname()[1]
+        doers = indirecting.setupWitness(mail_hby, alias=mailbox.name, mbx=mail,
+            tcpPort=None, httpPort=port, version=kering.Vrsn_2_0)
+        server = next(doer.server for doer in doers if isinstance(doer, http.ServerDoer))
+        server.servant.eha = server.servant.ha
+        url = f'http://127.0.0.1:{server.servant.ha[1]}'
+        scheduler = doing.Doist(doers=doers, tock=.03125)
+        scheduler.enter()
+        try:
+            for app, hab in ((discloser, dh), (verifier, vh)):
+                mail_hby.psr.parse(ims=bytearray(hab.replay(gvrsn=kering.Vrsn_2_0)),
+                                   version=kering.Vrsn_2_0, local=False)
+                routes = (mailbox.replay(gvrsn=kering.Vrsn_2_0)
+                    + mailbox.makeLocScheme(url=url, scheme='http')
+                    + hab.makeEndRole(eid=mailbox.pre, role=kering.Roles.mailbox))
+                for target in (discloser, verifier):
+                    _deliver_ipex(target.vault, routes)
+
+            def pump(until):
+                cutoff = monotonic() + 12
+                while not until() and monotonic() < cutoff:
+                    scheduler.recur()
+                    discloser.qtask.run()
+                    verifier.qtask.run()
+                    qapp.processEvents()
+                    sleep(.01)
+                if not until():
+                    pytest.fail(str(dict(sender=discloser.vault.auxiliary.status(dh.pre, grant),
+                        receiver=verifier.vault.auxiliary.status(vh.pre, grant),
+                        pollers=[(poller.pre, poller.error, poller.connected)
+                                 for app in (discloser, verifier) for poller in app.vault.mbx.pollers],
+                        mailbox={pre + topic: len(list(mail.cloneTopicIter(pre + topic)))
+                                 for pre in (dh.pre, vh.pre) for topic in ('/credential', '/reply')}, url=url)))
+
+            QTest.mouseClick(resume.deliver, Qt.MouseButton.LeftButton)
+            assert 'Delivery authorized' in resume.status.text(), resume.status.text()
+            pump(lambda: verifier.hby.db.epse.get((grant,)) is not None)
+            assert not discloser.vault.auxiliary.operations[(dh.pre, grant)].release_approved
+            assert grant not in discloser.vault.auxiliary._unblind[dh.pre]._operations
+            verifier_parent = QWidget()
+            verifier_parent.app = verifier
+            page = CredentialActivityPage(verifier_parent)
+            page.set_vault_name(verifier.name)
+            request = StateOpeningsDialog(page, vh, grant)
+            request.open()
+            QTest.mouseClick(request.request, Qt.MouseButton.LeftButton)
+            pump(lambda: discloser.vault.auxiliary.status(dh.pre, grant)['phase'] == 'approval_required')
+            assert not verifier.vault.exc.complete(grant)
+            assert verifier.vault.db.accepted.get((acdc.said,)) is None
+            parent.app = discloser
+            presenter_page = CredentialActivityPage(parent)
+            presenter_page.set_vault_name(discloser.name)
+            approve = StateOpeningsDialog(presenter_page, dh, grant)
+            approve.open()
+            QTest.mouseClick(approve.approve, Qt.MouseButton.LeftButton)
+            pump(lambda: verifier.vault.auxiliary.status(vh.pre, grant)['phase'] == 'verified')
+            assert verifier.hby.mgr.getRegistryRoot(vh.pre, registry.regk) is None
+            assert verifier.vault.db.accepted.get((acdc.said,)) is None
+            QTest.mouseClick(request.review, Qt.MouseButton.LeftButton)
+            review = page._response_dialog
+            review.open()
+            QTest.mouseClick(review.admit_button, Qt.MouseButton.LeftButton)
+            pump(lambda: discloser.vault.auxiliary.status(dh.pre, grant)['phase'] == 'admitted')
+            terminal = discloser.hby.db.erpy.get((grant,)).qb64
+            assert discloser.vault.exc.complete(terminal) and verifier.vault.exc.complete(terminal)
+            assert verifier.vault.db.accepted.get((acdc.said,)).grant == grant
+            assert discloser.hby.db.exns.get((grant,)).raw == original.serder.raw
+            assert discloser.hby.db.epsd.get((grant,)).dts == deadline
+            assert credentialing.credential(discloser.vault, acdc.said, grant=held)['proof'] == before
+            assert credentialing.credential(holder.vault, acdc.said, grant=issuance.said)['proof'] == old_holder
+            for pre in (dh.pre, vh.pre):
+                assert list(mail.cloneTopicIter(f'{pre}/reply'))
+                assert list(mail.cloneTopicIter(f'{pre}/credential'))
+        finally:
+            scheduler.exit()
+
+    # Cancellation uses the ordinary production window and grants no proof-release authority.
+    cancel_options = dict(options, message='Cancelled live delivery')
+    cancel_options.pop('grant')
+    cancelled, cancelled_raw, _ = grant_files.prepare(discloser.vault, **cancel_options)
+    cancelled_endorsed = grant_files.endorse(issuer.vault, cancelled_raw, issuer=ih.pre,
+        grant=cancelled, sender=dh.pre, recipient=vh.pre)
+    grant_files.resume(discloser.vault, cancelled_endorsed, grant=cancelled, **cancel_options)
+    cancel_selection = dict(cancel_options)
+    cancel_selection.pop('aid')
+    discloser.vault.auxiliary.deliver_prepared(dh, cancelled, **cancel_selection)
+    discloser.vault.auxiliary.abandon(dh.pre, cancelled)
+    assert not discloser.vault.auxiliary.outgoing
+    assert not discloser.vault.auxiliary.operations[(dh.pre, cancelled)].release_approved
+    assert cancelled not in discloser.vault.auxiliary._unblind[dh.pre]._operations
 
     # Existing instance policy is selected BEFORE a new preparation, never applied to an old deadline.
     policy = discloser.vault.exc.TimeoutPSE

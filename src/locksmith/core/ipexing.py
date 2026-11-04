@@ -119,6 +119,10 @@ def _require_presenter(credential, sender, recipient, *, vault=None):
         raise kering.ValidationError('Original issuer delivery must address the credential issuee')
     if sender in designated:
         return  # Explicit local policy, not an assertion of issuer delegation.
+    _require_disclosed_issuee(credential)
+
+
+def _require_disclosed_issuee(credential):
     # An opaque attribute section cannot establish whether delivery is targeted.
     if credential.iseaid is None and (
             isinstance(credential.sad.get('a'), str)
@@ -264,7 +268,24 @@ def _validate_outgoing_grant(vault, hab, grant):
         state = credentialing.authentication(vault, nest)
         if state['et'] not in ('issued', 'authenticated'):
             raise kering.ValidationError(f"Credential state is {state['et']}, not issued")
-    _require_presenter(grant_credential(vault, grant.said), hab.pre, grant.sad['ri'], vault=vault)
+    _require_grant_presenter(vault, grant)
+
+
+def _require_grant_presenter(vault, grant):
+    """Allow exact native issuer-endorsed scope, never custody as presenter authority."""
+    credential = grant_credential(vault, grant.said)
+    try:
+        _require_presenter(credential, grant.pre, grant.sad['ri'], vault=vault)
+    except kering.ValidationError as policy_error:
+        if grant.pre in (credential.israid, credential.iseaid):
+            raise
+        _require_disclosed_issuee(credential)
+        from locksmith.core import grant_files
+        try:
+            item, _ = grant_files.retained(vault, grant.said)
+            grant_files._context(vault, item)
+        except (ValueError, kering.KeriError) as error:
+            raise policy_error from error
 
 
 def _require_delivery_time(vault, serder):
@@ -805,7 +826,7 @@ def _validate_credential(vault, credential, grant_said):
     actual = credential.schema if isinstance(credential.schema, str) else credential.schema['$id']
     if expected and actual != expected:
         raise kering.ValidationError('The disclosed credential does not match the agreed schema')
-    _require_presenter(credential, grant.pre, grant.sad['ri'], vault=vault)
+    _require_grant_presenter(vault, grant)
     for nest in exchanging.loadParsedNestedSubstreams(vault.hby, grant_said):
         credentialing.validate_schema(vault, nest.serder)
         credentialing.require_registry_evidence(vault, nest.serder, vault.hby.habByPre(grant.sad['ri']))

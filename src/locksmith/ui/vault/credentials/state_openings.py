@@ -8,6 +8,9 @@ from locksmith.ui.vault.credentials.received.accept_grant import AcceptGrantDial
 
 
 OPENING_PHASES = {
+    'sending': 'Sending the selected presentation',
+    'waiting_request': 'Presentation submitted; awaiting a state-opening request',
+    'admitted': 'Recipient Admit verified',
     'request_required': 'State openings needed',
     'approval_required': 'Opening approval needed',
     'waiting': 'Waiting for state openings',
@@ -80,12 +83,14 @@ class StateOpeningsDialog(LocksmithDialog):
         self.summary.setText(
             f"Presenter: {identifier_name(self.vault, status['sender'])}\n"
             f"Recipient: {identifier_name(self.vault, status['recipient'])}\n"
-            f"Credential: {status['credential']}\nPresentation: {self.grant_said}")
+            f"Credential: {status['credential']}\nPresentation: {self.grant_said}\n"
+            f"Original local deadline: {status['deadline']}")
         self.state.setText(OPENING_PHASES[status['phase']])
         self.error.setText(status['error'])
         self.request.setVisible('request_openings' in status['actions'])
         self.approve.setVisible('approve_openings' in status['actions'])
-        self.cancel.setVisible(status['phase'] == 'waiting')
+        self.cancel.setVisible(status['active'] and status['phase'] in (
+            'sending', 'waiting_request', 'waiting', 'approval_required', 'answered'))
         self.delivery.setVisible(status['phase'] == 'answered')
         self.review.setVisible(status['phase'] == 'verified' and status['recipient'] == self.hab.pre)
 
@@ -120,7 +125,7 @@ class StateOpeningsDialog(LocksmithDialog):
     def _cancel(self):
         """Abandon only a running request; closing an unapproved view does nothing."""
         status = self._status()
-        if status is None or status['phase'] != 'waiting':
+        if status is None or not status['active'] or status['phase'] in self.vault.auxiliary.Terminal:
             self.refresh()
             return
         self.vault.auxiliary.abandon(self.hab.pre, self.grant_said)
