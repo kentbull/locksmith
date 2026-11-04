@@ -4,18 +4,13 @@ locksmith.ui.vault.credentials.issued.issue module
 
 Dialog for issuing credentials
 """
-
-import json
-from datetime import date, datetime, timezone
-
-from PySide6.QtCore import Qt, QDateTime, Signal
+from PySide6.QtCore import Qt, QDateTime
 from PySide6.QtGui import QIcon, QIntValidator, QDoubleValidator
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QButtonGroup, QDateTimeEdit, QCheckBox
-from keri import help, kering
-from keri.core import coring, scheming
+from keri import help
+from keri.core import coring
 
-from locksmith.ui import colors
-from locksmith.core import credentialing, ipexing
+from locksmith.core import credentialing
 from locksmith.core.credentialing import IssueCredentialDoer
 from locksmith.core.habbing import list_eligible_local_identifiers
 from locksmith.ui.toolkit.widgets import (
@@ -26,9 +21,6 @@ from locksmith.ui.toolkit.widgets import (
 )
 from locksmith.ui.toolkit.widgets.buttons import LocksmithRadioButton
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, FloatingLabelLineEdit
-from locksmith.ui.vault.credentials.issued.grant import GrantCredentialDialog
-from locksmith.ui.vault.credentials.issued.state_options import StatePublicationOptions
-from locksmith.ui.vault.credentials.presentation import attribute_label, attribute_view, credential_name, identifier_name
 from locksmith.ui.vault.shared.witness_auth_mixin import (
     WitnessAuthenticationPanel,
     witness_auth_dialog_height
@@ -39,9 +31,7 @@ logger = help.ogler.getLogger(__name__)
 
 class IssueCredentialDialog(LocksmithDialog):
     """Dialog for issuing a credential."""
-    credential_created = Signal(str)
-
-    def __init__(self, app, parent=None, *, request_said=None):
+    def __init__(self, app, parent = None):
         """
         Initialize the IssueCredentialDialog.
 
@@ -50,10 +40,6 @@ class IssueCredentialDialog(LocksmithDialog):
             parent: Parent widget
         """
         self.app = app
-        self.vault = app.vault
-        self.request_said = request_said
-        self._issuance_id = None
-        self._schema_supported = False
 
         # Initialize storage for dynamic fields
         self._dynamic_field_widgets = {}
@@ -65,7 +51,7 @@ class IssueCredentialDialog(LocksmithDialog):
 
         # Create content widget
         content_widget = QWidget()
-        content_widget.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
+        content_widget.setStyleSheet("background-color: #F8F9FF;")
         self._issue_content_widget = content_widget
         layout = QVBoxLayout(content_widget)
         layout.setContentsMargins(0, 0, 0, 0)
@@ -81,23 +67,10 @@ class IssueCredentialDialog(LocksmithDialog):
         schema_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         layout.addWidget(schema_label)
 
-        self.schema_dropdown = FloatingLabelComboBox("Schema *")
+        self.schema_dropdown = FloatingLabelComboBox("Schema")
         self.schema_dropdown.setFixedWidth(340)
         self._populate_schema_dropdown()
         layout.addWidget(self.schema_dropdown)
-
-        self.authentication_dropdown = FloatingLabelComboBox("Issuer authentication")
-        self.authentication_dropdown.addItem("Registry", userData='registry')
-        self.authentication_dropdown.addItem("Issuer KEL anchor", userData='anchor')
-        self.authentication_dropdown.addItem("Issuer signature", userData='signature')
-        layout.addWidget(self.authentication_dropdown)
-        self.state_options = StatePublicationOptions(self.vault)
-        layout.addWidget(self.state_options)
-        self.authentication_help = QLabel()
-        self.authentication_help.setWordWrap(True)
-        layout.addWidget(self.authentication_help)
-        self.authentication_dropdown.currentIndexChanged.connect(self._update_authentication_help)
-        self._update_authentication_help()
 
         layout.addSpacing(15)
 
@@ -125,14 +98,14 @@ class IssueCredentialDialog(LocksmithDialog):
         recipient_id_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         layout.addWidget(recipient_id_label)
 
-        self.recipient_dropdown = FloatingLabelComboBox("Recipient *")
+        self.recipient_dropdown = FloatingLabelComboBox("Recipient")
         self.recipient_dropdown.setFixedWidth(400)
         self._populate_recipient_dropdown()
         layout.addWidget(self.recipient_dropdown)
 
         layout.addStretch()
         control_widget = QWidget()
-        control_widget.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
+        control_widget.setStyleSheet("background-color: #F8F9FF;")
         self.control_layout = QVBoxLayout(control_widget)
         self.control_layout.setContentsMargins(0, 0, 0, 0)
         self.control_layout.setSpacing(12)
@@ -186,33 +159,20 @@ class IssueCredentialDialog(LocksmithDialog):
         self.issue_button.clicked.connect(self._on_primary_clicked)
 
         # Connect to vault signal bridge for doer events
-        if hasattr(self.vault, 'signals'):
-            self.vault.signals.doer_event.connect(self._on_doer_event)
+        if hasattr(self.app.vault, 'signals'):
+            self.app.vault.signals.doer_event.connect(self._on_doer_event)
             self._doer_event_connected = True
             logger.info("IssueCredentialDialog: Connected to vault signal bridge")
         else:
             self._doer_event_connected = False
 
         self.finished.connect(self._on_dialog_finished)
-        if request_said:
-            request = self.vault.hby.db.exns.get((request_said,))
-            schema = ipexing.request_schema(request, self.vault)
-            self.schema_dropdown.setCurrentIndex(self.schema_dropdown.combo_box.findData(schema))
-            self.schema_dropdown.setEnabled(False)
-            self.local_radio.setChecked(request.pre in self.vault.hby.prefixes)
-            self.remote_radio.setChecked(request.pre not in self.vault.hby.prefixes)
-            if self.recipient_dropdown.combo_box.findData(request.pre) < 0:
-                self.recipient_dropdown.addItem(identifier_name(self.vault, request.pre), request.pre)
-            self.recipient_dropdown.setCurrentIndex(self.recipient_dropdown.combo_box.findData(request.pre))
-            self.recipient_dropdown.setEnabled(False)
-            self.local_radio.setEnabled(False)
-            self.remote_radio.setEnabled(False)
 
     def _disconnect_doer_event_signal(self):
         if not getattr(self, '_doer_event_connected', False):
             return
         try:
-            self.vault.signals.doer_event.disconnect(self._on_doer_event)
+            self.app.vault.signals.doer_event.disconnect(self._on_doer_event)
         except RuntimeError:
             pass
         self._doer_event_connected = False
@@ -221,15 +181,7 @@ class IssueCredentialDialog(LocksmithDialog):
         self._disconnect_doer_event_signal()
 
     def _on_primary_clicked(self):
-        if not self._current_vault():
-            return
-        if self._workflow_mode == 'issued':
-            view = credentialing.credential(self.vault, self._issued_said)
-            self._grant_dialog = GrantCredentialDialog(self.app, self.parentWidget(), self._issued_said,
-                credential_name(view['schema']), view['sad']['i'])
-            self.close()
-            self._grant_dialog.open()
-        elif self._workflow_mode == "auth":
+        if self._workflow_mode == "auth":
             self._submit_auth_step()
         else:
             self._on_issue()
@@ -241,10 +193,7 @@ class IssueCredentialDialog(LocksmithDialog):
             self.close()
 
     def _show_auth_step(self, hab):
-        self.clear_error(resize_dialog=False)
-        if self._dialog_resize_animation is not None:
-            self._dialog_resize_animation.stop()
-        self._base_height = None
+        self.clear_error()
 
         if self._auth_panel is not None:
             self._auth_panel.setParent(None)
@@ -266,7 +215,6 @@ class IssueCredentialDialog(LocksmithDialog):
         self.issue_button.setText("Authenticate")
         self.issue_button.setEnabled(True)
         self.setFixedSize(700, self._auth_step_height())
-        self._re_enable_scrollbars()
         self.center_on_parent()
 
     def _auth_step_height(self) -> int:
@@ -279,10 +227,7 @@ class IssueCredentialDialog(LocksmithDialog):
         )
 
     def _show_issue_step(self):
-        self.clear_error(resize_dialog=False)
-        if self._dialog_resize_animation is not None:
-            self._dialog_resize_animation.stop()
-        self._base_height = None
+        self.clear_error()
 
         if self._auth_panel is not None:
             self.content_layout.removeWidget(self._auth_panel)
@@ -297,7 +242,6 @@ class IssueCredentialDialog(LocksmithDialog):
         self.issue_button.setText("Issue Credential")
         self.issue_button.setEnabled(True)
         self.setFixedSize(500, 720)
-        self._re_enable_scrollbars()
         self.center_on_parent()
 
     def _set_primary_button_idle(self):
@@ -309,8 +253,6 @@ class IssueCredentialDialog(LocksmithDialog):
             self.issue_button.setText("Issue Credential")
 
     def _submit_auth_step(self):
-        if not self._current_vault():
-            return
         if self._auth_panel is None:
             self._show_issue_step()
             return
@@ -326,21 +268,6 @@ class IssueCredentialDialog(LocksmithDialog):
         self.cancel_button.setEnabled(False)
         self._complete_issuance(codes=codes)
 
-    def _current_vault(self):
-        if self.app.vault is self.vault and not getattr(self.vault, 'closed', False):
-            return True
-        self.show_error("This vault is closed")
-        return False
-
-    def _update_authentication_help(self, _index=None):
-        """Update authentication explanation and applicable registry capabilities."""
-        self.state_options.set_registry(self.authentication_dropdown.currentData() == 'registry')
-        self.authentication_help.setText({
-            'registry': 'A registry records credential status, including revocation.',
-            'anchor': 'A KEL anchor remains verifiable after issuer key rotation.',
-            'signature': 'For a transferable issuer, this signature requires the current signing keys.',
-        }[self.authentication_dropdown.currentData()])
-
     def _populate_schema_dropdown(self):
         """Populate the schema dropdown with loaded schemas from the vault."""
         self.schema_dropdown.clear()
@@ -348,9 +275,9 @@ class IssueCredentialDialog(LocksmithDialog):
 
         try:
             # Get all schemas from the database
-            for (said,), schemer in self.vault.hby.db.schema.getTopItemIter():
-                issuer_pre = self.vault.db.issuers.get(keys=(said,))
-                if not issuer_pre or self.vault.hby.habByPre(issuer_pre) is None:
+            for (said,), schemer in self.app.vault.hby.db.schema.getTopItemIter():
+                issuer_pre = self.app.vault.db.issuers.get(keys=(said,))
+                if not issuer_pre or self.app.vault.hby.habByPre(issuer_pre) is None:
                     continue
 
                 sed = schemer.sed
@@ -377,14 +304,16 @@ class IssueCredentialDialog(LocksmithDialog):
         try:
             if self.local_radio.isChecked():
                 for identifier in list_eligible_local_identifiers(self.app):
-                    display_text = identifier_name(self.vault, identifier['prefix'])
+                    display_text = f"{identifier['alias']} ({identifier['prefix']})"
                     self.recipient_dropdown.addItem(display_text, userData=identifier['prefix'])
             else:
                 # Populate with remote identifiers
-                remote_ids = self.vault.org.list()
+                remote_ids = self.app.vault.org.list()
                 for remote_id in remote_ids:
+                    alias = remote_id.get('alias', 'Unknown')
                     pre = remote_id.get('id', '')
-                    display_text = identifier_name(self.vault, pre)
+                    # Format: "Alias (prefix)"
+                    display_text = f"{alias} ({pre})"
                     self.recipient_dropdown.addItem(display_text, userData=pre)
 
         except Exception as e:
@@ -394,8 +323,7 @@ class IssueCredentialDialog(LocksmithDialog):
     def _on_recipient_type_changed(self):
         """Handle recipient type radio button selection changes."""
         # Refresh the recipient dropdown when type changes
-        if self._current_vault():
-            self._populate_recipient_dropdown()
+        self._populate_recipient_dropdown()
 
     def _parse_schema_fields(self, schema_said: str) -> list[dict]:
         """
@@ -414,7 +342,7 @@ class IssueCredentialDialog(LocksmithDialog):
         """
         try:
             # Get schema from database using SAID
-            schemer = self.vault.hby.db.schema.get(keys=(schema_said,))
+            schemer = self.app.vault.hby.db.schema.get(keys=(schema_said,))
             if not schemer:
                 logger.error(f"Schema {schema_said} not found")
                 self.show_error(f"Schema not found: {schema_said[:20]}...")
@@ -423,21 +351,35 @@ class IssueCredentialDialog(LocksmithDialog):
             schema = schemer.sed
             props = schema.get('properties', {})
 
-            definitions = credentialing.attribute_schemas(schema)
-            self._aggregate = 'A' in props and 'a' not in props
-            self._schema_supported = True
+            attribute_definition = props.get('a', {})
+            candidates = attribute_definition.get('oneOf', [attribute_definition])
+            attributes_obj = next((item for item in candidates
+                                   if isinstance(item, dict) and item.get('type') == 'object'), None)
+            if attributes_obj is None:
+                self.show_error("Schema has no attribute properties for this form")
+                return []
+
+            # Get properties and required list
+            properties = attributes_obj.get('properties', {})
+            required_fields = set(attributes_obj.get('required', []))
+
+            # Filter and build field definitions
             field_defs = []
-            if self._aggregate:
-                for index, definition in enumerate(definitions):
-                    field = self._field_definition(str(index), definition, True)
-                    field['section'] = 'A'
-                    field_defs.append(field)
-            else:
-                definition = definitions[0]
-                for name, prop in definition.get('properties', {}).items():
-                    if name not in ('d', 'i'):
-                        field_defs.append(self._field_definition(
-                            name, prop, name in definition.get('required', [])))
+            excluded_fields = {'d', 'i', 'dt', 'u'}
+
+            for prop_name, prop_def in properties.items():
+                if prop_name in excluded_fields:
+                    continue
+
+                field_def = {
+                    'name': prop_name,
+                    'description': prop_def.get('description', prop_name),
+                    'type': prop_def.get('type', 'string'),
+                    'format': prop_def.get('format'),
+                    'required': prop_name in required_fields,
+                    'const': prop_def.get('const', None)
+                }
+                field_defs.append(field_def)
 
             logger.info(f"Parsed {len(field_defs)} fields from schema {schema_said}")
             return field_defs
@@ -447,42 +389,218 @@ class IssueCredentialDialog(LocksmithDialog):
             self.show_error(f"Failed to parse schema fields: {str(e)}")
             return []
 
-    @staticmethod
-    def _field_definition(name, prop, required):
-        detail = credentialing.schema_detail(prop) or credentialing.schema_detail(prop, 'array') or prop
-        definition = dict(name=name, description=attribute_label(name, detail),
-                          type=detail.get('type', 'string'), format=detail.get('format'),
-                          required=required, const=detail.get('const'),
-                          minLength=detail.get('minLength', 0), schema=detail)
-        # Older schemas describe timestamps without a JSON Schema format.
-        description = detail.get('description', '')
-        if definition['type'] == 'string' and not definition['format']:
-            if 'RFC-3339' in description or 'ISO-8601' in description:
-                definition.update(input_format='date' if 'MBZ' in description else 'datetime',
-                                  hint=('Use YYYY-MM-DD.' if 'MBZ' in description
-                                        else 'Use YYYY-MM-DD HH:MM in UTC.'))
-            elif name == 'dt':
-                definition['format'] = 'date-time'
-        return definition
+    def _parse_edge_requirements(self, schema_said: str) -> list[dict]:
+        """
+        Parse schema edge requirements for chained credentials.
 
-    def _parse_rules_from_schema(self, schema_said):
-        if self._rules_widget is None:
-            return None
-        return self._get_field_value(*self._rules_widget)
+        Args:
+            schema_said: SAID of the schema to parse
 
-    @staticmethod
-    def _requires_input(field_def: dict) -> bool:
-        """Mark inputs whose empty value would fail the credential schema."""
-        if not field_def['required'] or field_def['type'] in ('object', 'boolean') or field_def['name'] == 'u':
-            return False
-        if field_def['type'] not in ('string', 'array'):
-            return True
-        empty = '' if field_def['type'] == 'string' else []
+        Returns:
+            List of edge requirement dictionaries with keys:
+            - name: edge property name
+            - description: edge label
+            - schema_said: SAID of required credential schema
+        """
         try:
-            scheming.JSONSchema().verify_json(schema=field_def['schema'], raw=json.dumps(empty).encode())
-        except kering.ValidationError:
-            return True
-        return False
+            # Get schema from database using SAID
+            schemer = self.app.vault.hby.db.schema.get(keys=(schema_said,))
+            if not schemer:
+                logger.error(f"Schema {schema_said} not found")
+                # Don't show error here - _parse_schema_fields already handles this
+                return []
+
+            schema = schemer.sed
+            props = schema.get('properties', {})
+
+            # Navigate to e.oneOf array
+            if 'e' not in props or 'oneOf' not in props['e']:
+                logger.debug("Schema has no 'e.oneOf' structure (no edge requirements)")
+                return []
+
+            one_of = props['e']['oneOf']
+
+            edge_requirements = []
+
+            # Process all object types in oneOf array
+            for item in one_of:
+                if not isinstance(item, dict) or item.get('type') != 'object':
+                    continue
+
+                # Get properties of this edge block
+                edge_properties = item.get('properties', {})
+
+                # Iterate through properties (skip 'd')
+                for prop_name, prop_def in edge_properties.items():
+                    if prop_name == 'd':
+                        continue
+
+                    # This should be a nested object with an 's' property
+                    if not isinstance(prop_def, dict) or prop_def.get('type') != 'object':
+                        continue
+
+                    nested_props = prop_def.get('properties', {})
+
+                    # Look for 's' property with const constraint
+                    if 's' in nested_props:
+                        s_def = nested_props['s']
+                        schema_const = s_def.get('const')
+
+                        if schema_const:
+                            edge_req = {
+                                'name': prop_name,
+                                'description': prop_def.get('description', prop_name),
+                                'schema_said': schema_const
+                            }
+                            edge_requirements.append(edge_req)
+                            logger.debug(f"Found edge requirement: {prop_name} -> schema {schema_const}")
+
+            logger.info(f"Parsed {len(edge_requirements)} edge requirements from schema {schema_said}")
+            return edge_requirements
+
+        except Exception as e:
+            logger.exception(f"Error parsing edge requirements: {e}")
+            self.show_error(f"Failed to parse chained credential requirements: {str(e)}")
+            return []
+
+    def _parse_rules_from_schema(self, schema_said: str) -> dict:
+        """
+        Parse schema and extract rules block for credential issuance.
+
+        Args:
+            schema_said: SAID of the schema to parse
+
+        Returns:
+            Dictionary representing the rules block with const values
+        """
+        try:
+            # Get schema from database using SAID
+            schemer = self.app.vault.hby.db.schema.get(keys=(schema_said,))
+            if not schemer:
+                logger.error(f"Schema {schema_said} not found")
+                return {}
+
+            schema = schemer.sed
+            props = schema.get('properties', {})
+
+            # Navigate to r.oneOf array
+            if 'r' not in props:
+                logger.debug("Schema has no 'r' property (no rules)")
+                return {}
+
+            r_prop = props['r']
+
+            # Check if r has oneOf
+            if 'oneOf' not in r_prop:
+                logger.debug("Schema 'r' property has no 'oneOf' structure")
+                return {}
+
+            one_of = r_prop['oneOf']
+
+            # Find the object type in the oneOf array
+            rules_obj = None
+            for item in one_of:
+                if isinstance(item, dict) and item.get('type') == 'object':
+                    rules_obj = item
+                    break
+
+            if not rules_obj:
+                logger.debug("No object type found in r.oneOf array")
+                return {}
+
+            # Get properties of the rules object
+            rules_properties = rules_obj.get('properties', {})
+
+            # Build the rules block (exclude 'd' property)
+            rules_block = {'d': ''}
+            for prop_name, prop_def in rules_properties.items():
+                if prop_name == 'd':
+                    continue
+
+                # Recursively extract const values from nested structure
+                extracted = self._extract_rules_block(prop_def)
+                if extracted:
+                    rules_block[prop_name] = extracted
+
+            _, rules_block = coring.Saider.saidify(sad=rules_block, label='d')
+            logger.info(f"Parsed rules block with {len(rules_block)} rules from schema {schema_said}")
+            return rules_block
+
+        except Exception as e:
+            logger.exception(f"Error parsing rules from schema: {e}")
+            self.show_error(f"Failed to parse schema rules: {str(e)}")
+            return {}
+
+    def _extract_rules_block(self, prop_def: dict) -> dict | str | None:
+        """
+        Recursively extract rules block structure from schema property definition.
+
+        Traverses nested objects and extracts 'const' values.
+
+        Args:
+            prop_def: Property definition from schema
+
+        Returns:
+            Extracted rules structure (dict, string, or None)
+        """
+        # If this property has a const value, return it directly
+        if 'const' in prop_def:
+            return prop_def['const']
+
+        # If this property is an object, recursively process its properties
+        if prop_def.get('type') == 'object' and 'properties' in prop_def:
+            result = {}
+            for nested_name, nested_def in prop_def['properties'].items():
+                extracted = self._extract_rules_block(nested_def)
+                if extracted is not None:
+                    result[nested_name] = extracted
+
+            return result if result else None
+
+        # If no const or nested properties, return None
+        return None
+
+    def _get_credentials_for_schema(self, schema_said: str) -> list[dict]:
+        """Return active wallet credentials that use the requested schema."""
+        result = []
+        for item in credentialing.credentials(self.app.vault):
+            schema = item['sad']['s']
+            said = schema.get('$id') if isinstance(schema, dict) else schema
+            if said != schema_said or item['status']['et'] != 'issued':
+                continue
+            credential_said = item['sad']['d']
+            title = (item.get('schema') or {}).get('title', 'Unknown Schema')
+            result.append({'said': credential_said,
+                           'display_name': f"{title} ({credential_said[:15]}...)"})
+        return result
+
+    def _create_edge_dropdown(self, edge_req: dict) -> FloatingLabelComboBox:
+        """
+        Create a dropdown for selecting an edge credential.
+
+        Args:
+            edge_req: Edge requirement dict with name, description, schema_said
+
+        Returns:
+            FloatingLabelComboBox: Dropdown widget populated with matching credentials
+        """
+        # Add asterisk to indicate required field
+        label = f"{edge_req['description']} *"
+
+        dropdown = FloatingLabelComboBox(label)
+        dropdown.setFixedWidth(400)
+
+        # Add placeholder
+        dropdown.addItem("Select a credential...")
+
+        # Get credentials for this schema
+        credentials = self._get_credentials_for_schema(edge_req['schema_said'])
+
+        # Populate dropdown
+        for cred in credentials:
+            dropdown.addItem(cred['display_name'], userData=cred['said'])
+
+        return dropdown
 
     def _create_field_widget(self, field_def: dict) -> QWidget:
         """
@@ -495,77 +613,12 @@ class IssueCredentialDialog(LocksmithDialog):
             QWidget: Appropriate input widget for the field type
         """
         field_type = field_def['type']
-        field_format = field_def.get('input_format', field_def.get('format'))
+        field_format = field_def.get('format')
         label = field_def['description']
 
-        needs_input = self._requires_input(field_def)
-        if needs_input:
+        # Add asterisk to label if required
+        if field_def['required']:
             label = f"{label} *"
-
-        if field_type == 'object':
-            container = QWidget()
-            layout = QVBoxLayout(container)
-            layout.setContentsMargins(0, 0, 0, 0)
-            heading = QLabel(label)
-            heading.setWordWrap(True)
-            layout.addWidget(heading)
-            definition = field_def.get('schema', {})
-            container.fields = {}
-            container.include = None
-            if not field_def['required']:
-                container.include = QCheckBox('Include ' + field_def['description'])
-                layout.addWidget(container.include)
-            container.generated = {}
-            for name, prop in definition.get('properties', {}).items():
-                if name == 'i' and field_def.get('section') == 'A':
-                    container.generated[name] = self.recipient_dropdown.currentData()
-                    self.recipient_dropdown.currentIndexChanged.connect(
-                        lambda *_, container=container: container.generated.update(
-                            i=self.recipient_dropdown.currentData()))
-                    layout.addWidget(QLabel('Subject: selected recipient'))
-                    continue
-                if name in ('d', 'u'):
-                    container.generated[name] = prop.get('const', '' if name == 'd' else coring.Noncer().qb64)
-                    continue
-                child = self._field_definition(name, prop, name in definition.get('required', []))
-                child['section'] = field_def.get('section')
-                if child['section'] == 'e' and name == 'n':
-                    widget = FloatingLabelComboBox(child['description'])
-                    widget.addItem('Choose a credential', '')
-                    schema_pin = definition.get('properties', {}).get('s', {}).get('const')
-                    for view in credentialing.credentials(self.vault):
-                        schema = view['sad']['s']
-                        schema = schema if isinstance(schema, str) else schema['$id']
-                        if view['status']['et'] in ('issued', 'authenticated') and (not schema_pin or schema_pin == schema):
-                            widget.addItem(credential_name(view['schema']) + ' · ' + view['sad']['d'][:8], view['sad']['d'])
-                else:
-                    widget = (attribute_view(child['description'], prop['const'], prop) if 'const' in prop
-                              else self._create_field_widget(child))
-                container.fields[name] = (widget, child)
-                layout.addWidget(widget)
-                if container.include is not None and 'const' not in prop:
-                    widget.setEnabled(False)
-                    container.include.toggled.connect(widget.setEnabled)
-            if field_def.get('section') == 'e' and 'n' in container.fields and 's' in container.fields:
-                selector = container.fields['n'][0]
-                schema_widget, schema_field = container.fields['s']
-                if 'const' not in schema_field['schema']:
-                    schema_widget.setEnabled(False)
-                    def selected(*_):
-                        said = selector.currentData()
-                        if said:
-                            schema = credentialing.credential(self.vault, said)['sad']['s']
-                            schema_widget.setText(schema if isinstance(schema, str) else schema['$id'])
-                        else:
-                            schema_widget.setText('')
-                    selector.currentIndexChanged.connect(selected)
-            return container
-
-        if field_def['schema'].get('enum'):
-            widget = FloatingLabelComboBox(label)
-            for value in field_def['schema']['enum']:
-                widget.addItem(str(value), value)
-            return widget
 
         # Date-time fields
         if field_type == 'string' and field_format == 'date-time':
@@ -574,17 +627,17 @@ class IssueCredentialDialog(LocksmithDialog):
             widget.setCalendarPopup(True)
             widget.setDateTime(QDateTime.currentDateTime())
             widget.setMinimumHeight(50)
-            widget.setStyleSheet(f"""
-                QDateTimeEdit {{
-                    border: 1px solid {colors.BORDER_NEUTRAL};
+            widget.setStyleSheet("""
+                QDateTimeEdit {
+                    border: 1px solid #CCCCCC;
                     border-radius: 6px;
                     padding: 12px;
                     font-size: 14px;
-                    background-color: {colors.BACKGROUND_CONTENT};
-                }}
-                QDateTimeEdit:focus {{
-                    border: 2px solid {colors.PRIMARY};
-                }}
+                    background-color: #F8F9FF;
+                }
+                QDateTimeEdit:focus {
+                    border: 2px solid #F57B03;
+                }
             """)
 
             # Wrap in container with label
@@ -594,7 +647,7 @@ class IssueCredentialDialog(LocksmithDialog):
             container_layout.setSpacing(4)
 
             label_widget = QLabel(label)
-            label_widget.setStyleSheet(f"font-weight: bold; font-size: 12px; color: {colors.TEXT_SECONDARY};")
+            label_widget.setStyleSheet("font-weight: bold; font-size: 12px; color: #636466;")
             container_layout.addWidget(label_widget)
             container_layout.addWidget(widget)
 
@@ -618,22 +671,22 @@ class IssueCredentialDialog(LocksmithDialog):
         # Boolean fields
         elif field_type == 'boolean':
             widget = QCheckBox(label)
-            widget.setStyleSheet(f"""
-                QCheckBox {{
+            widget.setStyleSheet("""
+                QCheckBox {
                     font-size: 14px;
                     spacing: 8px;
-                }}
-                QCheckBox::indicator {{
+                }
+                QCheckBox::indicator {
                     width: 20px;
                     height: 20px;
-                    border: 2px solid {colors.BORDER_NEUTRAL};
+                    border: 2px solid #CCCCCC;
                     border-radius: 4px;
-                    background-color: {colors.BACKGROUND_CONTENT};
-                }}
-                QCheckBox::indicator:checked {{
-                    background-color: {colors.PRIMARY};
-                    border-color: {colors.PRIMARY};
-                }}
+                    background-color: #F8F9FF;
+                }
+                QCheckBox::indicator:checked {
+                    background-color: #F57B03;
+                    border-color: #F57B03;
+                }
             """)
             return widget
 
@@ -652,7 +705,7 @@ class IssueCredentialDialog(LocksmithDialog):
             container_layout.setSpacing(4)
 
             label_widget = QLabel(label)
-            label_widget.setStyleSheet(f"font-weight: bold; font-size: 12px; color: {colors.TEXT_SECONDARY};")
+            label_widget.setStyleSheet("font-weight: bold; font-size: 12px; color: #636466;")
             container_layout.addWidget(label_widget)
             container_layout.addWidget(widget)
 
@@ -664,13 +717,6 @@ class IssueCredentialDialog(LocksmithDialog):
         else:
             widget = FloatingLabelLineEdit(label)
             widget.setFixedWidth(400)
-            suffix = ' *' if needs_input else ''
-            metrics = widget.label.fontMetrics()
-            visible_label = metrics.elidedText(field_def['description'], Qt.TextElideMode.ElideRight,
-                                               widget.width() - 32 - metrics.horizontalAdvance(suffix))
-            widget.setPlaceholderText(visible_label + suffix)
-            widget.setToolTip(label)
-            widget.line_edit.setAccessibleName(label)
             return widget
 
     def _generate_dynamic_fields(self, schema_said: str):
@@ -691,9 +737,11 @@ class IssueCredentialDialog(LocksmithDialog):
         field_defs = self._parse_schema_fields(schema_said)
 
         # Parse edge requirements
-        edge_reqs = []
-        self._edge_widget = self._rules_widget = None
+        edge_reqs = self._parse_edge_requirements(schema_said)
 
+        if not field_defs and not edge_reqs:
+            logger.warning(f"No fields or edges to generate for schema {schema_said}")
+            return
 
         # Start adding fields to the control layout
         # First add some space
@@ -705,10 +753,6 @@ class IssueCredentialDialog(LocksmithDialog):
             fields_label = QLabel("Credential Attributes")
             fields_label.setStyleSheet("font-weight: bold; font-size: 14px;")
             self.control_layout.addWidget(fields_label)
-            field_help = QLabel('Fields marked * need a value. All other text fields may be left blank.')
-            field_help.setWordWrap(True)
-            field_help.setFixedWidth(400)
-            self.control_layout.addWidget(field_help)
 
             self.control_layout.addSpacing(15)
 
@@ -720,14 +764,6 @@ class IssueCredentialDialog(LocksmithDialog):
 
                 widget = self._create_field_widget(field_def)
                 self.control_layout.addWidget(widget)
-                if hint := field_def.get('hint'):
-                    help_label = QLabel(hint)
-                    help_label.setWordWrap(True)
-                    help_label.setFixedWidth(400)
-                    help_label.setStyleSheet(f'font-size: 12px; color: {colors.TEXT_SECONDARY};')
-                    self.control_layout.addWidget(help_label)
-                    widget.setToolTip(hint)
-                    widget.line_edit.setAccessibleDescription(hint)
                 self.control_layout.addSpacing(10)
 
                 # Store reference with field name as key
@@ -736,34 +772,31 @@ class IssueCredentialDialog(LocksmithDialog):
                     'field_def': field_def
                 }
 
-            def needs_value(widget, definition):
-                if 'const' in definition['schema']:
-                    return False
-                if definition['type'] == 'object':
-                    return any(needs_value(child, field) for child, field in widget.fields.values())
-                return self._requires_input(definition)
-
-            if not any(needs_value(info['widget'], info['field_def'])
-                       for info in self._dynamic_field_widgets.values()):
-                field_help.setText('All text fields below may be left blank.')
-
             # Add spacing after attribute fields
             self.control_layout.addSpacing(15)
 
-        schema = self.vault.hby.db.schema.get((schema_said,)).sed
-        for name, label in (('e', 'Credential links'), ('r', 'Rules')):
-            prop = schema.get('properties', {}).get(name)
-            if prop is None or credentialing.schema_detail(prop) is None:
-                continue
-            definition = self._field_definition(name, prop, name in schema.get('required', []))
-            definition['description'] = label
-            definition['section'] = name
-            widget = self._create_field_widget(definition)
-            self.control_layout.addWidget(widget)
-            if name == 'e':
-                self._edge_widget = (widget, definition)
-            else:
-                self._rules_widget = (widget, definition)
+        # Add chained credentials section if there are edge requirements
+        if edge_reqs:
+            # Add section header
+            edges_label = QLabel("Chained Credentials")
+            edges_label.setStyleSheet("font-weight: bold; font-size: 14px;")
+            self.control_layout.addWidget(edges_label)
+
+            self.control_layout.addSpacing(15)
+
+            # Generate and add edge dropdowns
+            for edge_req in edge_reqs:
+                dropdown = self._create_edge_dropdown(edge_req)
+                self.control_layout.addWidget(dropdown)
+
+                # Store reference with edge name as key
+                self._edge_dropdowns[edge_req['name']] = {
+                    'dropdown': dropdown,
+                    'edge_req': edge_req
+                }
+
+            # Add spacing after edge dropdowns
+            self.control_layout.addSpacing(15)
 
         logger.info(f"Generated {len(self._dynamic_field_widgets)} dynamic fields and {len(self._edge_dropdowns)} edge dropdowns for schema {schema_said}")
 
@@ -792,9 +825,7 @@ class IssueCredentialDialog(LocksmithDialog):
 
         # Reset storage
         self._dynamic_field_widgets = {}
-        self._const_fields_values = {}
         self._edge_dropdowns = {}
-        self._edge_widget = self._rules_widget = None
         self.control_layout.setSpacing(0)
 
         logger.debug("Cleared dynamic fields and edge dropdowns")
@@ -808,9 +839,6 @@ class IssueCredentialDialog(LocksmithDialog):
         """
         # Clear any previous errors
         self.clear_error()
-        if not self._current_vault():
-            return
-        self._schema_supported = False
 
         # Skip if invalid selection
         if index <= 0:
@@ -825,23 +853,6 @@ class IssueCredentialDialog(LocksmithDialog):
         if not schema_said:
             logger.warning("No SAID found for selected schema")
             return
-
-        schemer = self.vault.hby.db.schema.get(keys=(schema_said,))
-        properties = schemer.sed.get('properties', {})
-        requires_registry = 'rd' in schemer.sed.get('required', [])
-        permits_registry = 'rd' in properties or schemer.sed.get('additionalProperties', True)
-        issuer = self.vault.hby.habByPre(self.vault.db.issuers.get(keys=(schema_said,)))
-        modes = self.authentication_dropdown.combo_box
-        for index in range(modes.count()):
-            mode = modes.itemData(index)
-            enabled = permits_registry if mode == 'registry' else not requires_registry
-            if mode == 'anchor':
-                enabled = enabled and issuer is not None and issuer.kever.prefixer.transferable
-            modes.model().item(index).setEnabled(enabled)
-        if not modes.model().item(modes.currentIndex()).isEnabled():
-            preferred = ('registry' if requires_registry else
-                         'anchor' if modes.model().item(modes.findData('anchor')).isEnabled() else 'signature')
-            modes.setCurrentIndex(modes.findData(preferred))
 
         # Generate fields for this schema
         self._generate_dynamic_fields(schema_said)
@@ -859,33 +870,14 @@ class IssueCredentialDialog(LocksmithDialog):
             Extracted value (str, int, float, bool, or None)
         """
         field_type = field_def['type']
-        field_format = field_def.get('input_format', field_def.get('format'))
-
-        if isinstance(widget, FloatingLabelComboBox):
-            return widget.currentData()
-
-        if field_type == 'object':
-            if widget.include is not None and not widget.include.isChecked():
-                return None
-            result = dict(widget.generated)
-            for name, (child, definition) in widget.fields.items():
-                value = (definition['schema']['const'] if 'const' in definition['schema']
-                         else IssueCredentialDialog._get_field_value(child, definition))
-                if value is not None and (value != '' or definition['required']):
-                    result[name] = value
-                if definition['required'] and value is None:
-                    raise ValueError(f"{definition['description']} is required")
-                if (isinstance(value, str) and (value or definition['required'])
-                        and len(value) < definition.get('minLength', 0)):
-                    raise ValueError(f"{definition['description']} needs at least {definition['minLength']} characters")
-            return result
+        field_format = field_def.get('format')
 
         # Date-time fields (wrapped in container)
         if field_type == 'string' and field_format == 'date-time':
             if hasattr(widget, 'input_widget'):
                 # Extract from QDateTimeEdit
                 dt = widget.input_widget.dateTime()
-                return dt.toUTC().toString(Qt.DateFormat.ISODateWithMs)
+                return dt.strftime("%b %d, %Y %I:%M %p")  # ISO 8601 format
             return None
 
         # Array fields (wrapped in container)
@@ -916,25 +908,7 @@ class IssueCredentialDialog(LocksmithDialog):
         # String fields (FloatingLabelLineEdit)
         else:
             if hasattr(widget, 'text'):
-                value = widget.text().strip()
-                if value and field_def.get('input_format') == 'date':
-                    try:
-                        parsed = date.fromisoformat(value)
-                        if parsed.isoformat() != value:
-                            raise ValueError
-                    except ValueError:
-                        raise ValueError('Enter a valid date in YYYY-MM-DD format.') from None
-                    # SEDI uses a date-time with the time set to zero (MBZ).
-                    return f'{value}T00:00:00.000000+00:00'
-                if value and field_def.get('input_format') == 'datetime':
-                    try:
-                        parsed = datetime.strptime(value, '%Y-%m-%d %H:%M')
-                        if parsed.isoformat(sep=' ', timespec='minutes') != value:
-                            raise ValueError
-                    except ValueError:
-                        raise ValueError('Enter a valid date and time in YYYY-MM-DD HH:MM format (UTC).') from None
-                    return parsed.replace(tzinfo=timezone.utc).isoformat(timespec='microseconds')
-                return value
+                return widget.text().strip()
             return None
 
     def _extract_credential_attributes(self) -> dict:
@@ -959,30 +933,40 @@ class IssueCredentialDialog(LocksmithDialog):
             value = self._get_field_value(widget, field_def)
 
             # Only include non-empty values
-            if value is not None and (value != '' or (field_def['required'] and field_name != 'u')):
+            if value is not None and value != '':
                 attributes[field_name] = value
 
-        if self._aggregate:
-            blocks = []
-            definitions = credentialing.attribute_schemas(
-                self.vault.hby.db.schema.get((self.schema_dropdown.currentData(),)).sed)
-            for index, definition in enumerate(definitions):
-                block = attributes[str(index)]
-                blocks.append(block)
-            return blocks
         return attributes
 
-    def _extract_edge_credentials(self):
-        if self._edge_widget is None:
-            return None
-        return self._get_field_value(*self._edge_widget)
+    def _extract_edge_credentials(self) -> dict:
+        """
+        Extract selected edge credential SAIDs from dropdowns.
+
+        Returns:
+            dict: Edge credentials with edge names as keys and credential SAIDs as values
+        """
+        edges = {}
+
+        if not hasattr(self, '_edge_dropdowns'):
+            return edges
+
+        for edge_name, edge_info in self._edge_dropdowns.items():
+            dropdown = edge_info['dropdown']
+            edge_req = edge_info['edge_req']
+
+            # Get selected credential SAID from dropdown userData
+            current_index = dropdown.currentIndex()
+            if current_index > 0:  # Skip placeholder at index 0
+                cred_said = dropdown.itemData(current_index)
+                if cred_said:
+                    edges[edge_name] = {'cred_said': cred_said, 'schema_said': edge_req['schema_said']}
+
+        return edges
 
     def _on_issue(self):
         """Handle Issue Credential button click."""
         # Clear any previous errors
         self.clear_error()
-        if not self._current_vault():
-            return
 
         # Validate fields
         if not self._validate_fields():
@@ -992,13 +976,13 @@ class IssueCredentialDialog(LocksmithDialog):
         schema_index = self.schema_dropdown.currentIndex()
         schema_said = self.schema_dropdown.itemData(schema_index)
 
-        issuer_pre = self.vault.db.issuers.get(keys=(schema_said,))
-        hab = self.vault.hby.habByPre(issuer_pre) if issuer_pre else None
+        issuer_pre = self.app.vault.db.issuers.get(keys=(schema_said,))
+        hab = self.app.vault.hby.habByPre(issuer_pre) if issuer_pre else None
         if hab is None:
             self.show_error("Select a local issuer for this schema first")
             return
 
-        if hab.kever.wits and self.authentication_dropdown.currentData() != 'signature':
+        if hab.kever.wits:
             self._show_auth_step(hab)
             return
 
@@ -1024,9 +1008,6 @@ class IssueCredentialDialog(LocksmithDialog):
         self.recipient_dropdown.style().polish(self.recipient_dropdown)
 
         failed_fields = []
-        if not self._schema_supported:
-            self.show_error("This schema has no supported expanded attribute definition")
-            return False
 
         # Validate schema selection
         if self.schema_dropdown.currentIndex() <= 0:
@@ -1048,29 +1029,15 @@ class IssueCredentialDialog(LocksmithDialog):
                 field_def = field_info['field_def']
                 widget = field_info['widget']
 
+                # Only validate required fields
+                if not field_def['required']:
+                    continue
+
                 # Get value based on widget type
-                try:
-                    value = self._get_field_value(widget, field_def)
-                except (ValueError, TypeError) as error:
-                    self.show_error(f"{field_def['description']}: {error}")
-                    self.scroll_area.ensureWidgetVisible(widget)
-                    return False
+                value = self._get_field_value(widget, field_def)
 
                 # Check if empty
-                invalid = field_def['required'] and value is None
-                if isinstance(value, str) and (value or field_def['required']):
-                    invalid |= len(value) < field_def['minLength']
-                if field_name == 'u' and value == '':
-                    invalid = False  # The issuer generates a nonce when none is supplied.
-                elif value is not None and (value != '' or field_def['required']):
-                    try:
-                        scheming.JSONSchema().verify_json(schema=field_def['schema'], raw=json.dumps(value).encode())
-                    except kering.ValidationError as error:
-                        detail = str(error).splitlines()[0].removeprefix('Credential validation exception: ')
-                        self.show_error(f"{field_def['description']}: {detail}")
-                        self.scroll_area.ensureWidgetVisible(widget)
-                        return False
-                if invalid:
+                if value is None or value == '' or (isinstance(value, str) and not value.strip()):
                     failed_fields.append(field_def['description'])
 
                     # Set error state on widget
@@ -1079,17 +1046,26 @@ class IssueCredentialDialog(LocksmithDialog):
                         widget.style().unpolish(widget)
                         widget.style().polish(widget)
 
-        for section in (self._edge_widget, self._rules_widget):
-            if section is None:
-                continue
-            widget, definition = section
-            try:
-                value = self._get_field_value(widget, definition)
-                if value is not None:
-                    scheming.JSONSchema().verify_json(schema=definition['schema'], raw=json.dumps(value).encode())
-            except (ValueError, TypeError, kering.ValidationError) as error:
-                self.show_error(f"{definition['description']}: {error}")
-                return False
+        # Validate edge credential selections (all are required)
+        # Checks truthiness of self._edge_dropdowns to prevent dropping into this block when self._edge_dropdowns == {}
+        if hasattr(self, '_edge_dropdowns') and self._edge_dropdowns:
+            chained = False
+            for edge_name, edge_info in self._edge_dropdowns.items():
+                dropdown = edge_info['dropdown']
+
+                # Check if a credential is selected (index 0 is placeholder)
+                if dropdown.currentIndex() > 0:
+                    chained = True
+                    break
+
+            if not chained:
+                failed_fields.append("At least one chained credential is required")
+                for edge_name, edge_info in self._edge_dropdowns.items():
+                    dropdown = edge_info['dropdown']
+                    # Set error state on dropdown
+                    dropdown.setProperty("error", True)
+                    dropdown.style().unpolish(dropdown)
+                    dropdown.style().polish(dropdown)
 
         if failed_fields:
             field_text = "field" if len(failed_fields) == 1 else "fields"
@@ -1107,39 +1083,15 @@ class IssueCredentialDialog(LocksmithDialog):
             event_type: Type of event
             data: Event data dictionary
         """
-        if self.app.vault is not self.vault or getattr(self.vault, 'closed', False):
-            self._disconnect_doer_event_signal()
-            return
-        if (doer_name != 'IssueCredentialDoer' or self._issuance_id is None
-                or data.get('issuance_id') != self._issuance_id):
-            return
         logger.debug(f"IssueCredentialDialog received doer_event: {doer_name} - {event_type}")
 
         # Handle credential issuance success
-        if event_type == "credential_issued":
-            self._issuance_id = None
+        if doer_name == "IssueCredentialDoer" and event_type == "credential_issued":
             logger.info(f"Credential issued successfully: {data.get('credential_said')}")
-            self._issued_said = data['credential_said']
-            if self.request_said:
-                self.credential_created.emit(self._issued_said)
-                self.accept()
-                return
-            self._workflow_mode = 'issued'
-            self.schema_dropdown.setEnabled(False)
-            self.authentication_dropdown.setEnabled(False)
-            self.local_radio.setEnabled(False)
-            self.remote_radio.setEnabled(False)
-            self.recipient_dropdown.setEnabled(False)
-            self.control_layout.parentWidget().setEnabled(False)
-            self.issue_button.setText('Grant…')
-            self.issue_button.setEnabled(True)
-            self.cancel_button.setText('Close')
-            self.cancel_button.setEnabled(True)
-            self.show_success('Credential created. Choose Grant to send it, or close to send it later.')
+            self.close()
 
         # Handle credential issuance failure
-        elif event_type == "credential_issuance_failed":
-            self._issuance_id = None
+        elif doer_name == "IssueCredentialDoer" and event_type == "credential_issuance_failed":
             error_msg = data.get('error', 'Unknown error')
             logger.error(f"Credential issuance failed: {error_msg}")
 
@@ -1147,21 +1099,6 @@ class IssueCredentialDialog(LocksmithDialog):
             self.show_error(f"Failed to issue credential: {error_msg}")
 
     def _complete_issuance(self, codes=None):
-        """Schedule issuance from the reviewed form and optional witness ``codes``.
-
-        Recheck an originating Apply before authoring. Read the schema, target,
-        attributes, edges and explicit registry-state options from controls;
-        the vault owns the resulting doer and reports its completion by signal."""
-        if not self._current_vault():
-            return
-        if self.request_said:
-            request = self.vault.hby.db.exns.get((self.request_said,))
-            if ('Offer' not in ipexing.responses(self.vault, request)
-                    or self.vault.db.issuers.get((ipexing.request_schema(request, self.vault),)) != request.sad['ri']):
-                self._set_primary_button_idle()
-                self.show_error(ipexing.expiry_error(self.vault, request)
-                                or 'This request has changed. Return to Activity to review it.')
-                return
         # Get selected values
         schema_index = self.schema_dropdown.currentIndex()
         schema_said = self.schema_dropdown.itemData(schema_index)
@@ -1179,6 +1116,9 @@ class IssueCredentialDialog(LocksmithDialog):
         rules = self._parse_rules_from_schema(schema_said) or None
 
         logger.info(f"Issuing credential with schema {schema_said} to recipient {recipient_pre}")
+        logger.info(f"Credential attributes: {attributes}")
+        logger.info(f"Edge credentials: {edges}")
+        logger.info(f"Rules block: {rules}")
 
         try:
             # Create and start IssueCredentialDoer
@@ -1190,12 +1130,9 @@ class IssueCredentialDialog(LocksmithDialog):
                 edges=edges,
                 rules=rules,
                 codes=codes,
-                authentication=self.authentication_dropdown.currentData(),
-                signal_bridge=self.vault.signals if hasattr(self.vault, 'signals') else None,
-                **self.state_options.selection()
+                signal_bridge=self.app.vault.signals if hasattr(self.app.vault, 'signals') else None
             )
-            self._issuance_id = doer.issuance_id
-            self.vault.extend([doer])
+            self.app.vault.extend([doer])
 
             logger.info(f"IssueCredentialDoer started for schema {schema_said}")
 

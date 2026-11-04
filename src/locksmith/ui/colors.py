@@ -114,5 +114,3 @@ BLACK = "#000000"
 # Toolbar Colors
 # =============================================================================
 TOOLBAR_DARK = "#1A252C"  # Dark toolbar button background
-TOOLBAR_HOVER = "#34495E"
-TEXT_TOOLBAR = "#383838"
