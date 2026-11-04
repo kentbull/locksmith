@@ -383,3 +383,176 @@ def test_encrypted_root_file_requires_inspected_consent_and_actual_retention(ipe
     target = ipex_vaults('existing-root-holder', bran='0123456789abcdefghijk')
     assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
     assert target.vault.root_copies.active is None
+
+
+def test_separate_discloser_prepares_issuer_endorses_and_resumes_exact_files(ipex_vaults, qapp, tmp_path):
+    """Four independent roles retain one witnessed stale-proof Grant without delivery consent."""
+    from time import sleep
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QLabel, QWidget
+    from keri.core import SerderKERI, messagize
+    from keri.help import helping
+    from locksmith.core import grant_files, root_copying
+    from locksmith.db.basing import IssuedCredential
+    from locksmith.ui.vault.credentials.grant_files import GrantFilesDialog
+    from test_auxiliary import pending_issuance
+    from test_keri_v2_compat import _deliver_ipex
+
+    issuer, holder, ih, hh, registrar, registry, acdc, issuance, atc, seal = pending_issuance(ipex_vaults)
+    io, ho = issuer.vault.auxiliary, holder.vault.auxiliary
+    io.begin_dh(ih, issuance, atc)
+    _, _, raw, _ = io.outgoing.popleft()
+    _deliver_ipex(holder.vault, raw)
+    ho.approve_dh(hh, issuance.said)
+    _, _, raw, _ = io.outgoing.popleft()
+    _deliver_ipex(holder.vault, raw)
+    _, _, raw, _ = ho.outgoing.popleft()
+    _deliver_ipex(issuer.vault, raw)
+    root = issuer.hby.mgr.getRegistryRoot(ih.pre, registry.regk)
+    first, event = registrar.issue(registry, acdc, salt=root.qb64)
+    seal(event)
+    issuer.vault.db.issued.pin((acdc.said,), IssuedCredential(acdc.raw.decode(), first.qb64,
+        event.said, messagize(acdc, bonds=[first.data], framed=False).decode(), registry_mode='derived'))
+    io.process()
+    ho.process()
+    ipexing.admit(holder.vault, hh, issuance.said)
+
+    discloser = ipex_vaults('s4-discloser', bran='0123456789abcdefghijk')
+    verifier = ipex_vaults('s4-verifier', bran='0123456789abcdefghijk')
+    dh, vh = discloser.hby.makeHab('discloser'), verifier.hby.makeHab('verifier')
+    for target in (discloser, verifier):
+        for wit in ih.kever.wits:
+            _deliver_ipex(target.vault, b''.join(issuer.hby.db.clonePreIter(wit, gvrsn=kering.Vrsn_2_0)))
+        _deliver_ipex(target.vault, evidence.clone(issuer.vault, registry.regk))
+    for source in (issuer, holder, discloser, verifier):
+        for target in (issuer, holder, discloser, verifier):
+            if source is not target:
+                _introduce(source, target)
+    held = _grant(holder, discloser, hh, dh, acdc.said, from_grant=issuance.said)
+    selected = root_copying.inspect(issuer.vault.root_copies.export(acdc.said, ih.pre, dh.pre))
+    held_event, opening = root_copying.held_openings(discloser.vault, acdc.said, held)[0]
+    discloser.vault.root_copies.receive(selected, dh.pre, acdc.said, held, held_event, opening)
+    assert discloser.hby.mgr.getRegistryRoot(dh.pre, registry.regk).qb64 == root.qb64
+
+    # A genuinely newer witnessed BUP is accepted; the source admission keeps its old proof.
+    _, later = registrar.issue(registry, acdc, salt=root.qb64)
+    seal(later, recipients=(holder.vault, discloser.vault, verifier.vault))
+    before = credentialing.credential(discloser.vault, acdc.said, grant=held)['proof']
+    old_holder = credentialing.credential(holder.vault, acdc.said, grant=issuance.said)['proof']
+    with pytest.raises(kering.ValidationError):
+        ipexing.grant(discloser.vault, dh, acdc.said, vh.pre, from_grant=held)
+    assert not (discloser.hby.cf.get() or {}).get('presentation_policy')
+    parent = QWidget()
+    prepare = GrantFilesDialog(discloser, parent, acdc.said)
+    prepare.open()
+    prepare.recipient.setCurrentIndex(prepare.recipient.combo_box.findData(vh.pre))
+    prepare.message.setText('Exact issuer consent')
+    path = tmp_path / 'prepared.cesr'
+    prepare.write_file(path)
+    original = grant_files.inspect(path.read_bytes())
+    grant = original.serder.said
+    _, deadline = grant_files.retained(discloser.vault, grant)
+    assert 'Original native deadline' in prepare.status.text()
+    assert discloser.hby.db.kramTMSC.get((dh.pre, grant, grant)) is None
+    assert not discloser.vault.exc.complete(grant)
+    prepare.close()
+    options = dict(grant=grant, aid=dh.pre, said=acdc.said, source=held,
+                   recipient=vh.pre, message='Exact issuer consent')
+    with pytest.raises(ValueError, match='issuer endorsement'):
+        grant_files.resume(discloser.vault, path.read_bytes(), **options)
+
+    wrong = issuer.hby.makeHab('wrong-issuer')
+    with pytest.raises(ValueError, match='local issuer'):
+        grant_files.endorse(issuer.vault, path.read_bytes(), issuer=wrong.pre,
+                           grant=grant, sender=dh.pre, recipient=vh.pre)
+    endorser = GrantFilesDialog(issuer, parent)
+    endorser.open()
+    endorser.identity.setCurrentIndex(endorser.identity.combo_box.findData(ih.pre))
+    endorser.inspect_file(path)
+    assert 'Unauthenticated file claims' in endorser.status.text()
+    material = ' '.join(label.text() for label in endorser.preview.findChildren(QLabel))
+    assert 'role' in material.lower() and 'holder' in material
+    assert issuer.hby.db.exns.get((grant,)) is None and issuer.hby.db.epse.get((grant,)) is None
+    output = tmp_path / 'endorsed.cesr'
+    endorser.write_file(output)
+    assert issuer.vault.exc.routes['/ipex/grant'].endorsement is None
+    endorsed = grant_files.inspect(output.read_bytes())
+    assert endorsed.serder.raw == original.serder.raw and grant_files.nodes(endorsed) == grant_files.nodes(original)
+    assert {pre.qb64 for pre, _, _, _ in endorsed.tsgs} == {dh.pre, ih.pre}
+
+    # Refuse edits and removal of original authentication before importing candidate bytes.
+    removed = grant_files.inspect(output.read_bytes())
+    removed.tsgs = [group for group in removed.tsgs if group[0].qb64 != dh.pre]
+    altered = grant_files.inspect(output.read_bytes())
+    altered.serder = SerderKERI(sad=dict(altered.serder.sad, a=dict(altered.serder.sad['a'], m='changed')), makify=True)
+    changed_nest = grant_files.inspect(output.read_bytes())
+    changed_nest.nests[0].bsqs = []
+    for raw in (grant_files.wire(removed), grant_files.wire(altered), grant_files.wire(changed_nest)):
+        with pytest.raises(ValueError, match='authentication additions'):
+            grant_files.resume(discloser.vault, raw, **options)
+    resume = GrantFilesDialog(discloser, parent, acdc.said)
+    resume.open()
+    resume.mode.setCurrentIndex(resume.mode.combo_box.findData('resume'))
+    resume.recipient.setCurrentIndex(resume.recipient.combo_box.findData(vh.pre))
+    resume.message.setText('Exact issuer consent')
+    resume.preparation.setCurrentIndex(resume.preparation.combo_box.findData(grant))
+    resume.inspect_file(output)
+    QTest.mouseClick(resume.action, Qt.MouseButton.LeftButton)
+    assert 'registered locally' in resume.status.text(), resume.status.text()
+    final, final_deadline = grant_files.retained(discloser.vault, grant)
+    assert final_deadline == deadline and final.serder.raw == original.serder.raw
+    assert grant_files.nodes(final) == grant_files.nodes(original)
+    cache = discloser.hby.db.kramTMSC.get((dh.pre, grant, grant))
+    assert cache.rdt and cache.mdt == cache.xdt == original.serder.stamp
+    with pytest.raises(ValueError, match='already registered'):
+        grant_files.resume(discloser.vault, output.read_bytes(), **options)
+    assert not list(discloser.vault.db.outbox.getTopItemIter())
+    assert not discloser.vault.auxiliary.operations
+    assert discloser.hby.db.erpy.get((grant,)) is None
+    assert not discloser.vault.exc.complete(grant)
+    assert verifier.hby.db.exns.get((grant,)) is None and verifier.hby.db.epse.get((grant,)) is None
+    assert verifier.hby.mgr.getRegistryRoot(vh.pre, registry.regk) is None
+    assert credentialing.credential(discloser.vault, acdc.said, grant=held)['proof'] == before
+    assert credentialing.credential(holder.vault, acdc.said, grant=issuance.said)['proof'] == old_holder
+
+    # Existing instance policy is selected BEFORE a new preparation, never applied to an old deadline.
+    policy = discloser.vault.exc.TimeoutPSE
+    assert policy == 300
+    discloser.vault.exc.TimeoutPSE = 1
+    expiry_options = dict(options, message='Short-policy refusal')
+    expiry_options.pop('grant')
+    try:
+        expired, expired_raw, cutoff = grant_files.prepare(discloser.vault, **expiry_options)
+    finally:
+        discloser.vault.exc.TimeoutPSE = policy
+    expired_endorsed = grant_files.endorse(issuer.vault, expired_raw, issuer=ih.pre,
+        grant=expired, sender=dh.pre, recipient=vh.pre)
+    sleep(max(0, (helping.fromIso8601(cutoff) - helping.nowUTC()).total_seconds()) + 0.02)
+    with pytest.raises(ValueError, match='original native deadline'):
+        grant_files.resume(discloser.vault, expired_endorsed, grant=expired, **expiry_options)
+    assert discloser.hby.db.epsd.get((expired,)).dts == cutoff
+    assert discloser.hby.db.erpy.get((expired,)) is None
+
+    # A live 300-second preparation does not imply acceptance under a shorter real KRAM lag.
+    config = discloser.hby.cf.get()
+    config['kram']['caches'] = {'~': (0, 150, 150, 86400000, 300000, 3600000, 86400000)}
+    discloser.hby.cf.put(config)
+    discloser.vault.kramer.changeConfig(discloser.hby.cf)
+    effective = discloser.hby.db.kramCTYP.get('~')
+    assert effective.sl == effective.ll == 150
+    lag_options = dict(expiry_options, message='Aged KRAM refusal')
+    lagged, lag_raw, lag_deadline = grant_files.prepare(discloser.vault, **lag_options)
+    lag_endorsed = grant_files.endorse(issuer.vault, lag_raw, issuer=ih.pre,
+        grant=lagged, sender=dh.pre, recipient=vh.pre)
+    stamp = grant_files.inspect(lag_raw).serder.stamp
+    sleep(max(0, (helping.fromIso8601(stamp) - helping.nowUTC()).total_seconds()
+              + (effective.d + effective.sl) / 1000) + 0.02)
+    assert helping.nowUTC() < helping.fromIso8601(lag_deadline)
+    with pytest.raises(ValueError, match='KRAM registration was not accepted'):
+        grant_files.resume(discloser.vault, lag_endorsed, grant=lagged, **lag_options)
+    assert discloser.hby.db.kramTMSC.get((dh.pre, lagged, lagged)) is None
+    assert discloser.hby.db.epsd.get((lagged,)).dts == lag_deadline
+    discloser.close_vault()
+    QTest.mouseClick(resume.action, Qt.MouseButton.LeftButton)
+    assert 'vault is closed' in resume.status.text()

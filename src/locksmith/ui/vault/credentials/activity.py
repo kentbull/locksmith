@@ -139,6 +139,9 @@ class CredentialActivityPage(BaseListPage):
         self.setAutoFillBackground(True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
+        self.endorse_file = LocksmithInvertedButton('Endorse presentation file…')
+        self.endorse_file.clicked.connect(self._endorse_file)
+        layout.addWidget(self.endorse_file)
         self.registry_requests = QWidget()
         self.registry_layout = QVBoxLayout(self.registry_requests)
         self.registry_layout.setContentsMargins(0, 0, 0, 0)
@@ -268,6 +271,11 @@ class CredentialActivityPage(BaseListPage):
         self._detail_dialog.register_collapsible_section(protocol)
         close.clicked.connect(self._detail_dialog.close)
         self._show_details(None)
+
+    def _endorse_file(self):
+        from locksmith.ui.vault.credentials.grant_files import GrantFilesDialog
+        self._grant_files_dialog = GrantFilesDialog(self.app, self)
+        self._grant_files_dialog.open()
 
     @property
     def table(self):
