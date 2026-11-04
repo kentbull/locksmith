@@ -394,7 +394,8 @@ class Auxiliary(doing.DoDoer):
         """Finish only after the native owner reports an authenticated reply."""
         if not operation.protocol.complete(operation.xid):
             return
-        operation.protocol.finish(operation.xid)
+        if not operation.protocol.finish(operation.xid):
+            return
         if self.vault.exc.complete(operation.grant.said):
             ipexing._validate_grant_graph(self.vault, operation.grant.said)
             self._changed(operation, 'verified')
