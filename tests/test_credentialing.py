@@ -927,6 +927,7 @@ def test_interrupted_anchored_preparation_does_not_repeat_kel_action(ipex_vaults
 def test_witnessed_five_stage_exchange_over_http_and_reopen(ipex_vaults, anchored):
     import socket
     from keri.app import habbing, indirecting, storing
+    from keri.core import Parser
     from keri.db import openLMDB
     from keri.peer import exchanging
     from locksmith.core.receipting import LocksmithReceiptor
@@ -966,7 +967,27 @@ def test_witnessed_five_stage_exchange_over_http_and_reopen(ipex_vaults, anchore
             _deliver_ipex(holder_app.vault, identifier_introduction(issuer))
             schema = _load_schema(issuer_app, issuer)
             holder_app.hby.db.schema.pin((schema.said,), schema)
-            credential = _issue(issuer_app, schema, holder, authentication='signature')
+            # Issue with real witness receipts; the holder starts without registry history.
+            def issue(edges=None):
+                previous = {view['sad']['d'] for view in credentialing.credentials(issuer_app.vault)}
+                issuance = credentialing.IssueCredentialDoer(
+                    issuer_app, schema.said, holder.pre, {'LEI': '254900OPPU84GM83MG36'}, edges=edges)
+                issuer_app.qtask.extend([issuance])
+                deadline = monotonic() + 10
+                while not issuance.done and monotonic() < deadline:
+                    server.recur()
+                    issuer_app.qtask.run()
+                    sleep(0.001)
+                assert issuance.done
+                issued, = (view for view in credentialing.credentials(issuer_app.vault)
+                           if view['sad']['d'] not in previous)
+                assert issued['status']['et'] == 'issued'
+                return issued
+
+            issued = issue()
+            credential = issued['sad']['d']
+            registry = issued['sad']['rd']
+            assert holder_app.rgy.store.seqEvent(registry, 0) is None
 
             def receive(app, said):
                 deadline = monotonic() + 15
@@ -987,6 +1008,16 @@ def test_witnessed_five_stage_exchange_over_http_and_reopen(ipex_vaults, anchore
             receive(issuer_app, agree)
             grant = ipexing.respond(issuer_app.vault, agree, 'Grant', credential_said=credential)
             receive(holder_app, grant)
+            assert holder_app.rgy.store.cloneTel(registry) == issuer_app.rgy.store.cloneTel(registry)
+            # Public support authenticates history without broadcasting its state openings.
+            public = []
+            for _, _, raw in mailbox.cloneTopicIter(topic=f'{holder.pre}/credential'):
+                parsed, = Parser(version=kering.Vrsn_2_0).parse(ims=bytearray(raw), processive=False)
+                if parsed.serder.ilk in ('rip', 'bup'):
+                    assert not parsed.bsqs and not parsed.bsss
+                    assert parsed.sscs
+                    public.append(parsed.serder.raw)
+            assert b''.join(public) == issuer_app.rgy.store.cloneTel(registry)
             admit, _ = ipexing.admit(holder_app.vault, holder, grant, send=True)
             receive(issuer_app, admit.said)
             assert holder_app.vault.db.accepted.get((credential,)).admit == admit.said
@@ -1012,6 +1043,28 @@ def test_witnessed_five_stage_exchange_over_http_and_reopen(ipex_vaults, anchore
             holder = holder_app.hby.habByName('holder')
             followup = ipexing.start(holder_app.vault, holder, issuer.pre, 'Apply', schema=schema.said)
             receive(issuer_app, followup)
+            issuer = issuer_app.hby.habByName('issuer')
+            # A later graph must carry both its own registry and its source credential's registry.
+            graph = issue(edges={'source': {'n': credential, 's': schema.said, 'o': 'NI2I'}})
+            assert holder_app.rgy.store.seqEvent(graph['sad']['rd'], 0) is None
+            topic = f'{holder.pre}/credential'
+            before_graph = len(list(mailbox.cloneTopicIter(topic=topic)))
+            graph_grant, atc = ipexing.grant(issuer_app.vault, issuer, graph['sad']['d'], holder.pre)
+            ipexing.submit(issuer_app.vault, issuer, graph_grant, atc)
+            receive(holder_app, graph_grant.said)
+            public = {}
+            for _, _, raw in mailbox.cloneTopicIter(topic=topic, fn=before_graph):
+                parsed, = Parser(version=kering.Vrsn_2_0).parse(ims=bytearray(raw), processive=False)
+                event = parsed.serder
+                if event.ilk in ('rip', 'bup'):
+                    assert parsed.sscs and not parsed.bsqs and not parsed.bsss
+                    regid = event.said if event.ilk == 'rip' else event.sad['rd']
+                    public.setdefault(regid, bytearray()).extend(event.raw)
+            assert set(public) == {registry, graph['sad']['rd']}
+            for regid, raw in public.items():
+                assert raw == holder_app.rgy.store.cloneTel(regid) == issuer_app.rgy.store.cloneTel(regid)
+            assert exchanging.serializeMessage(holder_app.hby, graph_grant.said) == exchanging.serializeMessage(
+                issuer_app.hby, graph_grant.said)
         finally:
             server.exit()
 
