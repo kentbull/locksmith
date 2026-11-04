@@ -9,7 +9,7 @@ from itertools import islice
 from hio.base import doing
 from hio.core.http import httping
 from keri import help, kering
-from keri.acdc import acdcmap, ipexing
+from keri.acdc import acdcmap, ipexing, chaining
 from keri.app import agenting, forwarding
 from keri.core.kraming import AuthTypes
 from keri.core import Compactor, Prefixer, Saider, SerderACDC, SerderKERI, parsing
@@ -31,21 +31,11 @@ class IpexHandler(ipexing.IpexHandler):
         super().__init__(*args, **kwa)
         self.signals = signals
 
-    def verify(self, serder, attachments=None, nests=None, sscs=None, evidence=None,
-               *, historical=False):
+    def verify(self, serder, attachments=None, nests=None, sscs=None, evidence=None):
         if serder.pvrsn.major != 2 or not ({serder.pre, serder.ked.get('ri')} & self.hby.prefixes):
             return False
-        for nest in nests or []:
-            credential = nest.get('serder') if isinstance(nest, dict) else nest.serder
-            issuer = getattr(credential, 'israid', None)
-            if issuer:
-                try:
-                    # Current-key checks use get(), which does not load disk state.
-                    self.hby.db.kevers[issuer]
-                except KeyError:
-                    pass
         return super().verify(serder, attachments=attachments, nests=nests,
-                              sscs=sscs, evidence=evidence, historical=historical)
+                              sscs=sscs, evidence=evidence)
 
     def handle(self, serder, attachments=None, nests=None, sscs=None):
         if serder.pre not in self.hby.prefixes:
@@ -63,37 +53,28 @@ class UnsupportedDisclosurePlan(kering.ValidationError):
 
 
 def _validate_plan(plan):
-    """Require the maintained flat q.dp profile without rewriting signed history."""
-    legacy = (plan == [[]] or isinstance(plan, list) and plan
-              and isinstance(plan[0], list) and plan[0]
-              and isinstance(plan[0][0], list))
-    if legacy:
-        raise UnsupportedDisclosurePlan(
-            'Historical nested q.dp is unsupported; start a new credential exchange')
-    validator = getattr(ipexing, '_disclosurePathError', None)
-    if validator is None:
-        raise kering.ConfigurationError(
-            'Installed KERIpy does not support the maintained flat q.dp profile')
-    if error := validator(plan):
-        raise UnsupportedDisclosurePlan(f'Unsupported q.dp disclosure plan: {error}')
+    """Require the native one-DAG outer wire value without rewriting history."""
+    if (not isinstance(plan, list) or len(plan) != 1
+            or not ipexing._validDisclosurePath(plan[0])):
+        raise UnsupportedDisclosurePlan('Expected one DAG in q.dp')
     return plan
 
 
 def _message_plan(exn):
-    """Read and validate one message's signed flat q.dp value."""
+    """Read and validate one message's signed one-DAG q.dp value."""
     if exn is None or not isinstance(exn.sad.get('q'), Mapping) or 'dp' not in exn.sad['q']:
         raise UnsupportedDisclosurePlan('The exchange has no explicit q.dp disclosure plan')
     return _validate_plan(exn.sad['q']['dp'])
 
 
 def _resolved_plan(vault, exn):
-    """Resolve empty reply dittos to one earlier non-empty flat plan."""
+    """Resolve empty reply dittos to one earlier non-empty DAG plan."""
     seen = set()
     current = exn
     while current is not None and current.said not in seen:
         seen.add(current.said)
         plan = _message_plan(current)
-        if plan:
+        if plan[0]:
             return plan
         prior = current.sad.get('p', '')
         if not prior:
@@ -107,7 +88,7 @@ def _resolved_plan(vault, exn):
 
 def request_fields(vault, exn):
     """Return the exact origin paths authorized by a supported request chain."""
-    return list(_resolved_plan(vault, exn)[0][2])
+    return list(_resolved_plan(vault, exn)[0][0][2])
 
 
 def presentation_eligible(credential, pre, designated=()):
@@ -191,20 +172,10 @@ def _edge_nodes(sad):
 
 
 def _reachable(hab, pre):
-    """Return whether StreamPoster has a URL for the route it would choose for pre.
-
-    Pinned endsFor also returns revoked roles, and StreamPoster still selects
-    them. A revoked role therefore blocks delivery until it is repaired.
-    """
+    """Use native authorized endpoints and StreamPoster's role preference."""
     ends = hab.endsFor(pre)
     role = next((role for role in (kering.Roles.controller, kering.Roles.agent, kering.Roles.mailbox)
                  if role in ends), kering.Roles.witness)
-    if role != kering.Roles.witness or not (pre in hab.kevers and hab.kevers[pre].wits):
-        # StreamPoster reloads this role, so filtering our copy cannot prevent
-        # delivery to an inactive endpoint. Block the whole selected route.
-        for eid in ends.get(role, {}):
-            if (end := hab.db.ends.get((pre, role, eid))) and not (end.allowed or end.enabled):
-                return False
     return any(urls.get(scheme) for urls in ends.get(role, {}).values()
                for scheme in (kering.Schemes.http, kering.Schemes.https, kering.Schemes.tcp))
 
@@ -226,34 +197,58 @@ def _require_vault(vault, hab=None):
 
 
 def _require_graph_result(result):
-    """Authorize new use only with an explicit current semantic verdict."""
-    if result is None:
-        raise credentialing.RegistryEvidencePending('ACDC v2 graph evaluation is unresolved')
-    if result is not True:
-        raise kering.ValidationError('ACDC v2 graph policy refuses this action')
+    """Interpret the native verdict explicitly; a verdict tuple is always truthy."""
+    if result is not None and result.verdict == chaining.Verdicts.valid:
+        return
+    if result is not None and result.verdict == chaining.Verdicts.unknown and result.retryable:
+        raise credentialing.RegistryEvidencePending(result.reason)
+    raise kering.ValidationError(result.reason if result is not None else 'ACDC v2 graph policy refuses this action')
+
+
+def _require_issued(handler, nests, records):
+    """Application policy requires every disclosed registry factor to say issued."""
+    for nest in nests:
+        if not nest.serder.sad.get('rd'):
+            continue
+        if nest.serder.said not in records:
+            _require_graph_result(handler._verifyIssuerAuthNode(nest.serder, nest, records=records))
+        record = records.get(nest.serder.said)
+        if record is None:
+            raise credentialing.RegistryEvidencePending('Registry factor awaits authenticated state')
+        if record.state != 'issued':
+            raise kering.ValidationError(f'Credential state is {record.state}, not issued')
 
 
 def _validate_selected(vault, origin, artifacts):
-    """Check the exact selected disclosure before the Grant builder signs it."""
-    verification = vault.exc.routes['/ipex/grant'].verification
+    """Native usability check of exact selected bytes before any Grant signing."""
+    handler = vault.exc.routes['/ipex/grant']
+    nests = []
     try:
-        result = verification.evaluateSelected(origin, artifacts=artifacts)
-    except kering.MissingSchemaError as error:
-        raise credentialing.RegistryEvidencePending(f'Missing schema: {error}') from error
-    except kering.MissingChainError as error:
+        for stream in [origin, *artifacts]:
+            ims = bytearray(stream)
+            parsed = parsing.Parser(version=kering.Vrsn_2_0).parse(ims=ims, processive=False)
+            if ims or len(parsed) != 1 or not isinstance(parsed[0].serder, SerderACDC):
+                raise kering.ValidationError('Invalid selected credential evidence')
+            nests.append(parsed[0])
+        graph = handler._walkGraph(nests[0].serder.said, nests, closed=True)
+        if graph is None or not handler._verifyNodeSchemas(*graph):
+            raise kering.ValidationError('Selected credential graph or schema is invalid')
+        records = {}
+        result = handler._evaluateNode(nests[0].serder.said, nodes=graph[0], memo={}, records=records)
+        _require_graph_result(result)
+        _require_issued(handler, nests, records)
+    except (kering.MissingSchemaError, kering.MissingChainError) as error:
         raise credentialing.RegistryEvidencePending(str(error)) from error
-    _require_graph_result(result)
 
 
 def _validate_grant_graph(vault, said):
-    """Reevaluate retained authenticated evidence before a new wallet action."""
+    """Recheck this exact accepted Grant through the native read-only verifier."""
     try:
-        result = vault.exc.routes['/ipex/grant'].verification.evaluateGrant(said)
-    except kering.MissingSchemaError as error:
-        raise credentialing.RegistryEvidencePending(f'Missing schema: {error}') from error
-    except kering.MissingChainError as error:
+        _, nests, result, records = vault.exc.reverifyGrant(said)
+        _require_graph_result(result)
+        _require_issued(vault.exc.routes['/ipex/grant'], nests, records)
+    except (kering.MissingSchemaError, kering.MissingChainError) as error:
         raise credentialing.RegistryEvidencePending(str(error)) from error
-    _require_graph_result(result)
 
 
 def _validate_outgoing_grant(vault, hab, grant):
@@ -309,7 +304,7 @@ def _retain(vault, hab, serder, attachment):
     if not serder.route.startswith('/ipex/'):
         raise ValueError('Expected an IPEX message')
     if not vault.exc.complete(serder.said):
-        prior = vault.hby.db.exns.get((serder.sad['p'],)) if serder.sad['p'] else None
+        prior = vault.hby.db.exns.get((serder.sad.get('p', ''),)) if serder.sad.get('p', '') else None
         if error := expiry_error(vault, prior):
             raise kering.ValidationError(error)
         vault.mbx.parser.parse(ims=bytearray(serder.raw + attachment), local=True,
@@ -385,7 +380,7 @@ def _disclosure_plan(origin, nodes):
         pending.extend((far, prefix + path) for far, path in _edge_nodes(sad))
     if seen != nodes.keys():
         raise kering.ValidationError('Retained evidence contains unrelated credentials')
-    return _validate_plan(plan)
+    return _validate_plan([plan])
 
 
 def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
@@ -442,7 +437,7 @@ def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
         nodes[parsed[0].serder.said] = parsed[0].serder.sad
     plan = _disclosure_plan(credential_said, nodes)
     if disclose:
-        plan[0][2] = list(disclose)
+        plan[0][0][2] = list(disclose)
         _validate_plan(plan)
     return view, list(artifacts.values()), plan, nodes
 
@@ -515,16 +510,16 @@ def _offer_preview(original):
 
 
 def request_schema(exn, vault=None):
-    """Read the origin schema from a supported flat disclosure plan.
+    """Read the origin schema from the native one-DAG disclosure plan.
 
     ``vault`` resolves an empty reply ditto through its exact signed priors.
-    Historical nested plans raise rather than being silently reinterpreted.
+    Retired flat plans raise rather than being silently reinterpreted.
     """
     plan = _resolved_plan(vault, exn) if vault is not None else _message_plan(exn)
-    if not plan:
+    if not plan[0]:
         return None
-    schema, prefix, fields = plan[0]
-    if prefix not in ('', '/') or any(entry[2] for entry in plan[1:]):
+    schema, prefix, fields = plan[0][0]
+    if prefix != '/' or any(entry[2] for entry in plan[0][1:]):
         raise UnsupportedDisclosurePlan(
             'This wallet supports one origin request and node-presence dependencies')
     return schema
@@ -547,7 +542,7 @@ def start(vault, hab, recipient, action, message='', *, schema=None, credential_
     if action == 'Apply':
         if not schema or vault.hby.db.schema.get((schema,)) is None:
             raise ValueError('Choose a loaded schema')
-        plan = _validate_plan([[schema, '/', list(disclose)]])
+        plan = _validate_plan([[[schema, '/', list(disclose)]]])
         exn, atc = ipexing.apply(hab, recipient, message,
                                  modifiers={'dp': plan}, ax=ax,
                                  kind=kering.Kinds.json)
@@ -571,11 +566,11 @@ def expiry_error(vault, exn):
     if exn is None or kramer is None or not kramer.enabled:
         return None
     seen = set()
-    while exn.sad['p']:
+    while exn.sad.get('p', ''):
         if exn.said in seen:
             return None  # Leave incomplete or damaged chains to protocol validation.
         seen.add(exn.said)
-        exn = vault.hby.db.exns.get((exn.sad['p'],))
+        exn = vault.hby.db.exns.get((exn.sad.get('p', ''),))
         if exn is None:
             return None
     # Vault uses one policy for all IPEX routes. The saved opener remains
@@ -613,7 +608,7 @@ def responses(vault, exn):
         case '/ipex/agree':
             return ['Grant', 'Spurn']
         case '/ipex/grant':
-            return ['Admit', 'Spurn'] if not exn.sad['p'] else ['Admit']
+            return ['Admit', 'Spurn'] if not exn.sad.get('p', '') else ['Admit']
     return []
 
 
@@ -651,10 +646,10 @@ def respond(vault, said, action, message='', credential_said=None, *, from_grant
         return exn.said
     _require_route(hab, prior.pre, reply=action != 'Spurn')
     if action in ('Offer', 'Grant'):
-        request = (vault.hby.db.exns.get((prior.sad['p'],))
+        request = (vault.hby.db.exns.get((prior.sad.get('p', ''),))
                    if prior.route == '/ipex/agree' else prior)
         requested = _resolved_plan(vault, request)
-        fields = list(requested[0][2])
+        fields = list(requested[0][0][2])
         view, artifacts, plan, _ = _credential_evidence(vault, credential_said, hab,
             from_grant=from_grant, disclose=fields, refresh=refresh,
             openings=openings, derive=derive, bound_event=bound_event, preview=action == 'Offer')
@@ -671,7 +666,7 @@ def respond(vault, said, action, message='', credential_said=None, *, from_grant
         if schema and schema != actual:
             raise ValueError('The credential does not match the requested schema')
         if schema:
-            plan[0][2] = list(requested[0][2])
+            plan[0][0][2] = list(requested[0][0][2])
         if action == 'Offer':
             preview = SerderACDC(sad=view['sad']) if fields else _offer_preview(view['sad'])
             exn, atc = ipexing.offer(hab, message, preview, apply=prior,
@@ -684,7 +679,7 @@ def respond(vault, said, action, message='', credential_said=None, *, from_grant
             _validate_selected(vault, view['proof'], artifacts)
             link = {'apply': prior} if prior.route == '/ipex/apply' else {'agree': prior}
             exn, atc = ipexing.grant(hab, prior.pre, message, view['proof'], artifacts=artifacts,
-                                    modifiers={'dp': []}, ax=prior.sad['a'].get('ax'),
+                                    modifiers={'dp': [[]]}, ax=prior.sad['a'].get('ax'),
                                     kind=kering.Kinds.json, **link)
     elif action == 'Agree':
         exn, atc = ipexing.agree(hab, message, prior, kind=kering.Kinds.json)
@@ -750,10 +745,10 @@ def exchanges(vault):
     receipts = list(vault.db.receipts.getTopItemIter())
     result, visited = [], set()
     for root in messages.values():
-        if root.sad['p'] in messages:
+        if root.sad.get('p', '') in messages:
             continue
         chain, tip = [], root
-        problem = 'Earlier message is missing.' if root.sad['p'] else ''
+        problem = 'Earlier message is missing.' if root.sad.get('p', '') else ''
         while tip.said not in visited:
             visited.add(tip.said)
             chain.append(tip)
@@ -798,9 +793,9 @@ def _validate_credential(vault, credential, grant_said):
     grant = vault.hby.db.exns.get((grant_said,))
     _resolved_plan(vault, grant)
     _validate_grant_graph(vault, grant_said)
-    prior = vault.hby.db.exns.get((grant.sad['p'],)) if grant.sad['p'] else None
+    prior = vault.hby.db.exns.get((grant.sad.get('p', ''),)) if grant.sad.get('p', '') else None
     if prior and prior.route == '/ipex/agree':
-        prior = vault.hby.db.exns.get((prior.sad['p'],))
+        prior = vault.hby.db.exns.get((prior.sad.get('p', ''),))
     expected = request_schema(prior, vault) if prior else None
     actual = credential.schema if isinstance(credential.schema, str) else credential.schema['$id']
     if expected and actual != expected:
@@ -837,19 +832,16 @@ def _finish_receipt(vault, pre, grant_said, receipt, restore=False):
     exn = vault.hby.db.exns.get((reply.qb64,)) if reply else None
     if (grant is None or grant.route != '/ipex/grant' or grant.sad['ri'] != pre
             or exn is None or exn.route != '/ipex/admit' or exn.pre != pre
-            or exn.sad['ri'] != grant.pre or exn.sad['p'] != grant_said
+            or exn.sad['ri'] != grant.pre or exn.sad.get('p', '') != grant_said
             or (receipt.admit and receipt.admit != exn.said)):
         raise kering.ValidationError('Acceptance preparation is incomplete; a new exchange may be required')
     credential = grant_credential(vault, grant_said)
     if credential.said != receipt.credential:
         raise kering.ValidationError('Acceptance does not match the grant credential')
     stream = exchanging.serializeMessage(vault.hby, exn.said)
-    if receipt.status != 'accepted':
-        accepted = vault.db.accepted.get((credential.said,))
-        # Inventory can commit before the final receipt write is interrupted.
-        if (accepted is None or accepted.grant != grant_said
-                or accepted.admit != exn.said):
-            _validate_credential(vault, credential, grant_said)
+    # Consent plus this exact signed Admit is a historical commitment. Recovery
+    # cannot create a new disclosure or substitute a later Grant's selected view.
+    exchanging.verify(vault.hby, exn)
     receipt.admit = exn.said
     if receipt.send:
         vault.db.outbox.put((exn.said,), IpexSubmission())
@@ -857,10 +849,11 @@ def _finish_receipt(vault, pre, grant_said, receipt, restore=False):
         receipt.status, receipt.error = 'preparing', ''
         vault.db.receipts.pin((pre, grant_said), receipt)
         return exn, stream[exn.size:]
+    receipt.accepted_at = receipt.accepted_at or helping.nowIso8601()
     if receipt.status != 'accepted' or restore:
         # Keep the original inventory provenance when another grant contains C.
         vault.db.accepted.put((credential.said,), AcceptedCredential(grant_said, exn.said,
-                                                                    helping.nowIso8601()))
+                                                                    receipt.accepted_at))
     receipt.accepted_at = receipt.accepted_at or helping.nowIso8601()
     receipt.status, receipt.error = 'accepted', ''
     vault.db.receipts.pin((pre, grant_said), receipt)
@@ -1007,7 +1000,7 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
             if self.serder.route == '/ipex/grant' and self.serder.sad['a'].get('o'):
                 _validate_outgoing_grant(self.vault, self.hab, self.serder)
             if self.serder.route == '/ipex/admit':
-                consent = self.vault.db.receipts.get((self.hab.pre, self.serder.sad['p']))
+                consent = self.vault.db.receipts.get((self.hab.pre, self.serder.sad.get('p', '')))
             if record is None and (consent is None or consent.status != 'preparing'):
                 return
             if record is not None:
@@ -1029,7 +1022,7 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
                     yield from self.receipt(hab, anchor, receiptor, {})
             if consent is not None:
                 accepted = consent.status == 'accepted'
-                _finish_receipt(self.vault, self.hab.pre, self.serder.sad['p'], consent)
+                _finish_receipt(self.vault, self.hab.pre, self.serder.sad.get('p', ''), consent)
                 if consent.status != 'accepted':
                     raise kering.MissingChainError('Witness receipts are still pending for the IPEX anchor')
                 if not accepted:
@@ -1105,7 +1098,7 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
                                                    {'said': self.said, 'error': record.error})
             elif consent is not None and self.vault.db.opened:
                 consent.status, consent.error = 'interrupted', str(ex)
-                self.vault.db.receipts.pin((self.hab.pre, self.serder.sad['p']), consent)
+                self.vault.db.receipts.pin((self.hab.pre, self.serder.sad.get('p', '')), consent)
                 self.vault.signals.emit_doer_event('Ipex', 'preparation_failed',
                                                    {'said': self.said, 'error': str(ex)})
             logger.exception('IPEX submission failed')

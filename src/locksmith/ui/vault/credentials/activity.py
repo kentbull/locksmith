@@ -823,7 +823,7 @@ class ExchangeResponseDialog(LocksmithDialog):
             try:
                 _, artifacts, plan, _ = ipexing._credential_evidence(self.vault, said)
                 requested = ipexing._resolved_plan(self.vault, tip)
-                plan[0][2] = list(requested[0][2])
+                plan[0][0][2] = list(requested[0][0][2])
                 if plan == requested and not artifacts:
                     action = 'Grant'
             except Exception:

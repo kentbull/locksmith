@@ -20,21 +20,21 @@ def _introduce(source, target):
         _deliver_ipex(target.vault, identifier_introduction(hab))
 
 
-def test_historical_nested_disclosure_plan_is_not_reinterpreted(ipex_vaults):
+def test_retired_flat_disclosure_plan_is_not_reinterpreted(ipex_vaults):
     """Keep exact signed history readable as bytes while refusing old q.dp semantics."""
     app = ipex_vaults('historical-nested-plan')
     sender, recipient = app.hby.makeHab(name='sender'), app.hby.makeHab(name='recipient')
     schema = _load_schema(app, sender)
     legacy = eventing.exchange(sender=sender.pre, receiver=recipient.pre,
-        route='/ipex/apply', modifiers={'dp': [[[schema.said, '/', []]]]},
+        route='/ipex/apply', modifiers={'dp': [[schema.said, '/', []]]},
         attributes={'m': 'historical'}, kind=kering.Kinds.json)
     signed = sender.endorse(legacy, last=True, framed=False, gvrsn=kering.Vrsn_2_0)
     exact = bytes(signed)
-    with pytest.raises(ipexing.UnsupportedDisclosurePlan, match='Historical nested q.dp'):
+    with pytest.raises(ipexing.UnsupportedDisclosurePlan, match='one DAG'):
         ipexing.request_schema(legacy)
-    with pytest.raises(ipexing.UnsupportedDisclosurePlan, match='Historical nested q.dp'):
-        ipexing._validate_plan([[]])
-    assert bytes(signed) == exact and legacy.sad['q']['dp'] == [[[schema.said, '/', []]]]
+    with pytest.raises(ipexing.UnsupportedDisclosurePlan, match='one DAG'):
+        ipexing._validate_plan([])
+    assert bytes(signed) == exact and legacy.sad['q']['dp'] == [[schema.said, '/', []]]
 
 
 def test_only_issuee_can_represent_targeted_credential(ipex_vaults):
@@ -69,7 +69,7 @@ def test_only_issuee_can_represent_targeted_credential(ipex_vaults):
     # authorize a different presenter at the receiving wallet's admission step.
     proof = credentialing.credential(verifier.vault, said)['proof']
     replay, atc = acdc_v2_ipexing.grant(reviewer, holder.pre, 'Replay', origin=proof,
-                                modifiers={'dp': [[schema.said, '/', []]]}, kind=kering.Kinds.json)
+                                modifiers={'dp': [[[schema.said, '/', []]]]}, kind=kering.Kinds.json)
     _deliver_ipex(holder_app.vault, replay.raw + atc)
     assert holder_app.vault.exc.complete(replay.said)
     with pytest.raises(kering.ValidationError, match='issuee or original issuer'):
@@ -89,7 +89,7 @@ def test_metadata_offer_binds_rules_before_admission(ipex_vaults, substitute):
     original = credentialing.credential(source.vault, said)
     metadata = acdcmap(israid=issuer.pre, uuid='', schema=schema.said, attribute='', rule=original['sad']['r'])
     offer, atc = acdc_v2_ipexing.offer(issuer, 'Terms', metadata, recp=holder.pre, artifacts=[],
-                              modifiers={'dp': [[schema.said, '/', []]]}, kind=kering.Kinds.json)
+                              modifiers={'dp': [[[schema.said, '/', []]]]}, kind=kering.Kinds.json)
     _deliver_ipex(target.vault, ipexing.prepare(source.vault, issuer, offer, atc))
     agree, atc = acdc_v2_ipexing.agree(holder, 'Agree', offer, kind=kering.Kinds.json)
     _deliver_ipex(source.vault, ipexing.prepare(target.vault, holder, agree, atc))
@@ -101,7 +101,7 @@ def test_metadata_offer_binds_rules_before_admission(ipex_vaults, substitute):
         said = _issue(source, schema, holder, authentication='signature', rules={'d': '', 'terms': 'Agreed terms'})
         _introduce(source, target)
     grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Grant', origin=credentialing.credential(source.vault, said)['proof'],
-                              agree=agree, modifiers={'dp': []}, kind=kering.Kinds.json)
+                              agree=agree, modifiers={'dp': [[]]}, kind=kering.Kinds.json)
     previews = exchanging.loadParsedNestedSubstreams(target.hby, offer.said)
     assert previews, 'Missing retained offer preview'
     assert previews[0].serder.sad['r']['terms'] == 'Agreed terms'
@@ -148,7 +148,7 @@ def test_legacy_linked_offer_can_be_declined_after_reopen(ipex_vaults):
     view, artifacts, _, _ = ipexing._credential_evidence(source.vault, said)
     grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, '', view['proof'], artifacts=artifacts,
                               agree=source.hby.db.exns.get((agree,)),
-                              modifiers={'dp': []}, kind=kering.Kinds.json)
+                              modifiers={'dp': [[]]}, kind=kering.Kinds.json)
     _deliver_ipex(target.vault, grant.raw + atc)
     assert not target.vault.exc.complete(grant.said)
     assert target.vault.db.receipts.get((holder.pre, grant.said)) is None
@@ -197,7 +197,7 @@ def test_admission_validates_linked_schema_and_nested_group_evidence(ipex_vaults
     else:
         grant, atc = ipexing.grant(source.vault, issuer, said, holder.pre)
         stream = ipexing.prepare(source.vault, issuer, grant, atc)
-    assert grant.sad['q']['dp'][1][1] == '/e/group/source/_/'
+    assert grant.sad['q']['dp'][0][1][1] == '/e/group/source/_/'
     _deliver_ipex(target.vault, stream)
     assert not target.vault.exc.complete(grant.said)
     assert target.hby.db.emse.get((grant.said, leaf_schema.said)) is not None
@@ -329,10 +329,8 @@ def test_metadata_offer_distinguishes_public_text_from_staged_rule_disclosure(fo
 
 @pytest.mark.parametrize('revoked_node', ['origin', 'linked'])
 def test_queued_grant_rechecks_acdc_v2_registry_state_before_disclosure(ipex_vaults, monkeypatch, revoked_node):
-    """Refuse delivery when either queued root or linked credential has since been revoked."""
-    from types import SimpleNamespace
+    """Wait when the queued proof cannot open a newer root or linked state event."""
     from hio.base import doing
-    from keri.core import SerderACDC
 
     source, target = ipex_vaults('queued-issuer'), ipex_vaults('queued-holder')
     issuer, holder = source.hby.makeHab(name='issuer'), target.hby.makeHab(name='holder')
@@ -341,23 +339,14 @@ def test_queued_grant_rechecks_acdc_v2_registry_state_before_disclosure(ipex_vau
     _introduce(target, source)
     linked = _issue(source, schema, holder)
     said = _issue(source, schema, holder, edges={'source': {'n': linked, 's': schema.said, 'o': 'NI2I'}})
-    # This isolates current-proof policy. Registry HTTP acceptance and freshness
-    # are tested independently; both heads here have completed that check.
-    heads = {regk: head.qb64 for (regk,), head in source.vault.rgy.baser.heads.getTopItemIter()}
-    source.vault.registry_evidence = SimpleNamespace(
-        observer_url='http://observer.example', errors={},
-        ensure=lambda regk, hab: heads[regk] == source.vault.rgy.store.head(regk).qb64,
-        published=lambda regk: heads[regk] == source.vault.rgy.store.head(regk).qb64)
     grant, atc = ipexing.grant(source.vault, issuer, said, holder.pre)
     ipexing.submit(source.vault, issuer, grant, atc)
     assert source.vault.exc.complete(grant.said)
     revoke = credentialing.RevokeCredentialDoer(source, said if revoked_node == 'origin' else linked)
     doing.Doist(doers=[revoke], tock=0.03125, limit=1).do()
-    record = source.vault.db.issued.get((said if revoked_node == 'origin' else linked,))
-    regk = SerderACDC(raw=record.raw.encode()).regid
-    heads[regk] = source.vault.rgy.store.head(regk).qb64
-    assert source.vault.registry_evidence.ensure(regk, issuer)
-    with pytest.raises(kering.ValidationError):
+    # The saved Grant still has its original opening. A newer blinded event is
+    # unresolved until its exact opening arrives; neither condition permits send.
+    with pytest.raises(credentialing.RegistryEvidencePending, match='openings'):
         ipexing.prepare(source.vault, issuer, grant, atc)
     def forbidden_transport(**kwa):
         pytest.fail('A revoked proof reached network delivery')
@@ -365,7 +354,7 @@ def test_queued_grant_rechecks_acdc_v2_registry_state_before_disclosure(ipex_vau
     sender = ipexing.SendIpexDoer(source.vault, grant.said)
     doing.Doist(doers=[sender], tock=0.03125, limit=1).do()
     outbox = source.vault.db.outbox.get((grant.said,))
-    assert outbox.status == 'blocked'
+    assert outbox.status == 'waiting_evidence'
     assert outbox.attempts == 0
     assert not sender.deeds
 
@@ -385,7 +374,7 @@ def test_graph_use_gate_precedes_signing_consent_and_inventory(ipex_vaults, monk
     _introduce(source, target)
     _introduce(target, source)
     request, request_atc = acdc_v2_ipexing.apply(holder, issuer.pre, 'Request graph',
-        modifiers={'dp': [[schema.said, '/', []], [schema.said, '/e/source/_/', []]]})
+        modifiers={'dp': [[[schema.said, '/', []], [schema.said, '/e/source/_/', []]]]})
     _deliver_ipex(source.vault, request.raw + request_atc)
     error = credentialing.RegistryEvidencePending if failure == 'schema' else kering.ValidationError
 
@@ -407,22 +396,23 @@ def test_graph_use_gate_precedes_signing_consent_and_inventory(ipex_vaults, monk
     grant, atc = acdc_v2_ipexing.grant(issuer, holder.pre, 'Retained graph', view['proof'],
         artifacts=artifacts, modifiers={'dp': plan})
     _deliver_ipex(target.vault, grant.raw + atc)
-    assert target.vault.exc.complete(grant.said)
-    exact = exchanging.serializeMessage(target.hby, grant.said)
-    assert target.vault.exc.routes['/ipex/grant'].verifyAccepted(grant.said, historical=True)
-    with pytest.raises(error):
-        ipexing.admit(target.vault, holder, grant.said)
+    assert not target.vault.exc.complete(grant.said)
     assert target.vault.db.receipts.get((holder.pre, grant.said)) is None
     assert target.vault.db.accepted.get((said,)) is None
     assert target.hby.db.erpy.get((grant.said,)) is None
-    assert exchanging.serializeMessage(target.hby, grant.said) == exact
     if failure == 'relation':
-        assert target.vault.exc.routes['/ipex/grant'].verification.evaluateGrant(grant.said) is False
+        assert target.hby.db.epse.get((grant.said,)) is None
         return
+    assert list(target.hby.db.emse.getTopItemIter(keys=(grant.said,)))
+    original_body, original_sn = grant.raw, issuer.kever.sn
 
-    # Evidence arrives without a Grant replay. Interrupt the real acceptance
-    # commit, then remove the dependency before its final inventory retry.
+    # Native escrow retries after the missing schema arrives, without re-signing.
     target.hby.db.schema.pin((pin.said,), pin)
+    _retry_ipex(target.vault)
+    assert target.vault.exc.complete(grant.said)
+    assert target.hby.db.exns.get((grant.said,)).raw == original_body
+    assert issuer.kever.sn == original_sn
+    exact = exchanging.serializeMessage(target.hby, grant.said)
 
     def interrupted_inventory(*args, **kwa):
         raise RuntimeError('Interrupted inventory commit')
@@ -435,16 +425,12 @@ def test_graph_use_gate_precedes_signing_consent_and_inventory(ipex_vaults, monk
     assert receipt is not None and receipt.status != 'accepted'
     admit_said = target.hby.db.erpy.get((grant.said,)).qb64
     target.hby.db.schema.rem((pin.said,))
-    with pytest.raises(credentialing.RegistryEvidencePending):
-        ipexing.admit(target.vault, holder, grant.said)
-    assert target.vault.db.accepted.get((said,)) is None
-    assert target.hby.db.erpy.get((grant.said,)).qb64 == admit_said
-    target.hby.db.schema.pin((pin.said,), pin)
+    # The consent already produced this exact signed Admit. Finish that historical
+    # commitment without re-signing or granting new disclosure authority.
     admitted, _ = ipexing.admit(target.vault, holder, grant.said)
     assert admitted.said == admit_said
     accepted = target.vault.db.accepted.get((said,))
     assert accepted.grant == grant.said
-    target.hby.db.schema.rem((pin.said,))
     target.close_vault()
     target = ipex_vaults('graph-use-holder')
     holder = target.hby.habByName('holder')

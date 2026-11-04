@@ -1,113 +1,120 @@
-"""Full KEL/TEL service evidence over the vault's borrowed core processors.
+"""Public KEL/TEL transport composed from the vault's native verifiers.
 
-Adapted from KERIpy EvidenceProcessor and public_evidence.Request at 7671c088.
-Network scheduling stays in RegistrySyncDoer; this module neither writes accepted
-rows nor owns stores, a Kramer, or a pruning task.
+Network lifetime belongs to RegistrySyncDoer. Response bodies are independently
+verified; observer timestamps and headers are not protocol authority.
 """
 import json
-from math import isfinite
-from time import monotonic
+from types import SimpleNamespace
 
 from keri import kering
-from keri.acdc.regeventing import Rever
-from keri.app.evidencing import EvidenceProcessor, signedQuery
+from keri.acdc import regeventing
 from keri.app.httping import CESR_CONTENT_TYPE
-from keri.core import Kevery
+from keri.core import (Blinder, BlindState, BoundState, Codens, Counter, Kevery,
+                       Parser, SerderACDC, SerderKERI, query)
 from keri.help import helping
 
 
 def processor(vault):
-    """Return the vault-scoped strict public-evidence adapter.
-
-    Args:
-        vault: Open wallet runtime owning Habery, Regery and optional Kramer.
-
-    Returns:
-        EvidenceProcessor: Borrowed verifier composition, cached for this vault.
-
-    The dedicated strict KEL intake shares the vault's Kramer and stores. It does
-    not relax the existing mailbox policy or create a second maintenance owner.
-    """
+    """Borrow the native Regery and a strict KEL intake sharing the vault Kramer."""
     if getattr(vault, 'evidence', None) is None:
         kvy = Kevery(db=vault.hby.db, lax=False, local=False,
                      kramer=getattr(vault, 'kramer', None))
-        rever = Rever(db=vault.hby.db, reger=vault.rgy.baser)
-        vault.evidence = EvidenceProcessor(vault.hby, kvy=kvy, rever=rever)
+        vault.evidence = SimpleNamespace(kvy=kvy, parser=Parser(
+            kvy=kvy, rgy=vault.rgy, local=False, version=kering.Vrsn_2_0))
     return vault.evidence
 
 
-def receive(vault, regk, raw, headers, *, maximum_age=15.0):
-    """Authenticate a full reply and bind freshness to its exact accepted head.
+def signed_query(hab, route, attributes):
+    """Sign the service request with the selected local habitat."""
+    serder = query(pre=hab.pre, route=route, query=attributes,
+                   stamp=helping.nowIso8601(), version=kering.Vrsn_2_0)
+    return bytes(hab.endorse(serder, last=True, framed=False, gvrsn=kering.Vrsn_2_0))
 
-    Args:
-        vault: Receiver owning verified evidence stores.
-        regk: Requested registry identifier.
-        raw: Complete supporting KEL and framed ACDC v2 registry TEL bytes.
-        headers: Lowercase HTTP header map from the configured observer endpoint.
-        maximum_age: Positive finite maximum receiver observation age in seconds.
 
-    Returns:
-        SerderACDC: Exact verified registry head advertised by this response.
+def clone(vault, regk):
+    """Publish owned accepted history and explicitly public issuance openings.
 
-    Raises:
-        ValidationError: Missing/stale metadata, incomplete/conflicting evidence,
-            or advertised head mismatch. Valid evidence may remain retained even
-            when the response cannot establish freshness.
+    Native TEL cloning stays body-only. Arbitrary held openings and Keeper roots
+    never enter public transport.
     """
-    if not isfinite(maximum_age) or maximum_age <= 0:
-        raise ValueError('Observation age must be positive and finite')
-    if (headers.get('observer-evidence-state') != 'fresh'
-            or headers.get('content-type', '').split(';')[0] != CESR_CONTENT_TYPE):
-        raise kering.ValidationError('Observer evidence is not fresh CESR')
-    remaining(headers, maximum_age=maximum_age)
-    result = processor(vault).ingest(raw)
+    rip = vault.rgy.store.seqEvent(regk, 0)
+    if rip is None or rip.israid not in vault.hby.prefixes:
+        raise kering.ValidationError('Only an owned accepted registry can be published')
+    stream = bytearray()
+    stream.extend(b''.join(vault.hby.db.cloneDelegation(vault.hby.kevers[rip.israid],
+                                                     gvrsn=kering.Vrsn_2_0)))
+    stream.extend(b''.join(vault.hby.db.clonePreIter(rip.israid, gvrsn=kering.Vrsn_2_0)))
+    public = {record.update: record.blinder for _, record in vault.db.issued.getTopItemIter()
+              if record.registry_mode == 'public' and record.update and record.blinder}
+    from locksmith.core.disclosing import opening
+    for raw in vault.rgy.store.cloneTelIter(regk):
+        event = SerderACDC(raw=raw)
+        disclosed = b''
+        if event.said in public:
+            candidate = opening(public[event.said])
+            regeventing.vetBlind(candidate, blid=event.sad['b'])
+            disclosed = Blinder.enclose([candidate])
+        stream.extend(event.raw)
+        stream.extend(Counter.enclose(qb64=disclosed, code=Codens.AttachmentGroup,
+                                      version=kering.Vrsn_2_0))
+    return bytes(stream)
+
+
+def receive(vault, regk, raw, headers):
+    """Independently verify the exact scoped response and its advertised TEL tip.
+
+    The body itself selects the head. No Observer-* header or age claim permits
+    acceptance. Missing KEL, conflicting history, unrelated TEL and rollback fail
+    closed; native dependency escrows remain owned by the vault.
+    """
+    if headers.get('content-type', '').split(';')[0] != CESR_CONTENT_TYPE:
+        raise kering.ValidationError('Registry evidence must be CESR')
+    ims = bytearray(raw)
+    parsed = Parser(version=kering.Vrsn_2_0).parse(ims=ims, processive=False)
+    if ims or not parsed:
+        raise kering.ValidationError('Incomplete registry evidence response')
+    events, openings = [], []
+    for nest in parsed:
+        event = nest.serder
+        if isinstance(event, SerderACDC):
+            if event.ilk not in ('rip', 'bup') or (event.said if event.ilk == 'rip' else event.sad['rd']) != regk:
+                raise kering.ValidationError('Response contains an unrelated registry')
+            events.append(event)
+            supplied = [(clan, values) for clan, groups in ((BlindState, nest.bsqs), (BoundState, nest.bsss))
+                        for values in groups]
+            if supplied:
+                if event.ilk != 'bup' or len(supplied) != 1:
+                    raise kering.ValidationError('Only a BUP may carry one opening')
+                clan, values = supplied[0]
+                candidate = Blinder(data=clan(*values))
+                regeventing.vetBlind(candidate, blid=event.sad['b'])
+                openings.append((event, candidate))
+        elif not isinstance(event, SerderKERI) or event.ilk not in ('icp', 'dip', 'rot', 'drt', 'ixn', 'rct'):
+            raise kering.ValidationError('Response contains unsupported evidence')
+    if not events or [event.sn for event in events] != list(range(len(events))):
+        raise kering.ValidationError('Response requires one complete ordered TEL')
+    processor(vault).parser.parse(ims=bytearray(raw), local=False, version=kering.Vrsn_2_0)
+    processor(vault).kvy.processEscrows()
+    vault.rgy.processEscrows()
+    for event in events:
+        accepted = vault.rgy.store.seqEvent(regk, event.sn)
+        if accepted is None or accepted.said != event.said:
+            raise kering.ValidationError('Registry evidence failed independent verification')
     head = vault.rgy.store.headEvent(regk)
-    if (result['pending'] or result['rejected'] or head is None
-            or head.said != headers.get('observer-registry-head')
-            or result['heads'].get(regk) != head.said):
-        raise kering.ValidationError('Observer evidence failed independent verification')
+    if head is None or head.said != events[-1].said:
+        raise kering.ValidationError('Response head does not match accepted registry head')
+    # Explicit response openings are retained only after exact accepted membership.
+    for event, candidate in openings:
+        vault.rgy.store.putOpening(event.said, candidate)
     return head
 
 
-def remaining(headers, *, maximum_age=15.0):
-    """Return usable observation lifetime without restarting its freshness clock.
-
-    headers contain the configured observer's verified response metadata;
-    maximum_age is the receiver policy in seconds. Invalid, future or stale
-    observations raise ValidationError. Cache callers convert the remainder to
-    a monotonic deadline, retaining the exact source and head independently.
-    """
-    try:
-        age = (helping.nowUTC() - helping.fromIso8601(headers['observer-observed-at'])).total_seconds()
-    except (KeyError, TypeError, ValueError) as ex:
-        raise kering.ValidationError('Observer observation time is invalid') from ex
-    if not 0 <= age <= maximum_age:
-        raise kering.ValidationError('Observer observation is stale or in the future')
-    return maximum_age - age
-
-
 def sync(worker):
-    """Drive one signed full-evidence request through the existing Qt client.
-
-    Args:
-        worker: RegistrySyncDoer owning the finite request and cancellation path.
-
-    Yields:
-        float: Existing nonblocking network progress.
-
-    Returns:
-        str: Successful UI event name after worker.result is authenticated.
-
-    Reader/publisher KEL introduction is a deployment bootstrap requirement of
-    this service; a wallet query cannot change the observer's acquisition loop.
-    """
+    """Drive one authenticated request through the finite cancellable Qt client."""
     vault, hab, regk = worker.vault, worker.hab, worker.regk
     if worker.registrar_url:
-        rip = vault.rgy.store.seqEvent(regk, 0)
-        if rip is None or rip.israid != hab.pre:
-            raise ValueError('Only the registry issuer can publish this registry')
-        stream = processor(vault).clone([regk])
-        body = signedQuery(hab, 'tels/publish', {'stream': stream.decode('ascii')})
+        stream = clone(vault, regk)
+        body = signed_query(hab, 'tels/publish', {'stream': stream.decode('ascii')})
         raw = yield from worker._request(worker.registrar_url.rstrip('/') + '/ingest',
                                          body, CESR_CONTENT_TYPE)
         result = json.loads(raw)
@@ -118,7 +125,6 @@ def sync(worker):
         worker.result = result
         return 'registry_published'
     raw = yield from worker._request(worker.observer_url.rstrip('/') + '/',
-                                     signedQuery(hab, 'tels', {'i': regk}), CESR_CONTENT_TYPE)
+                                     signed_query(hab, 'tels', {'i': regk}), CESR_CONTENT_TYPE)
     worker.result = receive(vault, regk, raw, worker.response_headers)
-    worker.fresh_until = monotonic() + remaining(worker.response_headers)
     return 'registry_loaded'

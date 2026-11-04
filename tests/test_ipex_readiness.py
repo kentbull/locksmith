@@ -28,7 +28,7 @@ def test_readiness_after_acceptance_preserves_authorization(ipex_vaults, ipex_ma
     issuer, holder = ipex_vaults('readiness-issuer'), ipex_vaults('readiness-holder')
     ih, hh, _, _, _, acdc, proof = _ipex_fixture(issuer, holder)
     request, request_atc = acdc_v2_ipexing.apply(hh, ih.pre, 'Request disclosure',
-        modifiers={'dp': [[acdc.sad['s']['$id'], '/', []]]})
+        modifiers={'dp': [[[acdc.sad['s']['$id'], '/', []]]]})
     _deliver_ipex(issuer.vault, ipexing.prepare(holder.vault, hh, request, request_atc))
     grant, atc = acdc_v2_ipexing.grant(ih, hh.pre, 'Approved disclosure', proof, apply=request)
     checks = []
@@ -166,4 +166,6 @@ def test_final_graph_gate_rechecks_semantic_evidence_before_transport(ipex_vault
     assert len(checks) == 2
     assert record.status == 'waiting_evidence' and record.attempts == 0
     assert exchanging.serializeMessage(issuer.hby, grant.said) == exact
-    assert issuer.vault.exc.routes['/ipex/grant'].verifyAccepted(grant.said, historical=True)
+    from keri.acdc.chaining import Verdicts
+    _, _, verdict, _ = issuer.vault.exc.reverifyGrant(grant.said)
+    assert verdict.verdict == Verdicts.unknown and verdict.retryable

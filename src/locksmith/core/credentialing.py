@@ -10,7 +10,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from hio.base import doing
 from keri import help, kering
-from keri.acdc import Registrar, acdcmap, regeventing
+from keri.acdc import Registrar, acdcmap, regeventing, chaining
 from keri.app.habbing import GroupHab
 from keri.core import (Aggor, Blinder, BlindState, BoundState, Noncer, Number, SerderACDC,
                        SerderKERI, SealSource, messagize, parsing, scheming)
@@ -101,21 +101,12 @@ class RegistryEvidencePending(kering.MissingChainError):
 
 
 def require_registry_evidence(vault, acdc, hab):
-    """Require a recent independent status check before a wallet decision."""
+    """Queue configured acquisition; native KEL/TEL evidence decides usability."""
     from locksmith.core.registries import required
-
     worker = getattr(vault, 'registry_evidence', None)
-    if worker is None:
-        return
-    for regk in required(acdc.sad):
-        if not worker.ensure(regk, hab):
-            detail = worker.errors.get(regk, 'Waiting for a current observer status check')
-            if not worker.observer_url:
-                raise kering.ConfigurationError('Configure an observer in Settings to check credential status')
-            raise RegistryEvidencePending(detail)
-        rip = vault.rgy.store.seqEvent(regk, 0)
-        if rip is not None and rip.israid in vault.hby.prefixes and not worker.published(regk):
-            raise RegistryEvidencePending('Waiting for the registrar to accept the issuer registry update')
+    if worker is not None and worker.observer_url:
+        for regk in required(acdc.sad):
+            worker.ensure(regk, hab)
 
 
 def credential_state(vault, acdc, blinder=None, *, blinders=None):
@@ -136,22 +127,10 @@ def credential_state(vault, acdc, blinder=None, *, blinders=None):
         updates.append(update)
     proofs = [proof for proof in (blinders if blinders is not None else [blinder])
               if proof is not None]
-    public = None
-    if raw := store.opening(head.said):
-        candidates = []
-        for clan in (BlindState, BoundState):
-            try:
-                candidate = Blinder(clan=clan, qb64=raw)
-            except Exception:
-                continue
-            if candidate.qb64 == raw:
-                candidates.append(candidate)
-        if len(candidates) != 1:
-            raise kering.ValidationError('Retained public opening is invalid')
-        public = store.retainOpening(head, candidates[0])
-    if public is not None:
-        if all(proof is None or proof.qb64 != public.qb64 for proof in proofs):
-            proofs.append(public)
+    # Held openings are read-only inputs. Inspection never retains or publishes.
+    public = store.opening(head.said)
+    if public is not None and all(proof.qb64 != public.qb64 for proof in proofs):
+        proofs.append(public)
     try:
         return regeventing.vetBinds(rip=rip, updates=updates, db=vault.hby.db,
                                    acdc=acdc, target=acdc.said,
@@ -177,8 +156,11 @@ def authentication(vault, nest):
     except KeyError:
         pass
     handler = vault.exc.routes['/ipex/grant']
-    if not handler._verifyIssuerAuthNode(acdc, nest):
-        raise kering.ValidationError('Credential issuer authentication failed')
+    verdict = handler._verifyIssuerAuthNode(acdc, nest)
+    if verdict.verdict == chaining.Verdicts.unknown and verdict.retryable:
+        raise kering.MissingChainError(verdict.reason)
+    if verdict.verdict != chaining.Verdicts.valid:
+        raise kering.ValidationError(verdict.reason)
     anchored = bool(nest.sscs or any(pre.qb64 == acdc.israid for pre, _, _ in nest.ssts))
     attributes = acdc.sad.get('a')
     stamp = attributes.get('dt', '') if isinstance(attributes, Mapping) else ''
@@ -268,7 +250,7 @@ def credential(vault, said, received=False, *, grant=None):
         if record.stream:
             proof = record.stream.encode()
         else:  # Persisted registry issuances from before ACDC v2 stream retention.
-            blinder = regeventing._blindCandidates(record.blinder)[0]
+            blinder = disclosing.opening(record.blinder)
             proof = messagize(serder=acdc, bonds=[blinder.data], framed=False)
         ims = bytearray(proof)
         parsed = parsing.Parser().parse(ims=ims, processive=False, version=kering.Vrsn_2_0)
@@ -408,13 +390,12 @@ class CredentialUpdateDoer(doing.DoDoer):
         # A locally signed anchor can still lack receipts. vetAnchor verifies
         # quorum and therefore cannot locate pending authoring work for retry.
         # Reuse that exact event, then require normal receipt/TEL acceptance.
-        seal = dict(s=event.sad['n'], d=event.said)
+        seal = dict(i=registry.regk, s=event.sad['n'], d=event.said)
         anchor = None
         for sn in range(hab.kever.sn + 1):
             digest = hab.db.kels.getLast(keys=hab.pre, on=sn)
             candidate = hab.db.evts.get(keys=(hab.pre, digest)) if digest else None
-            if candidate and any(item in candidate.sad.get('a', [])
-                                 for item in (seal, dict(i=registry.regk, **seal))):
+            if candidate and seal in candidate.sad.get('a', []):
                 anchor = candidate
                 break
         if anchor is None:
@@ -533,6 +514,8 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                 raise kering.ValidationError('This schema does not permit a registry')
             if self.authentication == 'anchor' and not hab.kever.prefixer.transferable:
                 raise kering.ValidationError('KEL anchors require a transferable issuer identifier')
+            if self.registry_mode == 'derived':
+                raise kering.ConfigurationError('New registry roots require the pending futureDhke consent flow')
             registry = None
             if self.authentication == 'registry':
                 registrar = Registrar(rgy=self.vault.rgy)
@@ -555,8 +538,6 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             if registry is not None:
                 rip = self.vault.rgy.store.event(registry.regk)
                 yield from self.anchor(registry, rip, receiptor, auths)
-                if self.registry_mode == 'derived':
-                    disclosing.custody(self.vault).createCustody(registry.regk, self.discloser or hab.pre)
                 blinder, update, stream = registry_authoring.stage(
                     self.vault, registry, acdc, 'issued', self.registry_mode, bound_event=self.bound_event)
                 record = IssuedCredential(acdc.raw.decode(), blinder.qb64 if blinder else '',
@@ -564,6 +545,8 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                                           registry_mode=self.registry_mode)
                 self.vault.db.issued.pin(keys=(acdc.said,), val=record)
                 yield from self.anchor(registry, update, receiptor, auths)
+                if self.registry_mode == 'public':
+                    self.vault.rgy.store.putOpening(update.said, blinder)
             elif self.authentication == 'anchor':
                 seal = dict(d=acdc.said)
                 raw = hab.rotate(data=[seal]) if hab.kever.estOnly else hab.interact(data=[seal])
@@ -633,7 +616,7 @@ class RevokeCredentialDoer(CredentialUpdateDoer):
             registry = self.vault.rgy.regs.get(acdc.regid)
             if registry is None:
                 raise ValueError('This credential has no local revocable registry')
-            blinder = regeventing._blindCandidates(record.blinder)[0] if record.blinder else None
+            blinder = disclosing.opening(record.blinder) if record.blinder else None
             revoked = blinder is not None and blinder.state == 'revoked'
             if revoked:
                 update = self.vault.rgy.store.event(record.update)
@@ -657,6 +640,8 @@ class RevokeCredentialDoer(CredentialUpdateDoer):
             receiptor = LocksmithReceiptor(hby=self.vault.hby)
             self.extend([receiptor])
             yield from self.anchor(registry, update, receiptor, auths)
+            if record.registry_mode == 'public':
+                self.vault.rgy.store.putOpening(update.said, blinder)
             if credential_state(self.vault, acdc, blinder).state != 'revoked':
                 raise kering.ValidationError('The registry does not verify this revocation')
             self.vault.signals.emit_doer_event('RevokeCredentialDoer', 'credential_revoked', {

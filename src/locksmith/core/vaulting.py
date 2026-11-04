@@ -8,7 +8,6 @@ from PySide6.QtCore import QTimer
 from hio.base import doing
 from hio.help import decking
 from keri import help
-from keri.acdc.ipexing import AcdcV2IpexVerification
 from keri.app import (
     agenting,
     organizing,
@@ -150,10 +149,9 @@ class Vault(doing.DoDoer):
 
         # Load protocol handlers
         grouping.loadHandlers(exc=self.exc, mux=self.mux)
-        verification = AcdcV2IpexVerification(hby, rgy)
         for verb in ('apply', 'offer', 'agree', 'grant', 'admit', 'spurn'):
             self.exc.addHandler(ipexing.IpexHandler(f'/ipex/{verb}', hby, self.notifier, rgy,
-                                                  signals=self.signals, verification=verification))
+                                                  signals=self.signals))
         challenging.loadHandlers(db=self.hby.db, exc=self.exc, notifier=self.notifier)
 
         # KEL and credential verification
@@ -373,7 +371,7 @@ class NotificationToastDoer(doing.Doer):
                                     if isinstance(schema, dict):
                                         title = schema.get('title', title)
                                     break
-                            tip = self.vault.hby.db.exns.get((tip.sad['p'],)) if tip.sad['p'] else None
+                            tip = self.vault.hby.db.exns.get((tip.sad.get('p', ''),)) if tip.sad.get('p', '') else None
                         return f'{stage} from {sender}: {title}'
                 except Exception as e:
                     logger.warning(f"Error formatting IPEX notification: {e}")
