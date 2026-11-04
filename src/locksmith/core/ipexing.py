@@ -30,14 +30,19 @@ class IpexHandler(ipexing.IpexHandler):
     def __init__(self, *args, signals=None, **kwa):
         super().__init__(*args, **kwa)
         self.signals = signals
+        self.endorsement = None
 
     def verify(self, serder, attachments=None, nests=None, sscs=None, evidence=None):
-        if serder.pvrsn.major != 2 or not ({serder.pre, serder.ked.get('ri')} & self.hby.prefixes):
+        selected = self.endorsement is not None and self.endorsement == (
+            serder.raw, tuple(exchanging.serializeParsedSubstream(node) for node in nests or []))
+        if serder.pvrsn.major != 2 or not (selected or {serder.pre, serder.ked.get('ri')} & self.hby.prefixes):
             return False
         return super().verify(serder, attachments=attachments, nests=nests,
                               sscs=sscs, evidence=evidence)
 
     def handle(self, serder, attachments=None, nests=None, sscs=None):
+        if not {serder.pre, serder.sad.get('ri')} & self.hby.prefixes:
+            return  # Explicit synchronous issuer endorsement is not an incoming wallet conversation.
         if serder.pre not in self.hby.prefixes:
             super().handle(serder, attachments=attachments, nests=nests, sscs=sscs)
         if self.signals is not None:

@@ -160,6 +160,39 @@ and vault close abandon process-local approval. Closing after successful import
 does not undo the retained root. Groups and network delivery/acknowledgment are
 outside this file workflow.
 
+Signed presentation files
+~~~~~~~~~~~~~~~~~~~~~~~~~
+
+On a Received Credentials row, **Signed presentation files** prepares a new
+Grant from the selected exact admission, held disclosure, verifier and message.
+The file contains signed disclosed credential material, not encrypted custody.
+Preparation retains the authenticated native accepted/pending Grant and displays
+its original deadline. It neither registers a preliminary KRAM conversation nor
+authorizes delivery, state-opening responses or Admit. Newer accepted registry
+evidence may leave the selected held proof retryably unknown; preparation never
+refreshes that proof or hydrates it from another admission.
+
+The independent issuer chooses **Endorse presentation file…** in Activity,
+inspects the claimed discloser/verifier and every disclosed node, then explicitly
+endorses and exports the same Grant. Every selected registry-backed node must
+belong to that local individual issuer. Inspection authenticates nothing; native
+verification is required before exporting added issuer authentication. The
+temporary selected-file allowance does not authorize third-party mailbox Grants.
+
+Back in the discloser's dialog, choose **Resume prepared presentation**, select
+the existing local preparation and its original admission/options, inspect the
+endorsed file, then register it locally. Resume permits authentication additions
+only: body, nested proofs, SAID and deadline remain unchanged. Ordinary enabled,
+nonexempt KRAM must actually accept the final conversation; a native presentation
+context alone is insufficient. Existing accepted registration is refused rather
+than retried. Sending that registered Grant is a separate future action.
+
+The existing vault policy is selected before creation (pending lifetime 300
+seconds and default single-key KRAM lag five minutes); operator configuration
+remains authoritative. Nothing renews the original timestamp or deadline.
+Closing clears inspected files, not signatures already exported. This file-only
+workflow has no delivery, live Unblind or verified-Admit completion claim.
+
 Regression disposition
 ~~~~~~~~~~~~~~~~~~~~~~
 
