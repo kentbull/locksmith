@@ -6,7 +6,7 @@ provisioned custody. All branches stage through Registry.processEvent; receipt
 collection and acceptance remain separate.
 """
 from keri import kering
-from keri.acdc import Registrar, messaging
+from keri.acdc import Registrar
 from keri.core import messagize
 
 from locksmith.core.disclosing import bound_options as selected_bound_options, registry_root
@@ -61,11 +61,7 @@ def stage(vault, registry, acdc, state, mode, *, bound_event=None):
         opening, event = Registrar(rgy=vault.rgy).issue(registry, acdc, state=state, **coordinates)
     else:
         root = registry_root(vault, registry.hab.pre, registry.regk)
-        from keri.core import Blinder
-        opening = Blinder.blind(salt=root.qb64, sn=head.sn + 1, acdc=acdc.said,
-                                state=state, **coordinates)
-        event = messaging.blindate(registry.regk, head.said, opening.said,
-                                   sn=head.sn + 1)
-        registry.processEvent(event)
+        opening, event = Registrar(rgy=vault.rgy).issue(
+            registry, acdc, state=state, salt=root.qb64, **coordinates)
     proof = messagize(acdc, bonds=[opening.data], framed=False)
     return opening, event, proof

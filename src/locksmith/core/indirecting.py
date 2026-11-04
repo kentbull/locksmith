@@ -14,7 +14,7 @@ from hio.help import decking
 from keri import help, kering
 from keri.app import httping, agenting
 from keri.app.habbing import GroupHab
-from keri.core import Diger, Texter, parsing, routing
+from keri.core import Diger, Texter, parsing
 from keri.db import basing
 from keri.help import helping
 from ordered_set import OrderedSet as oset
@@ -60,7 +60,7 @@ class MailboxDirector(doing.DoDoer):
         parser: Parses incoming data streams and delegates processing to relevant components.
     """
 
-    def __init__(self, hby, topics, rgy, kvy, exc, db, ims=None,
+    def __init__(self, hby, topics, rgy, kvy, exc, db, auxiliary, ims=None,
                  rep=None, cues=None, rvy=None, evidence=None, **kwa):
         """
         Initializes the MailboxDirector class, which is responsible for managing mailboxes,
@@ -86,6 +86,7 @@ class MailboxDirector(doing.DoDoer):
         self.db = db
         self.rgy = rgy
         self.exchanger = exc
+        self.auxiliary = auxiliary
         self.rep = rep
         self.topics = topics
         self.pollers = list()
@@ -99,7 +100,7 @@ class MailboxDirector(doing.DoDoer):
                       doing.doify(self.msgDo),
                       doing.doify(self.escrowDo)])
 
-        self.rtr = routing.Router()
+        self.rtr = rvy.rtr
         self.rvy = rvy
 
         self.kvy = kvy
@@ -257,6 +258,7 @@ class MailboxDirector(doing.DoDoer):
                     self.parser.parse(ims=msg, version=version, local=False)
                 except Exception:
                     logger.exception('Mailbox frame could not be processed')
+                self.auxiliary.observe_pending()
                 # ACDC v2 evidence processing owns the message once the parser has run.
                 self.db.inbox.rem(keys)
                 yield self.tock

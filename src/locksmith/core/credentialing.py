@@ -10,7 +10,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from hio.base import doing
 from keri import help, kering
-from keri.acdc import Registrar, acdcmap, regeventing, chaining
+from keri.acdc import Registrar, acdcmap, regeventing, chaining, ipexing as native_ipex
 from keri.app.habbing import GroupHab
 from keri.core import (Aggor, Blinder, BlindState, BoundState, Noncer, Number, SerderACDC,
                        SerderKERI, SealSource, messagize, parsing, scheming)
@@ -457,6 +457,8 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             raise ValueError('A derivation discloser requires derived state')
         if bound_event and (authentication != 'registry' or registry_mode == 'public'):
             raise ValueError('Bound state requires blinded registry authentication')
+        if registry_mode == 'derived' and (bound_event or discloser not in (None, recipient_pre)):
+            raise ValueError('Live agreement uses the credential issuee and ordinary unbound state')
         self.bound_event = bound_event
         self.registry_mode, self.discloser = registry_mode, discloser
         self.signals = signal_bridge if signal_bridge is not None else self.vault.signals
@@ -472,6 +474,7 @@ class IssueCredentialDoer(CredentialUpdateDoer):
         self.wind(tymth)
         yield self.tock
         receiptor = None
+        agreement = None
         try:
             issuer = self.vault.db.issuers.get(keys=(self.schema_said,))
             hab = self.vault.hby.habByPre(issuer)
@@ -514,8 +517,9 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                 raise kering.ValidationError('This schema does not permit a registry')
             if self.authentication == 'anchor' and not hab.kever.prefixer.transferable:
                 raise kering.ValidationError('KEL anchors require a transferable issuer identifier')
-            if self.registry_mode == 'derived':
-                raise kering.ConfigurationError('New registry roots require the pending futureDhke consent flow')
+            if self.registry_mode == 'derived' and not (
+                    hab.mgr.aeid and hab.mgr.encrypter and hab.mgr.decrypter):
+                raise kering.AuthError('Live agreement requires an encrypted, unlocked vault')
             registry = None
             if self.authentication == 'registry':
                 registrar = Registrar(rgy=self.vault.rgy)
@@ -538,6 +542,21 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             if registry is not None:
                 rip = self.vault.rgy.store.event(registry.regk)
                 yield from self.anchor(registry, rip, receiptor, auths)
+                if self.registry_mode == 'derived':
+                    pending, attachment = native_ipex.grant(hab, self.recipient_pre,
+                        'Approve registry key agreement', origin=acdc,
+                        kind=kering.Kinds.json, gvrsn=kering.Vrsn_2_0)
+                    owner = self.vault.auxiliary
+                    agreement = (hab.pre, pending.said)
+                    owner.begin_dh(hab, pending, attachment)
+                    self.signals.emit_doer_event('IssueCredentialDoer', 'awaiting_agreement', {
+                        'issuance_id': self.issuance_id, 'aid': hab.pre,
+                        'grant': pending.said, 'credential_said': acdc.said})
+                    while not owner.agreement_ready(hab.pre, pending.said):
+                        status = owner.status(hab.pre, pending.said)
+                        if self.vault.closed or status['phase'] in owner.Terminal:
+                            raise kering.ValidationError(status['error'] or 'The live agreement ended')
+                        yield self.tock
                 blinder, update, stream = registry_authoring.stage(
                     self.vault, registry, acdc, 'issued', self.registry_mode, bound_event=self.bound_event)
                 record = IssuedCredential(acdc.raw.decode(), blinder.qb64 if blinder else '',
@@ -547,6 +566,10 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                 yield from self.anchor(registry, update, receiptor, auths)
                 if self.registry_mode == 'public':
                     self.vault.rgy.store.putOpening(update.said, blinder)
+                elif self.registry_mode == 'derived':
+                    self.vault.auxiliary.process()
+                    if not self.vault.exc.complete(pending.said):
+                        raise kering.ValidationError('The original issuance Grant did not finish verification')
             elif self.authentication == 'anchor':
                 seal = dict(d=acdc.said)
                 raw = hab.rotate(data=[seal]) if hab.kever.estOnly else hab.interact(data=[seal])
@@ -573,6 +596,10 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                                         {'issuance_id': self.issuance_id, 'error': str(ex),
                                          'schema_said': self.schema_said, 'success': False})
         finally:
+            if agreement is not None and not self.vault.exc.complete(agreement[1]):
+                status = self.vault.auxiliary.status(*agreement)
+                if status is not None and status['phase'] not in self.vault.auxiliary.Terminal:
+                    self.vault.auxiliary.abandon(*agreement)
             if receiptor is not None:
                 self.remove([receiptor])
 

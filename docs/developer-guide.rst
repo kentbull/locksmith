@@ -114,11 +114,14 @@ held proof use and supplied openings remain independent of absent or damaged
 root custody. Plaintext ``RegistryCustody`` export/import and its app table have
 been removed.
 
-This foundation does not implement DH/Unblind operations or their UI. New root
-creation requires the subsequent ``futureDhke`` consent lifecycle; root transfer
-requires ``RegistrySalt``. The next unit must compose vault-owned process-local
-operations, pending Grant display and explicit consent. Ephemeral keys must not
-be stored in the durable outbox.
+Individual derived issuance now anchors a fresh RIP, retains one signed proofless
+Grant and waits for explicit DH approval before issuing its BUP. The vault owns
+those live operations; ordinary submission and explicit Admit remain separate.
+Closing or cancelling abandons ephemeral keys and queued sends, while retained
+encrypted Keeper roots and historical proofs remain. Reopening cannot resume an
+unfinished agreement; begin a fresh exchange with new explicit consent. Pending
+Grant bytes and private keys never enter the durable outbox. Live Unblind opening
+requests and ``RegistrySalt`` root transfer remain separate, unimplemented work.
 
 Regression disposition
 ~~~~~~~~~~~~~~~~~~~~~~
