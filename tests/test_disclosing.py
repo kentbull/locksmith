@@ -234,9 +234,8 @@ def test_offer_start_selects_sections_with_real_controls(ipex_vaults, qapp):
     assert isinstance(node.serder.sad['a']['private'], str)
 
 
-@pytest.mark.parametrize('bound', [False, True])
-def test_existing_keeper_root_derives_only_explicit_accepted_selection(ipex_vaults, bound):
-    """Seed an existing-root fixture; this does not exercise or replace root transfer."""
+def _existing_root_fixture(ipex_vaults, bound=False):
+    """Existing encrypted issuer custody and one real exact recipient admission."""
     from keri.core import Salter
     from keri.acdc import acdcmap
     from locksmith.core import registry_authoring
@@ -267,6 +266,14 @@ def test_existing_keeper_root_derives_only_explicit_accepted_selection(ipex_vaul
     evidence.receive(target.vault, registry.regk, evidence.clone(source.vault, registry.regk),
                      {'content-type': 'application/cesr'})
     held = _grant(source, target, issuer, holder, acdc.said)
+    return source, target, issuer, holder, registry, root, acdc, held, selected
+
+
+@pytest.mark.parametrize('bound', [False, True])
+def test_existing_keeper_root_derives_only_explicit_accepted_selection(ipex_vaults, bound):
+    """Existing-root derivation remains independent of root-copy UI."""
+    from locksmith.core import registry_authoring
+    source, target, issuer, holder, registry, root, acdc, held, selected = _existing_root_fixture(ipex_vaults, bound)
     target.hby.mgr.putRegistryRoot(holder.pre, registry.regk, root)
     later, update, _ = registry_authoring.stage(source.vault, registry, acdc,
         'issued', 'derived', bound_event=selected)
@@ -292,3 +299,87 @@ def test_existing_keeper_root_derives_only_explicit_accepted_selection(ipex_vaul
     # Merely cloning accepted public TEL cannot disclose held proofs or roots.
     assert root.qb64b not in target.vault.rgy.store.cloneTel(registry.regk)
     assert later.qb64b not in target.vault.rgy.store.cloneTel(registry.regk)
+
+
+def test_encrypted_root_file_requires_inspected_consent_and_actual_retention(ipex_vaults, qapp, tmp_path):
+    """Real file controls preserve native replay, wrong-root and retention boundaries."""
+    from datetime import timedelta
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QWidget
+    from keri.core import Encrypter, Salter, SerderKERI, reply
+    from keri.help import helping
+    from locksmith.core import root_copying
+    from locksmith.ui.vault.credentials.root_copy import RootCopyDialog
+
+    source, target, issuer, holder, registry, root, acdc, held, _ = _existing_root_fixture(ipex_vaults)
+    parent = QWidget()
+    public = target.vault.rgy.store.cloneTel(registry.regk)
+    old = credentialing.credential(target.vault, acdc.said, grant=held)['proof']
+    export = RootCopyDialog(source, parent, acdc.said)
+    export.selection.setCurrentIndex(export.selection.combo_box.findData(holder.pre))
+    path = tmp_path / 'encrypted.cesr'
+    export.export_file(path)
+    assert 'retention unconfirmed' in export.status.text()
+    raw = path.read_bytes()
+    selected = root_copying.inspect(raw)
+    assert root.qb64b not in raw
+    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk) is None
+    for malformed in (raw + b'garbage', raw[:-4]):
+        with pytest.raises((kering.KeriError, ValueError)):
+            root_copying.inspect(malformed)
+
+    # Inspection and cancellation consume no authenticated replay slot or root.
+    cancelled = RootCopyDialog(target, parent, acdc.said, received=True)
+    cancelled.open()
+    assert not cancelled.action.isEnabled()
+    cancelled.inspect_file(path)
+    assert 'Unauthenticated file claims' in cancelled.status.text()
+    assert target.hby.db.kramMSGC.get((issuer.pre, selected.said)) is None
+    cancelled.close()
+    assert cancelled.inspected is None and target.vault.root_copies.active is None
+    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk) is None
+
+    body = SerderKERI(raw=raw)
+    expired = reply(pre=issuer.pre, route='/registry/salt', data=body.sad['a'],
+        stamp=helping.toIso8601(helping.nowUTC() - timedelta(days=2)), pvrsn=kering.Vrsn_2_0)
+    stale = root_copying.inspect(bytes(issuer.endorse(expired, gvrsn=kering.Vrsn_2_0)))
+    event, opening = root_copying.held_openings(target.vault, acdc.said, held)[0]
+    with pytest.raises(kering.ValidationError, match='not retained'):
+        target.vault.root_copies.receive(stale, holder.pre, acdc.said, held, event, opening)
+    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk) is None
+    assert target.vault.root_copies.active is None
+
+    old_dialog = RootCopyDialog(target, parent, acdc.said, received=True)
+    old_dialog.open()
+    old_dialog.inspect_file(path)
+    target.close_vault()
+    QTest.mouseClick(old_dialog.action, Qt.MouseButton.LeftButton)
+    assert 'vault is closed' in old_dialog.status.text()
+    target = ipex_vaults('existing-root-holder', bran='0123456789abcdefghijk')
+    dialog = RootCopyDialog(target, parent, acdc.said, received=True)
+    dialog.open()
+    dialog.inspect_file(path)
+    QTest.mouseClick(dialog.action, Qt.MouseButton.LeftButton)
+    assert 'retained and verified' in dialog.status.text(), dialog.status.text()
+    assert target.vault.root_copies.received == selected.said
+    assert target.vault.root_copies.active is None
+    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
+
+    # A fresh correctly signed wrong root reaches native retention even with a root present.
+    cipher = Encrypter(verkey=holder.kever.verfers[0].qb64).encrypt(prim=Salter())
+    wrong = reply(pre=issuer.pre, route='/registry/salt', data=dict(body.sad['a'], cipher=cipher.qb64),
+                  pvrsn=kering.Vrsn_2_0)
+    bad = root_copying.inspect(bytes(issuer.endorse(wrong, gvrsn=kering.Vrsn_2_0)))
+    with pytest.raises(kering.ValidationError, match='approved accepted opening'):
+        target.vault.root_copies.receive(bad, holder.pre, acdc.said, held, event, opening)
+    assert target.hby.db.kramMSGC.get((issuer.pre, wrong.said)) is not None
+    assert target.hby.db.rpys.get((wrong.said,)) is not None
+    assert target.vault.root_copies.received is None and target.vault.root_copies.active is None
+    assert target.vault.rgy.store.cloneTel(registry.regk) == public
+    assert credentialing.credential(target.vault, acdc.said, grant=held)['proof'] == old
+    assert target.vault.db.accepted.get((acdc.said,)).grant == held
+    target.close_vault()
+    target = ipex_vaults('existing-root-holder', bran='0123456789abcdefghijk')
+    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
+    assert target.vault.root_copies.active is None
