@@ -104,9 +104,8 @@ class NotificationsListPage(QWidget):
         """
         notification_type = row_data.get('Type', '')
 
-        # For GRANT notifications, add the Admit action at the start
-        if notification_type == "GRANT":
-            actions = ["Admit"] + self._base_row_actions
+        if notification_type in ('APPLY', 'OFFER', 'AGREE', 'GRANT', 'ADMIT', 'SPURN'):
+            actions = ['View Activity'] + self._base_row_actions
         # For MULTISIG_ICP notifications, add the Join action at the start
         elif notification_type == "MULTISIG_ICP":
             actions = ["Join"] + self._base_row_actions
@@ -336,8 +335,9 @@ class NotificationsListPage(QWidget):
             return self._format_generic_notification(note, rid, timestamp_display)
 
     def _format_ipex_message(self, exn, route: str, actual_message: str = "") -> tuple[str, str]:
-        """Format native exchange results and expose grants for explicit acceptance."""
-        if exn.pvrsn.major != 2 or not exn.sad.get('x'):
+        """Format ACDC v2 IPEX exchange results and expose grants for explicit acceptance."""
+        if (exn.pvrsn.major != 2 or exn.ilk not in ('xip', 'exn')
+                or exn.ilk == 'exn' and not exn.sad.get('x')):
             return "Unsupported IPEX", "This exchange does not use ACDC V2 IPEX"
         verb = route.rsplit('/', 1)[-1].upper()
         message = "Protocol verified"
@@ -493,6 +493,10 @@ class NotificationsListPage(QWidget):
                 logger.info(f"Notification already marked as read")
         elif action == "Delete":
             self._delete_notification(rid)
+        elif action == 'View Activity':
+            if not is_read:
+                self._mark_as_read(rid)
+            self._parent.show_credential_activity(row_data.get('_said', ''))
         elif action == "Admit":
             self._show_accept_grant_dialog(row_data)
         elif action == "Join":

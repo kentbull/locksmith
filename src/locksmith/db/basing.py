@@ -46,15 +46,6 @@ class IdentifierMetaInfo:
     auth_pending: bool
 
 @dataclass
-class MailboxListener:
-    """
-        Mailbox listener state
-    """
-    cid: str
-    eid: str
-    name: str
-
-@dataclass
 class BrowserPluginSettings:
     """
     Track browser plugin connection settings.
@@ -69,18 +60,65 @@ class BrowserPluginSettings:
 
 @dataclass
 class IssuedCredential:
+    """Retain exact issuer bytes and the current authoring/proof reference.
+
+    ``raw`` is the issued ACDC; ``update``/``stream`` identify its retained TEL
+    work. ``blinder`` is an event-specific opening, not a registry derivation
+    salt. ``registry_mode`` selects public, random blinded or derived updates;
+    the legacy default preserves records created before that field existed."""
     raw: str
-    blinder: str
-    update: str
+    blinder: str = ''
+    update: str = ''
+    stream: str = ''
+    witness_threshold: int = 0
+    created_at: str = ''
+    registry_mode: str = 'blinded'
 
 
 @dataclass
 class AcceptedCredential:
     grant: str
     admit: str
+    accepted_at: str = ''
+
+
+@dataclass
+class GrantReceipt:
+    """Consent to one exact grant; accepted_at is local time, not publication."""
+    credential: str
+    admit: str = ''
+    send: bool = False
+    status: str = 'preparing'
+    error: str = ''
+    accepted_at: str = ''
+
+
+@dataclass
+class IpexSubmission:
+    """Authorize delivery of one retained EXN, keyed by its SAID in outbox.
+
+    ``waiting_evidence`` preserves consent while prohibiting transmission;
+    ``attempts`` counts transport attempts, not observer-readiness checks.
+    Existing persisted records need no schema migration.
+    """
+
+    status: str = 'pending'
+    attempts: int = 0
+    retry_at: float = 0.0
+    error: str = ''
+    missing_route: bool = False
+
+
+@dataclass
+class MailboxFrame:
+    raw: str
 
 
 class LocksmithBaser(dbing.LMDBer):
+    """Store wallet metadata, explicit grant consent and pending application work.
+
+    KERIpy owns authenticated protocol records. These application subdatabases
+    reference those records and must not replace core acceptance decisions."""
     TailDirPath = "keri/rt"
     AltTailDirPath = ".keri/rt"
     TempPrefix = "rt"
@@ -99,9 +137,6 @@ class LocksmithBaser(dbing.LMDBer):
         # identifier metadata
         self.idm = None
 
-        # mailbox listening storage
-        self.mbx = None
-
         # Browser plugin settings
         self.pluginSettings = None
 
@@ -116,9 +151,6 @@ class LocksmithBaser(dbing.LMDBer):
         # Identifier metadata storage
         self.idm = koming.Komer(db=self, subkey='.idm', klas=IdentifierMetaInfo)
 
-        # Mailbox listening storage
-        self.mbx = koming.Komer(db=self, subkey='mbx.', klas=MailboxListener)
-
         # Browser plugin settings storage
         self.pluginSettings = koming.Komer(
             db=self,
@@ -131,5 +163,9 @@ class LocksmithBaser(dbing.LMDBer):
         self.issuers = subing.Suber(db=self, subkey='issuers.')
         self.issued = koming.Komer(db=self, subkey='issued.', klas=IssuedCredential)
         self.accepted = koming.Komer(db=self, subkey='accepted.', klas=AcceptedCredential)
+        self.receipts = koming.Komer(db=self, subkey='receipts.', klas=GrantReceipt)
+
+        self.outbox = koming.Komer(db=self, subkey='outbox.', klas=IpexSubmission)
+        self.inbox = koming.Komer(db=self, subkey='inbox.', klas=MailboxFrame)
 
         return self.env

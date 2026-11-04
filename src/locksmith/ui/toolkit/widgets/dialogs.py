@@ -6,16 +6,18 @@ This module contains reusable custom dialog widget components.
 """
 from typing import cast
 
-from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Property, QSize
+from PySide6.QtCore import Qt, QPropertyAnimation, QEasingCurve, Property, QSize, QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QDialog, QFrame, QGraphicsOpacityEffect, QWidget,
     QVBoxLayout, QHBoxLayout, QLabel, QScrollArea, QPushButton
 )
 from keri import help
+from shiboken6 import isValid
 
 from locksmith.ui import colors
-from locksmith.ui.toolkit.widgets import LocksmithButton
+from locksmith.ui.toolkit.widgets.buttons import LocksmithButton, LocksmithInvertedButton
+from locksmith.ui.toolkit.widgets.fields import FloatingLabelLineEdit
 
 logger = help.ogler.getLogger(__name__)
 
@@ -348,8 +350,9 @@ class LocksmithDialog(QDialog):
 
         # Create content container widget
         content_container = QWidget()
+        content_container.setObjectName("dialog-content")
         content_container.setStyleSheet("""
-            QWidget {
+            QWidget#dialog-content {
                 background-color: transparent;
             }
         """)
@@ -415,7 +418,9 @@ class LocksmithDialog(QDialog):
     def showEvent(self, event):
         """Override showEvent to trigger fade-in animation."""
         # Close any existing dialog before showing this one
-        if LocksmithDialog._current_dialog is not None and LocksmithDialog._current_dialog != self:
+        if (LocksmithDialog._current_dialog is not None
+                and isValid(LocksmithDialog._current_dialog)
+                and LocksmithDialog._current_dialog != self):
             LocksmithDialog._current_dialog.close()
 
         # Track this as the current dialog
@@ -454,8 +459,8 @@ class LocksmithDialog(QDialog):
         if self._initial_focus is not None and self._initial_focus.isVisible() and self._initial_focus.isEnabled():
             self._initial_focus.setFocus(Qt.FocusReason.OtherFocusReason)
 
-    def closeEvent(self, event):
-        """Override closeEvent to clean up overlay."""
+    def hideEvent(self, event):
+        """Clear dialog state after closing, accepting, or rejecting."""
         # Clear the current dialog reference if this is it
         if LocksmithDialog._current_dialog == self:
             LocksmithDialog._current_dialog = None
@@ -464,7 +469,7 @@ class LocksmithDialog(QDialog):
         if self.overlay:
             self.overlay.hide()
 
-        super().closeEvent(event)
+        super().hideEvent(event)
 
     def reject(self):
         """Override reject to ensure overlay cleanup."""
@@ -732,13 +737,35 @@ class LocksmithDialog(QDialog):
         """
         section_info = {
             'section': section,
-            'content_height': section._content_height,
             'is_expanded': False
         }
         self._collapsible_sections.append(section_info)
 
         # Connect section toggle to our handler
         section.set_dialog_new(self)
+
+    def fit_content(self, width):
+        """Fit current content and update the base height for collapsible sections."""
+        if self._dialog_resize_animation is not None:
+            self._dialog_resize_animation.stop()
+        # Remove the old scrollbar's width before measuring wrapped content.
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.setFixedWidth(width)
+        self.layout().activate()
+        self.content_layout.invalidate()
+        self.content_layout.activate()
+        chrome = self.sizeHint().height() - self.scroll_area.sizeHint().height()
+        content_height = self.content_layout.totalHeightForWidth(width)
+        if content_height < 0:
+            content_height = self.content_layout.sizeHint().height()
+        height = content_height + chrome + 12
+        expanded_height = sum(item['section']._content_height for item in self._collapsible_sections
+                              if item['is_expanded'] and not item['section'].isHidden())
+        self._base_content_height = height - expanded_height
+        self._max_dialog_height = self._calculate_max_dialog_height()
+        self.setFixedSize(width, min(height, self._max_dialog_height))
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAsNeeded)
+        self.center_on_parent()
 
     def on_section_toggle(self, section, is_expanded):
         """
@@ -773,7 +800,7 @@ class LocksmithDialog(QDialog):
         # Add height of all expanded sections
         for item in self._collapsible_sections:
             if item['is_expanded']:
-                total_height += item['content_height']
+                total_height += item['section']._content_height
 
         return total_height
 
@@ -856,7 +883,6 @@ class LocksmithDialog(QDialog):
 
     def _scroll_to_bottom(self):
         """Smoothly scroll the content area to the bottom."""
-        from PySide6.QtCore import QTimer
         # Use a short delay to ensure layout is updated before scrolling
         QTimer.singleShot(10, self._do_scroll_to_bottom)
 
@@ -909,10 +935,6 @@ class LocksmithResourceDeletionDialog(LocksmithDialog):
         """
         self.resource_type = resource_type
         self.resource_name = resource_name
-
-        # Import here to avoid circular imports
-        from locksmith.ui.toolkit.widgets.fields import FloatingLabelLineEdit
-        from locksmith.ui.toolkit.widgets import LocksmithButton, LocksmithInvertedButton
 
         # Create content widget
         content_widget = QWidget()

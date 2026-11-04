@@ -33,16 +33,18 @@ class LocksmithWindow(QMainWindow):
     and delegates functionality to specialized components.
     """
 
-    def __init__(self, config: LocksmithConfig | None = None):
+    def __init__(self, config: LocksmithConfig | None = None, *, app: LocksmithApplication | None = None):
         """
         Initialize the main window.
 
         Args:
-            config: Application configuration.
+            config: Application configuration when creating a new owner.
+            app: Optional existing application owner, including its open vault
+                and scheduler. The window does not create a second owner.
         """
         super().__init__()
 
-        self.app = LocksmithApplication(config=config)
+        self.app = app if app is not None else LocksmithApplication(config=config)
 
         # Window setup
         self.setWindowTitle("Locksmith")
@@ -301,11 +303,9 @@ class LocksmithWindow(QMainWindow):
             message: The notification message text
             pending_notifications: Number of pending notifications
         """
-        # Close existing toast if any
+        # The closed signal owns deletion and clearing the current reference.
         if self.current_toast:
             self.current_toast.close_toast()
-            self.current_toast.deleteLater()
-            self.current_toast = None
 
         # Create new toast
         self.current_toast = NotificationToast(datetime, message, pending_notifications, self)

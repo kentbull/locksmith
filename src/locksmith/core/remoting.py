@@ -18,9 +18,9 @@ from hio.base import doing
 from keri import help, kering
 from keri.app import organizing, forwarding
 from keri.app.habbing import GroupHab
-from keri.core import exchange, parsing, serdering
+from keri.core import eventing, exchange, parsing, serdering
 from keri.core.serdering import SerderKERI
-from keri.db import basing
+from keri.db import basing, fetchTsgs
 from keri.help import helping
 from mnemonic import Mnemonic
 
@@ -33,6 +33,34 @@ def message_version(ims: bytes | bytearray) -> kering.Versionage:
         return kering.smell(ims).pvrsn
 
     return kering.Vrsn_2_0
+
+
+def identifier_introduction(hab) -> bytes:
+    """Export public key history and retained, signed delivery information."""
+    version = kering.Vrsn_2_0
+    stream = bytearray()
+    # Keep the selected identifier first: file import takes its prefix from
+    # the first event. Never include private keys or unrelated contacts.
+    for message in hab.db.clonePreIter(pre=hab.pre, gvrsn=version):
+        stream.extend(message)
+    roles = [(role, eid) for (_, role, eid), end in hab.db.ends.getTopItemIter(keys=(hab.pre,))
+             if end.allowed or end.enabled]
+    endpoints = dict.fromkeys([*hab.kever.wits, *(eid for _, eid in roles)])
+    for eid in endpoints:
+        if eid != hab.pre and eid in hab.kevers:
+            stream.extend(hab.replay(pre=eid, gvrsn=version))
+        stream.extend(hab.loadLocScheme(eid=eid, gvrsn=version))
+    # loadEndRole omits revoked roles. Export each latest accepted reply,
+    # including cuts, with its retained signatures so imports remove old routes.
+    for _, said in hab.db.eans.getTopItemIter(keys=(hab.pre,)):
+        serder = hab.db.rpys.get(keys=(said.qb64,))
+        cigars = []
+        for verfer, cigar in hab.db.scgs.get(keys=(said.qb64,)):
+            cigar.verfer = verfer
+            cigars.append(cigar)
+        tsgs = fetchTsgs(db=hab.db.tsgs, diger=said)
+        stream.extend(eventing.messagize(serder=serder, cigars=cigars, tsgs=tsgs, gvrsn=version))
+    return bytes(stream)
 
 
 def upsert_remote_id_metadata(app, pre: str, *, alias=None, cid=None, tag=None, oobi=None):
@@ -738,6 +766,8 @@ class ImportDoer(doing.DoDoer):
 
                 serder = SerderKERI(raw=ims)
                 pre = serder.pre
+                if pre not in self.hby.kevers:
+                    raise ValueError(f"No verified key state for imported identifier {pre}")
 
                 remoteId = {
                     'alias': self.alias,
