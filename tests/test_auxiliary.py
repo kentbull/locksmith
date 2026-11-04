@@ -29,18 +29,19 @@ def pending_issuance(open_vault):
     for source, target, hab in ((issuer, holder, ih), (holder, issuer, hh)):
         _deliver_ipex(target.vault, b''.join(source.hby.db.clonePreIter(hab.pre, gvrsn=kering.Vrsn_2_0)))
 
-    def seal(event):
+    def seal(event, recipients=None):
         raw = ih.interact(data=[dict(i=registry.regk, s=event.sad['n'], d=event.said)],
                           gvrsn=kering.Vrsn_2_0)
         anchor = SerderKERI(raw=raw)
         issuer.vault.kvy.processReceipt(serder=receipt(ih.pre, anchor.sn, anchor.said),
             cigars=wh.sign(anchor.raw, indexed=False), wigers=[], tsgs=[], local=False)
         assert registry.anchorMsg(event.said)
-        _deliver_ipex(holder.vault, b''.join(issuer.hby.db.clonePreIter(ih.pre, gvrsn=kering.Vrsn_2_0)))
-        assert holder.hby.db.fullyWitnessed(holder.hby.db.evts.get((ih.pre, anchor.said)))
-        _deliver_ipex(holder.vault, messagize(event, bonds=[SealSource(s=anchor.snh, d=anchor.said)],
-                                            gvrsn=kering.Vrsn_2_0))
-        assert holder.vault.rgy.store.headEvent(registry.regk).said == event.said
+        for vault in recipients if recipients is not None else (holder.vault,):
+            _deliver_ipex(vault, b''.join(issuer.hby.db.clonePreIter(ih.pre, gvrsn=kering.Vrsn_2_0)))
+            assert vault.hby.db.fullyWitnessed(vault.hby.db.evts.get((ih.pre, anchor.said)))
+            _deliver_ipex(vault, messagize(event, bonds=[SealSource(s=anchor.snh, d=anchor.said)],
+                                         gvrsn=kering.Vrsn_2_0))
+            assert vault.rgy.store.headEvent(registry.regk).said == event.said
 
     registrar = Registrar(issuer.vault.rgy)
     registry = registrar.makeRegistry('fresh', ih.pre)

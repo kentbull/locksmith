@@ -120,8 +120,17 @@ those live operations; ordinary submission and explicit Admit remain separate.
 Closing or cancelling abandons ephemeral keys and queued sends, while retained
 encrypted Keeper roots and historical proofs remain. Reopening cannot resume an
 unfinished agreement; begin a fresh exchange with new explicit consent. Pending
-Grant bytes and private keys never enter the durable outbox. Live Unblind opening
-requests and ``RegistrySalt`` root transfer remain separate, unimplemented work.
+Grant bytes and private keys never enter the durable outbox.
+
+Individual live Unblind requests use the same vault owner. The recipient explicitly
+requests missing current openings for a new live presentation; the presenter must
+separately approve its exact scope before the native owner replies with minimal
+event proofs. Missing held proof waits under the original request deadline. Native
+verification finishes the same Grant; Admit remains a separate decision, and known
+revoked state still prevents application use. A later presentation starts with a
+new Grant from the exact selected admitted view, never the old terminal exchange.
+Closing or cancelling discards unfinished approvals and queued proofs. Unblind
+does not transfer a Keeper root. ``RegistrySalt`` root transfer remains unimplemented.
 
 Regression disposition
 ~~~~~~~~~~~~~~~~~~~~~~
