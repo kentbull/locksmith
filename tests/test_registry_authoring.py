@@ -4,7 +4,6 @@ from hio.base import doing
 from keri import kering
 from keri.acdc import Registrar, acdcmap, messaging
 from keri.core import BoundState, Saider, SerderACDC
-from keri.acdc.regeventing import _blindCandidates
 
 from locksmith.core import credentialing, disclosing, registry_authoring
 from test_credentialing import _load_schema
@@ -12,7 +11,7 @@ from test_keri_v2_compat import ipex_vaults as ipex_vaults
 
 
 @pytest.mark.parametrize('mode,bound', [('public', False), ('blinded', False),
-    ('derived', False), ('blinded', True), ('derived', True)])
+    ('blinded', True)])
 def test_registry_mode_survives_reopen_and_revocation_retry(ipex_vaults, mode, bound):
     """Use actual issue/revoke doers, core anchors and encrypted derived custody."""
     password = '0123456789abcdefghijk' if mode == 'derived' else None
@@ -32,13 +31,13 @@ def test_registry_mode_survives_reopen_and_revocation_retry(ipex_vaults, mode, b
     view = credentialing.credential(app.vault, said)
     regid = view['sad']['rd']
     assert record.registry_mode == mode and view['status']['et'] == 'issued'
-    assert bool(list(app.vault.db.custody.getTopItemIter())) is (mode == 'derived')
+    assert not list(app.hby.mgr.ks.rroots.getTopItemIter())
     assert record.blinder
     head = app.vault.rgy.store.headEvent(regid)
     assert head.ilk == 'bup'
     assert bool(app.vault.rgy.store.opening(head.said)) is (mode == 'public')
     assert bool(app.vault.rgy.store.opening(head.said)) is (mode == 'public')
-    issued_opening = _blindCandidates(record.blinder)[0]
+    issued_opening = disclosing.opening(record.blinder)
     app.close_vault()
     app = ipex_vaults('author-' + mode, bran=password)
     issuer = app.hby.habByName('issuer')
@@ -58,28 +57,24 @@ def test_registry_mode_survives_reopen_and_revocation_retry(ipex_vaults, mode, b
         # Inception, registry inception anchor, issuance anchor, revocation anchor.
         assert issuer.kever.sn == 3
         record = app.vault.db.issued.get((said,))
-        if mode == 'derived':
-            parameters = dict(bound=True, bsn=holder.kever.sn, bd=holder.kever.serder.said) if bound else {}
-            opening = disclosing.custody(app.vault).derive(regid, 2, said, 'revoked', **parameters)
-            assert opening.qb64 == record.blinder
-        elif mode == 'public':
-            opening, = _blindCandidates(record.blinder)
+        if mode == 'public':
+            opening = disclosing.opening(record.blinder)
             assert opening.state == 'revoked'
             assert app.vault.rgy.store.opening(
-                app.vault.rgy.store.headEvent(regid).said) == opening.qb64
+                app.vault.rgy.store.headEvent(regid).said).qb64 == opening.qb64
             assert app.vault.rgy.store.opening(
-                app.vault.rgy.store.headEvent(regid).said) == opening.qb64
-            assert not list(app.vault.db.custody.getTopItemIter())
+                app.vault.rgy.store.headEvent(regid).said).qb64 == opening.qb64
+            assert not list(app.hby.mgr.ks.rroots.getTopItemIter())
             # A holder's retained issuance proof is augmented only by the
             # accepted public head opening after an observer refresh.
             assert credentialing.credential_state(
                 app.vault, SerderACDC(raw=record.raw.encode()),
                 blinders=[issued_opening]).state == 'revoked'
         else:
-            opening, = _blindCandidates(record.blinder)
+            opening = disclosing.opening(record.blinder)
             assert opening.state == 'revoked'
         if bound:
-            opening, = _blindCandidates(record.blinder)
+            opening = disclosing.opening(record.blinder)
             assert opening.clan == BoundState and opening.bd == holder.kever.serder.said
 
 
@@ -94,7 +89,7 @@ def test_historical_upd_remains_parseable_but_cannot_author_or_claim_standing(ip
     acdc = acdcmap(israid=issuer.pre, regid=registry.regk,
                    attribute={'d': '', 'value': 'legacy'})
     update = messaging.update(registry.regk, rip.said, acdc.said, 'issued', sn=1)
-    with pytest.raises(kering.ValidationError, match='upd.*retired'):
+    with pytest.raises(kering.ValidationError, match='Unsupported registry event type upd'):
         registry.processEvent(update)
     # Model an exact row written by an older wallet without asking the current
     # acceptor to reinterpret or accept that signed historical event.
@@ -106,3 +101,19 @@ def test_historical_upd_remains_parseable_but_cannot_author_or_claim_standing(ip
         credentialing.credential_state(app.vault, acdc)
     with pytest.raises(kering.ConfigurationError, match='upd heads'):
         registry_authoring.stage(app.vault, registry, acdc, 'revoked', 'public')
+
+
+def test_new_derived_issuance_waits_for_future_dhke(ipex_vaults):
+    app = ipex_vaults('future-root', bran='0123456789abcdefghijk')
+    issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
+    schema = _load_schema(app, issuer)
+    events = []
+    app.vault.signals.doer_event.connect(lambda name, event, data: events.append((event, data)))
+    worker = credentialing.IssueCredentialDoer(app, schema.said, holder.pre,
+        {'LEI': 'example'}, registry_mode='derived', discloser=holder.pre)
+    doing.Doist(doers=[worker], tock=.03125, limit=3).do()
+    assert events[-1][0] == 'credential_issuance_failed'
+    assert 'futureDhke' in events[-1][1]['error']
+    assert app.vault.rgy.regs == {}
+    assert issuer.kever.sn == 0
+    assert not list(app.hby.mgr.ks.rroots.getTopItemIter())

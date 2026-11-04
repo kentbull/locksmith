@@ -1,31 +1,54 @@
 """Select held disclosures and optional registry-opening capabilities.
 
 The compaction path adapts KERIpy ExchangeDoer at a6539208. Opening composition
-uses its shared registryProof helper; secret storage reuses RegistryCustody.
+uses native registry vetting; existing encrypted roots belong to Keeper.
 These are local wallet controls, not a new delegation or provisioning protocol.
 """
 from dataclasses import replace
 from copy import deepcopy
 
 from keri import kering
-from keri.acdc.regeventing import issuerRegistry, _blindCandidates
-from keri.app.credential_disclosing import registryProof, boundEvent
-from keri.app.registry_custody import RegistryCustody
-from keri.core import Blinder, BlindState, BoundState, Compactor, Parser, SerderACDC
+from keri.acdc import regeventing
+from keri.core import (Blinder, BlindState, BoundState, Compactor, Parser, SerderACDC,
+                       Number, messagize)
 from keri.peer import exchanging
 
 
-def custody(vault):
-    """Compose optional encrypted derivation over the wallet's existing table.
+def opening(raw):
+    """Decode exactly one complete event opening, preserving its primitive bytes."""
+    wire = raw.qb64 if isinstance(raw, Blinder) else raw.decode() if isinstance(raw, bytes) else raw
+    for clan in (BlindState, BoundState):
+        try:
+            candidate = Blinder(clan=clan, qb64=wire)
+        except (kering.KeriError, ValueError, TypeError):
+            continue
+        if candidate.qb64 == wire:
+            return candidate
+    raise kering.ValidationError('Supply exactly one complete CESR opening')
 
-    Args:
-        vault: Open vault owning Habery, Regery and LocksmithBaser.
 
-    Returns:
-        RegistryCustody: Adapter that authenticates Keeper only when used. Merely
-            viewing or presenting held material never calls this function.
-    """
-    return RegistryCustody(vault.hby, vault.rgy, db=vault.db)
+def bound_options(vault, acdc, event):
+    """Resolve the explicitly selected digest to its accepted Issuee KEL coordinate."""
+    body = vault.hby.db.evts.get((acdc.iseaid, event)) if acdc.iseaid else None
+    if (body is None or vault.hby.db.kels.getLast(keys=acdc.iseaid, on=body.sn) != event
+            or not vault.hby.db.fullyWitnessed(body)):
+        raise kering.MissingAnchorError('Selected Issuee event is not accepted and fully witnessed')
+    return dict(bound=True, bsn=body.sn, bd=body.said)
+
+
+def registry_root(vault, aid, regid):
+    """Read an existing authorized local scope; new roots belong to futureDhke."""
+    if aid not in vault.hby.prefixes:
+        raise kering.ConfigurationError('Registry derivation requires a local identifier')
+    if vault.rgy.store.seqEvent(regid, 0) is None:
+        raise kering.MissingChainError('Registry derivation requires an accepted inception')
+    try:
+        root = vault.hby.mgr.getRegistryRoot(aid, regid)
+    except ValueError as error:
+        raise kering.AuthError('Retained registry root cannot be unlocked') from error
+    if root is None:
+        raise kering.ConfigurationError('No provisioned registry root for this local identifier')
+    return root
 
 
 def material(vault, view, *, paths=(), refresh=False, openings=(), derive=False, bound_event=None):
@@ -60,36 +83,45 @@ def material(vault, view, *, paths=(), refresh=False, openings=(), derive=False,
     node = nodes[0]
     credential = node.serder
     if refresh:
-        regid = issuerRegistry(credential)
+        regid = credential.sad.get('rd')
         if not regid:
-            sources = {pre.qb64 for pre, _, _ in node.ssts
-                       if vault.rgy.store.seqEvent(pre.qb64, 0) is not None}
-            if len(sources) != 1:
-                raise kering.ValidationError('Disclosure has no unique issuer registry reference')
-            regid = sources.pop()
+            raise kering.ValidationError('Disclosure has no issuer registry reference')
         retained = [Blinder(clan=clan, qb64=b''.join(part.qb64b for part in proof))
                     for clan, groups in ((BlindState, node.bsqs), (BoundState, node.bsss))
                     for proof in groups]
-        for raw_opening in openings:
-            candidates = _blindCandidates(raw_opening)
-            if len(candidates) != 1:
-                raise kering.ValidationError('Supply exactly one CESR opening per value')
-            retained.append(candidates[0])
-        explicit = boundEvent(vault.hby, credential, bound_event) if bound_event else {}
-        issued = vault.db.issued.get((credential.said,))
-        provider = custody(vault) if derive else None
-        def derive_opening(update, target, state):
-            """Derive only this selected registry's event-specific candidate."""
-            parameters = explicit
-            if not parameters and issued and issued.update == update.said and issued.blinder:
-                original, = _blindCandidates(issued.blinder)
-                if original.clan == BoundState:
-                    parameters = dict(bound=True, bsn=original.bsn, bd=original.bd)
-            if parameters and not target:
-                parameters = dict(bound=True, bsn=0, bd='')
-            return provider.derive(regid, update.sn, target, state, **parameters)
-        raw = registryProof(vault.hby, vault.rgy, credential, regid, retained=retained,
-                            derive=derive_opening if provider else None)
+        retained.extend(opening(raw) for raw in openings)
+        rip = vault.rgy.store.seqEvent(regid, 0)
+        head = vault.rgy.store.headEvent(regid)
+        if rip is None or head is None:
+            raise kering.MissingChainError('Missing accepted registry history')
+        updates = [vault.rgy.store.seqEvent(regid, sn) for sn in range(1, head.sn + 1)]
+        if any(update is None for update in updates):
+            raise kering.MissingChainError('Incomplete accepted registry history')
+        if derive:
+            aids = {aid for aid in (credential.iseaid, credential.israid) if aid in vault.hby.prefixes}
+            if len(aids) != 1:
+                raise kering.ConfigurationError('Derivation requires one local credential controller')
+            root = registry_root(vault, aids.pop(), regid)
+            coordinates = bound_options(vault, credential, bound_event) if bound_event else {}
+            for update in reversed(updates):
+                if any(item.said == update.sad['b'] for item in retained):
+                    continue
+                candidate = Blinder.unblind(update.sad['b'], salt=root.qb64,
+                    sn=update.sn, acdc=credential.said, states=['issued', 'revoked'],
+                    bound=bool(coordinates),
+                    bounds=[(coordinates['bsn'], coordinates['bd'])] if coordinates else None)
+                if candidate is None:
+                    candidate = Blinder.unblind(update.sad['b'], salt=root.qb64,
+                        sn=update.sn, acdc='', states=[''], bound=bool(coordinates),
+                        bounds=[(0, '')] if coordinates else None)
+                if candidate is None:
+                    raise kering.ValidationError('Root and explicit coordinates do not open the selected registry')
+                retained.append(candidate)
+        # Selection is explicit: never hydrate from arbitrary locally held openings.
+        unique = {item.qb64: item for item in retained}
+        regeventing.vetBinds(rip, updates, db=vault.hby.db, blinders=unique.values(),
+                             target=credential.said, acdc=credential)
+        raw = messagize(credential, bonds=[item.data for item in unique.values()], framed=False)
         node = Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(raw), processive=False)
     node = replace(node, serder=select(credential, paths))
     from locksmith.core.credentialing import authentication

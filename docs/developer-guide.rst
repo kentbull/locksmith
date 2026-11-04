@@ -69,13 +69,74 @@ Once the editable install is in place:
 ACDC Graph Policy
 -----------------
 
-The vault shares one KERIpy graph verification context across its IPEX handlers.
-Only an explicit ``True``
-evaluation permits new receipt consent, inventory, or Grant signing/delivery.
-An unresolved result or missing evaluation evidence uses the existing waiting
-state; ``False`` refuses the action. An authenticated Grant remains retained
-for inspection or refusal. Existing accepted inventory and identical receipt
-recovery remain historical records, even if current evidence changes.
+The vault composes ordinary KERIpy IPEX handlers and its one native ``Regery``
+with the existing exchanger and mailbox scheduler. New Grant signing checks the
+exact selected substreams using the native graph walk, schema checks and
+``EdgeVerdict`` reduction. Final signed IPEX verification remains authoritative.
+New admission and outgoing use recheck the exact accepted Grant through
+``Exchanger.reverifyGrant``. A valid native verdict plus authenticated ``issued``
+state for every disclosed registry-backed node permits use. Retryable unknown
+waits; invalid evidence refuses. Registry-free KEL/signature nodes need no
+registry-state record.
+
+Inventory, explicit receipt consent, inbox retention and saved-message delivery
+remain application-owned. A saved signed Admit and its consent are historical
+commitments: recovery keeps the same body, SAID, attachments and KEL anchor,
+including after revocation. Recovery grants no new disclosure authority. Exchange
+history preserves exact selected views; a later fuller Grant cannot hydrate an
+older admission. Recorded registry observations are not a current-state verdict.
+
+Current IPEX wire values carry one DAG: ``q.dp = [[[schema, "/", fields], ...]]``;
+``[[]]`` inherits the earlier plan. Opening exchanges use native ``xip`` and do
+not contain reply-only ``p``/``x`` fields. Retired flat plans are not rewritten.
+
+Registry Evidence and Existing Roots
+------------------------------------
+
+Configured acquisition sends authenticated queries and independently verifies
+supporting KEL/TEL through a strict parser sharing the vault Kramer and native
+Regery. A response must carry the requested registry's complete ordered TEL and
+its exact accepted head. Unrelated scopes, rollback, missing KEL and incomplete
+frames fail verification. Observer metadata and acquisition age are telemetry;
+they do not authorize admission or replace native current evidence. The existing
+finite Qt request timeout, cancellation and cleanup paths remain in use.
+
+Event openings are native ``Blinder`` values. ``putOpening(eventSaid, blinder)``
+is used only after exact accepted TEL membership; inspecting a credential never
+writes an opening. Public transport includes openings only from locally issued
+records explicitly marked public. Core public TEL cloning remains body-only and
+never exposes arbitrary held openings or registry roots.
+
+Optional derivation reads an existing encrypted Keeper root scoped to a local
+AID and registry. Bound derivation requires an explicitly selected accepted,
+fully witnessed Issuee event; it never substitutes the current KEL tip. Ordinary
+held proof use and supplied openings remain independent of absent or damaged
+root custody. Plaintext ``RegistryCustody`` export/import and its app table have
+been removed.
+
+This foundation does not implement DH/Unblind operations or their UI. New root
+creation requires the subsequent ``futureDhke`` consent lifecycle; root transfer
+requires ``RegistrySalt``. The next unit must compose vault-owned process-local
+operations, pending Grant display and explicit consent. Ephemeral keys must not
+be stored in the durable outbox.
+
+Regression disposition
+~~~~~~~~~~~~~~~~~~~~~~
+
+The graph-use regression retains the forbidden-signer guard and complete graph
+shape. Its obsolete expectation that an invalid graph becomes accepted history
+is replaced by native refusal or schema escrow. All five interrupted admission
+boundaries now run for signature, KEL-anchor and registry factors; witness timeout
+and witness-rotation quorum tests retain their original topology and deadlines.
+The admitted-view regression retains actual selection controls and reopen checks.
+
+Observer header/age-policy cases are retired and replaced by exact scope, complete
+proof, rollback and header-nonauthority checks. Registry socket timeout,
+cancellation, publication head and current full-evidence observer checks remain.
+The plaintext custody handoff scenario is retired pending RegistrySalt transfer;
+rootless held proofs, supplied-opening independence and damaged-root isolation
+remain. Existing encrypted-root fixtures cover native derivation, explicit bound
+coordinates and reopen without claiming to test root provisioning.
 
 Building the Docs
 -----------------

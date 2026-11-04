@@ -7,10 +7,9 @@ collection and acceptance remain separate.
 """
 from keri import kering
 from keri.acdc import Registrar, messaging
-from keri.app.credential_disclosing import boundEvent
 from keri.core import messagize
 
-from locksmith.core.disclosing import custody
+from locksmith.core.disclosing import bound_options as selected_bound_options, registry_root
 
 MODES = ('public', 'blinded', 'derived')
 
@@ -24,7 +23,7 @@ def bound_options(vault, acdc, event):
     """
     if not event:
         return {}
-    options = boundEvent(vault.hby, acdc, event)
+    options = selected_bound_options(vault, acdc, event)
     if vault.hby.kevers[acdc.iseaid].serder.said != event:
         raise kering.ConfigurationError('New bound update requires the known current issuee event')
     return options
@@ -60,11 +59,11 @@ def stage(vault, registry, acdc, state, mode, *, bound_event=None):
         raise kering.ConfigurationError('Historical upd heads cannot author current ACDC v2 standing')
     if mode in ('public', 'blinded'):
         opening, event = Registrar(rgy=vault.rgy).issue(registry, acdc, state=state, **coordinates)
-        if mode == 'public':
-            vault.rgy.store.retainOpening(event, opening)
     else:
-        opening = custody(vault).derive(registry.regk, head.sn + 1, acdc.said,
-                                        state, **coordinates)
+        root = registry_root(vault, registry.hab.pre, registry.regk)
+        from keri.core import Blinder
+        opening = Blinder.blind(salt=root.qb64, sn=head.sn + 1, acdc=acdc.said,
+                                state=state, **coordinates)
         event = messaging.blindate(registry.regk, head.said, opening.said,
                                    sn=head.sn + 1)
         registry.processEvent(event)

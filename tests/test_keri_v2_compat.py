@@ -29,7 +29,7 @@ from locksmith.plugins.kerifoundation.db.basing import (
 )
 from locksmith.plugins.kerifoundation.onboarding import service as onboarding_service
 
-IPEX_PLAN = [[coring.Diger(ser=b'locksmith test schema').qb64, '/', []]]
+IPEX_PLAN = [[[coring.Diger(ser=b'locksmith test schema').qb64, '/', []]]]
 
 
 @pytest.mark.parametrize(
@@ -575,7 +575,8 @@ def _ipex_status(vault, said):
 
 def _conversation(vault, xid):
     return sorted((serder for _, serder in vault.hby.db.exns.getTopItemIter()
-                   if serder.ked.get('x') == xid), key=lambda serder: serder.ked['dt'])
+                   if (serder.said if serder.ilk == 'xip' else serder.ked.get('x')) == xid),
+                  key=lambda serder: serder.ked['dt'])
 
 
 def _ipex_fixture(issuer, holder, learn_peers=True, delegated=False):
@@ -725,7 +726,7 @@ def test_ipex_sessions_five_messages_retry_reopen_and_prune(
         assert app.vault.mbx.parser.exc is app.vault.exc
 
     apply = send(holder, issuer, hh, ipexing.apply(
-        hh, ih.pre, 'Apply', modifiers=dict(dp=[[schema, '/', []]]), ax=[anchored]))
+        hh, ih.pre, 'Apply', modifiers=dict(dp=[[[schema, '/', []]]]), ax=[anchored]))
     offer = send(issuer, holder, ih, ipexing.offer(
         ih, 'Offer', acdc, apply=apply, ax=[anchored]))
     agree = send(holder, issuer, hh, ipexing.agree(hh, 'Agree', offer))
@@ -755,16 +756,16 @@ def test_ipex_sessions_five_messages_retry_reopen_and_prune(
     assert issuer.vault.notifier.getNoteCnt() == 3
 
     for app in (issuer, holder):
-        assert len(_conversation(app.vault, apply.ked['x'])) == 5
+        assert len(_conversation(app.vault, apply.said)) == 5
         for exn, stream in messages:
-            assert app.hby.db.kramTMSC.get((exn.pre, exn.ked['x'], exn.said)) is not None
+            assert app.hby.db.kramTMSC.get((exn.pre, apply.said, exn.said)) is not None
             _deliver_ipex(app.vault, stream)
         assert app.vault.notifier.getNoteCnt() == (3 if app is issuer else 2)
 
     assert issuer.hby.db.path != holder.hby.db.path
     assert issuer.vault.rgy.baser.path != holder.vault.rgy.baser.path
     old_hab, old_rgy = ih, issuer.vault.rgy
-    regk, xid = reg.regk, apply.ked['x']
+    regk, xid = reg.regk, apply.said
     old_stores = [issuer.hby.db, issuer.hby.ks, issuer.rgy.baser, issuer.vault.db,
                   issuer.vault.rep.mbx, issuer.vault.notifier.noter]
     issuer.close_vault()
@@ -992,18 +993,27 @@ def test_ipex_outbox_rechecks_revoked_route_before_send(ipex_vaults, monkeypatch
     for _ in range(64):
         sender.qtask.run()
     record = sender.vault.db.outbox.get((exn.said,))
-    assert record.status == 'blocked' and record.attempts == 0
-    assert record.missing_route
-    assert deliveries == []
+    # Native endpoint selection excludes the revoked endpoint. An independently
+    # authorized endpoint remains usable; without one, no transport may start.
+    assert peer.pre not in hab.endsFor(peer.pre).get(role, {})
+    if mixed:
+        assert set(hab.endsFor(peer.pre)[role]) == {active.pre}
+        assert record.status == 'failed' and record.attempts == 1
+        assert not record.missing_route
+        assert deliveries == [peer.pre]
+    else:
+        assert record.status == 'blocked' and record.attempts == 0
+        assert record.missing_route
+        assert deliveries == []
     sender.hby.psr.parse(ims=bytearray(peer.makeEndRole(
         eid=peer.pre, role=role, allow=True)))
     ipexing.retry(sender.vault, exn.said)
     for _ in range(64):
         sender.qtask.run()
     record = sender.vault.db.outbox.get((exn.said,))
-    assert record.status == 'failed' and record.attempts == 1
+    assert record.status == 'failed' and record.attempts == (2 if mixed else 1)
     assert not record.missing_route
-    assert deliveries == [peer.pre]
+    assert deliveries == [peer.pre] * (2 if mixed else 1)
     assert exchanging.serializeMessage(sender.hby, exn.said) == retained
 
 
@@ -1134,7 +1144,7 @@ def test_expired_ipex_grant_recovers_in_a_fresh_conversation(ipex_vaults, monkey
 
     def negotiate():
         apply = deliver(holder, issuer, hh, ipexing.apply(
-            hh, ih.pre, 'Apply', modifiers={'dp': [[schema, '/', []]]}))
+            hh, ih.pre, 'Apply', modifiers={'dp': [[[schema, '/', []]]]}))
         offer = deliver(issuer, holder, ih, ipexing.offer(ih, 'Offer', acdc, apply=apply))
         agree = deliver(holder, issuer, hh, ipexing.agree(hh, 'Agree', offer))
         grant = deliver(issuer, holder, ih, ipexing.grant(ih, hh.pre, 'Grant', proofed, agree=agree))
@@ -1142,7 +1152,10 @@ def test_expired_ipex_grant_recovers_in_a_fresh_conversation(ipex_vaults, monkey
 
     apply, agree, grant = negotiate()
     assert _ipex_status(holder.vault, grant.said) == 'pending_verification'
-    future = helping.nowUTC() + timedelta(seconds=holder.vault.exc.TimeoutPSE + 1)
+    # Authenticated pending Grants retain their original XID lifetime, rather
+    # than the shorter partial-signature wait used by unauthenticated messages.
+    deadline = holder.hby.db.epsd.get((grant.said,))
+    future = helping.fromIso8601(deadline.dts) + timedelta(seconds=1)
     monkeypatch.setattr(helping, 'nowUTC', lambda: future)
     _retry_ipex(holder.vault)
     assert _ipex_status(holder.vault, grant.said) == 'unverified'
@@ -1163,7 +1176,7 @@ def test_expired_ipex_grant_recovers_in_a_fresh_conversation(ipex_vaults, monkey
 
     monkeypatch.setattr(helping, 'nowUTC', ticking_now)
     fresh_apply, _, fresh_grant = negotiate()
-    assert fresh_apply.ked['x'] != apply.ked['x']
+    assert fresh_apply.said != apply.said
     assert _ipex_status(holder.vault, fresh_grant.said) == 'protocol_verified'
     assert _ipex_status(holder.vault, grant.said) == 'unverified'
 

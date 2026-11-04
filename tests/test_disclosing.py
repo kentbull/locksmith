@@ -1,5 +1,4 @@
 """Application negotiation uses exact held material and explicit capabilities."""
-import os
 
 import pytest
 from keri import kering
@@ -87,14 +86,12 @@ def test_application_graduates_one_held_view_without_custody(ipex_vaults, separa
     assert isinstance(snapshots[0]['sad']['a']['private'], str)
     assert snapshots[1]['sad']['a']['private']['value'] == 'private-field'
     assert credentialing.credential(verifier.vault, said, grant=snapshots[0]['grant'])['proof'] == snapshots[0]['proof']
-    assert not list(presenter_app.vault.db.custody.getTopItemIter())
+    assert not list(presenter_app.hby.mgr.ks.rroots.getTopItemIter())
 
 
 @pytest.mark.parametrize('custodyState', ['absent', 'corrupt', 'old-aeid'])
 def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaults, custodyState):
     """Held presentation and supplied openings ignore absent or unusable custody."""
-    from keri.app.registry_custody import EncryptedCustody
-    from keri.core import Signer
 
     source = ipex_vaults('opening-issuer')
     target = ipex_vaults('opening-holder',
@@ -108,21 +105,25 @@ def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaul
     original = credentialing.credential(source.vault, said)
     acdc = SerderACDC(sad=original['sad'])
     registry = source.vault.rgy.regs[acdc.regid]
-    evidence.processor(target.vault).ingest(evidence.processor(source.vault).clone([acdc.regid]))
+    evidence.receive(target.vault, acdc.regid, evidence.clone(source.vault, acdc.regid),
+                     {'content-type': 'application/cesr'})
     held = _grant(source, target, issuer, holder, said)
-    assert not list(target.vault.db.custody.getTopItemIter())
+    assert not list(target.hby.mgr.ks.rroots.getTopItemIter())
     if custodyState != 'absent':
-        # Deliberately unusable local capability state; no secret is transferred.
-        aeid = (target.hby.mgr.aeid if custodyState == 'corrupt'
-                else Signer(transferable=False).verfer.qb64)
-        target.vault.db.custody.pin((acdc.regid,), EncryptedCustody(aeid, 'invalid ciphertext'))
+        from keri.core import Encrypter, Signer, Salter
+        signer = Signer()
+        cipher = (Encrypter(verkey=signer.verfer.qb64).encrypt(prim=Salter())
+            if custodyState == 'old-aeid' else
+            Encrypter(verkey=target.hby.mgr.aeid).encrypt(prim=Signer()))
+        target.hby.mgr.ks.rroots.pin((holder.pre, acdc.regid), cipher)
     _grant(target, source, holder, issuer, said, from_grant=held)
     old = Blinder(clan=BlindState, qb64=source.vault.db.issued.get((said,)).blinder)
     opening, event = Registrar(rgy=source.vault.rgy).issue(registry, acdc, state='issued')
-    issuer.interact(data=[dict(s=event.sad['n'], d=event.said)])
+    issuer.interact(data=[dict(i=registry.regk, s=event.sad['n'], d=event.said)])
     assert registry.anchorMsg(event.said)
-    result = evidence.processor(target.vault).ingest(evidence.processor(source.vault).clone([acdc.regid]))
-    assert not result['pending'] and not result['rejected']
+    result = evidence.receive(target.vault, acdc.regid, evidence.clone(source.vault, acdc.regid),
+                     {'content-type': 'application/cesr'})
+    assert result.said == event.said
     view = credentialing.credential(target.vault, said, grant=held)
     offer = ipexing.start(target.vault, holder, issuer.pre, 'Offer',
                          credential_said=said, from_grant=held)
@@ -130,113 +131,22 @@ def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaul
     with pytest.raises(kering.ValidationError, match='verified issued state'):
         ipexing.grant(target.vault, holder, said, issuer.pre, from_grant=held)
     for proofs in ((), [old.qb64b], [Blinder.blind(acdc='').qb64b]):
-        with pytest.raises(kering.ConfigurationError, match='current registry opening unavailable'):
+        with pytest.raises(kering.ValidationError):
             disclosing.material(target.vault, view, refresh=True, openings=proofs)
     if custodyState != 'absent':
-        with pytest.raises(kering.AuthError):
+        with pytest.raises(kering.KeriError):
             disclosing.material(target.vault, view, refresh=True, derive=True)
     refreshed = disclosing.material(target.vault, view, refresh=True, openings=[opening.qb64b])
     assert refreshed['sad'] == view['sad'] and refreshed['status']['et'] == 'issued'
     assert credentialing.credential(target.vault, said, grant=held)['proof'] == view['proof']
     if custodyState == 'absent':
-        assert not list(target.vault.db.custody.getTopItemIter())
+        assert not list(target.hby.mgr.ks.rroots.getTopItemIter())
     with pytest.raises(ValueError, match='explicit state refresh'):
         disclosing.material(target.vault, view, openings=[opening.qb64b])
 
 
-@pytest.mark.parametrize('damage', ['corrupt', 'old-aeid'])
-@pytest.mark.parametrize('bound', [False, True])
-@pytest.mark.skipif(os.name != 'posix', reason='protected plaintext custody handoff requires POSIX')
-def test_protected_custody_handoff_derives_without_gating_held_proofs(ipex_vaults, tmp_path, damage, bound):
-    """Preserve real POSIX handoff, bound derivation and ordinary proof use after damage."""
-    from keri.acdc import acdcmap, blindate
-    from keri.app.registry_custody import EncryptedCustody
-    from keri.core import Signer, messagize
-    from locksmith.db.basing import IssuedCredential
-    password = '0123456789abcdefghijk'
-    source = ipex_vaults('derive-issuer', bran=password)
-    target = ipex_vaults('derive-holder', bran=password)
-    issuer, holder = source.hby.makeHab(name='issuer'), target.hby.makeHab(name='holder')
-    schema = _load_schema(source, issuer)
-    target.hby.db.schema.pin((schema.said,), schema)
-    _introduce(source, target)
-    _introduce(target, source)
-    registry = Registrar(rgy=source.vault.rgy).makeRegistry('derived', issuer.pre)
-    rip = source.vault.rgy.store.event(registry.regk)
-    issuer.interact(data=[dict(s='0', d=rip.said)])
-    assert registry.anchorMsg(rip.said)
-    provider = disclosing.custody(source.vault)
-    provider.createCustody(registry.regk, holder.pre)
-    acdc = acdcmap(israid=issuer.pre, regid=registry.regk, schema=schema.said,
-                   attribute={'d': '', 'i': holder.pre, 'LEI': 'retained-content'})
-
-    selected = holder.kever.serder
-
-    def advance(ordinal):
-        """Author a genuine blinded update and acquire its ordinary verified proof."""
-        prior = source.vault.rgy.store.headEvent(registry.regk)
-        coordinates = dict(bound=True, bsn=selected.sn, bd=selected.said) if bound else {}
-        opening = provider.derive(registry.regk, ordinal, acdc.said, 'issued', **coordinates)
-        event = blindate(registry.regk, prior.said, opening.said, sn=ordinal)
-        registry.processEvent(event)
-        issuer.interact(data=[dict(s=event.sad['n'], d=event.said)])
-        assert registry.anchorMsg(event.said)
-        proof = messagize(acdc, bonds=[opening.data])
-        source.vault.db.issued.pin((acdc.said,), IssuedCredential(
-            acdc.raw.decode(), blinder=opening.qb64, update=event.said, stream=proof.decode()))
-        result = evidence.processor(target.vault).ingest(evidence.processor(source.vault).clone([registry.regk]))
-        assert not result['pending'] and not result['rejected']
-        return opening
-
-    advance(1)
-    held = _grant(source, target, issuer, holder, acdc.said)
-    transfer = tmp_path / 'custody.json'
-    provider.exportCustody(registry.regk, transfer)
-    disclosing.custody(target.vault).importCustody(transfer, regid=registry.regk,
-                                                 controller=issuer.pre, discloser=holder.pre)
-    if bound:
-        holder.rotate()
-        selected = holder.kever.serder
-        _introduce(target, source)
-    advance(2)
-    options = dict(bound_event=selected.said) if bound else {}
-    if bound:
-        # Existing openings must keep their exact historical coordinates after rotation.
-        holder.rotate()
-        _introduce(target, source)
-    earlier = credentialing.credential(target.vault, acdc.said, grant=held)
-    if bound:
-        with pytest.raises(kering.ValidationError, match='accepted witnessed issuee'):
-            disclosing.material(target.vault, earlier, refresh=True, derive=True, bound_event=Noncer().qb64)
-        with pytest.raises(kering.ConfigurationError, match='current registry opening unavailable'):
-            disclosing.material(target.vault, earlier, refresh=True, derive=True,
-                                 bound_event=holder.kever.serder.said)
-    assert disclosing.material(target.vault, earlier, refresh=True, derive=True, **options)['status']['et'] == 'issued'
-    if bound:
-        from PySide6.QtCore import Qt
-        from PySide6.QtTest import QTest
-        from locksmith.ui.vault.credentials.disclosure import DisclosureOptions
-        controls = DisclosureOptions(target.vault)
-        controls.select(acdc.said)
-        controls.show()
-        controls.refresh.setChecked(True)
-        controls.source.setCurrentIndex(controls.source.findData('derive'))
-        controls.bound_event.line_edit.setFocus()
-        QTest.keyClicks(controls.bound_event.line_edit, selected.said)
-        # The UI's exact selection must survive the actual signed onward Grant.
-        _grant(target, source, holder, issuer, acdc.said, **controls.selection())
-        controls.close()
-    current = _grant(source, target, issuer, holder, acdc.said, message='Current opening')
-    stored = target.vault.db.custody.get((registry.regk,))
-    damaged = (EncryptedCustody(stored.aeid, 'invalid ciphertext') if damage == 'corrupt'
-               else EncryptedCustody(Signer(transferable=False).verfer.qb64, stored.cipher))
-    target.vault.db.custody.pin((registry.regk,), damaged)
-    with pytest.raises(kering.AuthError):
-        disclosing.material(target.vault, earlier, refresh=True, derive=True, **options)
-    # This retained event-2 opening is sufficient; ordinary presentation never
-    # loads the damaged salt record and still passes ACDC v2 IPEX verification.
-    grant, atc = ipexing.grant(target.vault, holder, acdc.said, issuer.pre, from_grant=current)
-    assert ipexing.prepare(target.vault, holder, grant, atc)
+# The protected plaintext RegistryCustody export/import scenario is retired.
+# RegistrySalt auxiliary transfer and futureDhke consent are a subsequent unit.
 
 
 def test_graduated_offer_dialog_previews_exact_sent_fields(ipex_vaults, qapp):
@@ -322,3 +232,63 @@ def test_offer_start_selects_sections_with_real_controls(ipex_vaults, qapp):
     node, = exchanging.loadParsedNestedSubstreams(app.hby, offer.said)
     assert node.serder.sad['a']['status']['value'] == 'selected'
     assert isinstance(node.serder.sad['a']['private'], str)
+
+
+@pytest.mark.parametrize('bound', [False, True])
+def test_existing_keeper_root_derives_only_explicit_accepted_selection(ipex_vaults, bound):
+    """Seed an existing-root fixture; this does not exercise or replace root transfer."""
+    from keri.core import Salter
+    from keri.acdc import acdcmap
+    from locksmith.core import registry_authoring
+    from locksmith.db.basing import IssuedCredential
+
+    source = ipex_vaults('existing-root-issuer', bran='0123456789abcdefghijk')
+    target = ipex_vaults('existing-root-holder', bran='0123456789abcdefghijk')
+    issuer, holder = source.hby.makeHab(name='issuer'), target.hby.makeHab(name='holder')
+    schema = _load_schema(source, issuer)
+    target.hby.db.schema.pin((schema.said,), schema)
+    _introduce(source, target)
+    _introduce(target, source)
+    registry = Registrar(rgy=source.vault.rgy).makeRegistry('existing', issuer.pre)
+    rip = source.vault.rgy.store.event(registry.regk)
+    issuer.interact(data=[dict(i=registry.regk, s=rip.sad['n'], d=rip.said)])
+    assert registry.anchorMsg(rip.said)
+    root = Salter()
+    source.hby.mgr.putRegistryRoot(issuer.pre, registry.regk, root)
+    acdc = acdcmap(israid=issuer.pre, schema=schema.said, regid=registry.regk,
+                   attribute={'d': '', 'i': holder.pre, 'LEI': 'existing-root'})
+    selected = holder.kever.serder.said if bound else None
+    first, event, proof = registry_authoring.stage(source.vault, registry, acdc,
+        'issued', 'derived', bound_event=selected)
+    issuer.interact(data=[dict(i=registry.regk, s=event.sad['n'], d=event.said)])
+    assert registry.anchorMsg(event.said)
+    source.vault.db.issued.pin((acdc.said,), IssuedCredential(acdc.raw.decode(),
+        first.qb64, event.said, proof.decode(), registry_mode='derived'))
+    evidence.receive(target.vault, registry.regk, evidence.clone(source.vault, registry.regk),
+                     {'content-type': 'application/cesr'})
+    held = _grant(source, target, issuer, holder, acdc.said)
+    target.hby.mgr.putRegistryRoot(holder.pre, registry.regk, root)
+    later, update, _ = registry_authoring.stage(source.vault, registry, acdc,
+        'issued', 'derived', bound_event=selected)
+    issuer.interact(data=[dict(i=registry.regk, s=update.sad['n'], d=update.said)])
+    assert registry.anchorMsg(update.said)
+    evidence.receive(target.vault, registry.regk, evidence.clone(source.vault, registry.regk),
+                     {'content-type': 'application/cesr'})
+    view = credentialing.credential(target.vault, acdc.said, grant=held)
+    before = view['proof']
+    if bound:
+        holder.rotate()
+        with pytest.raises(kering.ValidationError):
+            disclosing.material(target.vault, view, refresh=True, derive=True)
+    refreshed = disclosing.material(target.vault, view, refresh=True, derive=True,
+                                     bound_event=selected)
+    assert later.qb64b in refreshed['proof']
+    assert refreshed['sad'] == view['sad']
+    assert refreshed['status']['et'] == 'issued'
+    assert credentialing.credential(target.vault, acdc.said, grant=held)['proof'] == before
+    target.close_vault()
+    target = ipex_vaults('existing-root-holder', bran='0123456789abcdefghijk')
+    assert disclosing.registry_root(target.vault, holder.pre, registry.regk).qb64 == root.qb64
+    # Merely cloning accepted public TEL cannot disclose held proofs or roots.
+    assert root.qb64b not in target.vault.rgy.store.cloneTel(registry.regk)
+    assert later.qb64b not in target.vault.rgy.store.cloneTel(registry.regk)

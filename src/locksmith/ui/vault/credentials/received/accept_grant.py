@@ -324,7 +324,7 @@ class AcceptGrantDialog(LocksmithDialog):
             self._save_admit_to_file(serder.said, stream)
         except Exception as error:
             logger.exception("Failed to accept credential")
-            self.show_error(f"Failed to accept credential: {error}")
+            self.show_error(f"Failed to accept credential: {self._error_reason(error)}")
             self._reset_button()
 
     def _send_admit_async(self):
@@ -355,7 +355,7 @@ class AcceptGrantDialog(LocksmithDialog):
                                     {'said': self._pending_said, 'error': record.error})
         except Exception as error:
             logger.exception("Failed to submit credential acknowledgment")
-            self.show_error(f"Failed to submit acknowledgment: {error}")
+            self.show_error(f"Failed to submit acknowledgment: {self._error_reason(error)}")
             self._reset_button()
             receipt = self.vault.db.receipts.get((self.recipient, self.grant_said))
             if receipt is not None and receipt.send:
@@ -452,6 +452,14 @@ class AcceptGrantDialog(LocksmithDialog):
             self.delivery_notice.setText('Credential added; receipt not exported. You can export it later.')
             self.delivery_notice.show()
             self._reset_button()
+
+    @staticmethod
+    def _error_reason(error):
+        """Identify missing schema evidence while preserving other failure details."""
+        cause = error.__cause__ if isinstance(error, credentialing.RegistryEvidencePending) else error
+        if isinstance(cause, kering.MissingSchemaError):
+            return f"Missing credential schema: {cause}"
+        return str(error)
 
     def _reset_button(self):
         """Reset admit button to enabled state."""
