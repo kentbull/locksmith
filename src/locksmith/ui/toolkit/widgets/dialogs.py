@@ -350,8 +350,9 @@ class LocksmithDialog(QDialog):
 
         # Create content container widget
         content_container = QWidget()
+        content_container.setObjectName("dialog-content")
         content_container.setStyleSheet("""
-            QWidget {
+            QWidget#dialog-content {
                 background-color: transparent;
             }
         """)

@@ -98,7 +98,16 @@ def test_dialog_refits_wrapped_text_after_scrolling(qapp):
     qapp.processEvents()
     assert dialog.scroll_area.verticalScrollBarPolicy() == Qt.ScrollBarPolicy.ScrollBarAsNeeded
     assert dialog.scroll_area.verticalScrollBar().maximum() > 0
-    dialog.close()
+
+    # Content transparency must not erase a nested file picker's normal background.
+    picker = QFileDialog(label, 'Choose file')
+    picker.open()
+    qapp.processEvents()
+    try:
+        assert picker.grab().toImage().pixelColor(4, 4).alpha() == 255
+    finally:
+        picker.close()
+        dialog.close()
 
 
 @pytest.fixture
