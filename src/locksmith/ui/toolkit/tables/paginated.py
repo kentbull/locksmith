@@ -88,9 +88,7 @@ class PaginatedTableWidget(QWidget):
             transform_func: Optional[Callable[[Dict[str, Any]], Dict[str, Any]]] = None,
             monospace_columns: Optional[List[str]] = None,
             filter_func: Optional[Callable] = None,
-            parent=None,
-            *,
-            separate_toolbar: bool = False
+            parent=None
     ):
         """
         Initialize the PaginatedTableWidget.
@@ -121,7 +119,6 @@ class PaginatedTableWidget(QWidget):
             filter_func: Optional callback function to invoke when filter button is clicked.
                         When provided, a filter button appears to the left of the search box.
             parent: Parent widget
-            separate_toolbar: Put header search and actions below the title
         """
         super().__init__(parent)
 
@@ -180,8 +177,7 @@ class PaginatedTableWidget(QWidget):
             show_search=show_search,
             show_add_button=show_add_button,
             add_button_text=add_button_text,
-            filter_func=filter_func,
-            separate_toolbar=separate_toolbar
+            filter_func=filter_func
         )
         self.header.search_changed.connect(self._on_search_changed)
         self.header.add_clicked.connect(self.add_clicked.emit)
@@ -238,7 +234,6 @@ class PaginatedTableWidget(QWidget):
         # Table behavior
         self.table.setSelectionBehavior(QAbstractItemView.SelectionBehavior.SelectRows)
         self.table.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.table.setTabKeyNavigation(False)
         self.table.setEditTriggers(QAbstractItemView.EditTrigger.NoEditTriggers)  # Read-only
         self.table.setShowGrid(False)
         self.table.verticalHeader().setVisible(False)  # Hide row numbers
@@ -653,7 +648,7 @@ class PaginatedTableWidget(QWidget):
 
         return [f"{prefix}{api_field}"]
 
-    def set_static_data(self, data: List[Dict[str, Any]], *, reset_page: bool = True):
+    def set_static_data(self, data: List[Dict[str, Any]]):
         """
         Set static data for client-side filtering, sorting, and pagination.
 
@@ -662,13 +657,11 @@ class PaginatedTableWidget(QWidget):
 
         Args:
             data: List of dictionaries representing rows
-            reset_page: Return to page one, or keep the current page during a refresh.
         """
         self._static_data = data
         # Switch to the static loader for subsequent _load_data calls
         self.loader_func = self._default_static_loader
-        if reset_page:
-            self.current_page = 1
+        self.current_page = 1
         self._load_data()
         logger.debug(f"Static data set: {len(data)} items")
 

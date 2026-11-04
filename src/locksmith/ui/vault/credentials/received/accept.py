@@ -15,7 +15,6 @@ from keri.core import serdering
 
 from keri import kering
 from locksmith.ui import colors
-from locksmith.ui.vault.credentials.received.accept_grant import AcceptGrantDialog
 from locksmith.ui.toolkit.widgets import (
     LocksmithDialog,
     LocksmithButton,
@@ -61,7 +60,7 @@ class AcceptCredentialDialog(LocksmithDialog):
         layout.setSpacing(15)
 
         # Instructions section
-        instructions_label = QLabel("Import Grant")
+        instructions_label = QLabel("Accept Credential Issuance")
         instructions_label.setStyleSheet("font-weight: bold; font-size: 14px;")
         layout.addWidget(instructions_label)
 
@@ -113,7 +112,7 @@ class AcceptCredentialDialog(LocksmithDialog):
         # Initialize parent dialog
         super().__init__(
             parent=parent,
-            title="Import Grant",
+            title="Accept Credential",
             title_icon=":/assets/material-icons/in-badge.svg",
             content=content_widget,
             initial_focus=self.browse_button,
@@ -191,6 +190,7 @@ class AcceptCredentialDialog(LocksmithDialog):
             file_path: Path to the .cesr grant message file
         """
         try:
+            from locksmith.ui.vault.credentials.received.accept_grant import AcceptGrantDialog
 
             logger.info(f"Loading grant message from file: {file_path}")
 
@@ -206,11 +206,6 @@ class AcceptCredentialDialog(LocksmithDialog):
             grant_said = grant_serder.said
             if self.app.vault.hby.habByPre(recp) is None:
                 raise ValueError(f"No local identifier found for recipient: {recp}")
-            try:
-                # File imports have no preceding KEL replay to warm the sender state.
-                self.app.vault.hby.db.kevers[grant_serder.pre]
-            except KeyError:
-                pass
             self.app.vault.mbx.parser.parse(
                 ims=bytearray(ims), version=kering.Vrsn_2_0, local=False,
             )

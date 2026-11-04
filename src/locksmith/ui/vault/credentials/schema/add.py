@@ -5,15 +5,12 @@ locksmith.ui.vault.credentials.schema.add module
 Dialog for loading credential schemas
 """
 from keri import help
-import json
 import re
 from urllib import parse
 
-from PySide6.QtCore import QDir, QFile, QIODevice
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QButtonGroup, QFileDialog, QCheckBox
 
-from locksmith import resources_rc  # noqa: F401 - register bundled schemas and icons
 from locksmith.core.credentialing import LoadSchemaDoer
 from locksmith.core.habbing import list_eligible_local_identifiers
 from locksmith.ui.toolkit.widgets import (
@@ -55,21 +52,18 @@ class AddSchemaDialog(LocksmithDialog):
         radio_layout = QHBoxLayout()
         self.oobi_radio = LocksmithRadioButton("OOBI")
         self.file_radio = LocksmithRadioButton("File")
-        self.builtin_radio = LocksmithRadioButton("Built-in")
         self.oobi_radio.setChecked(True)
 
         radio_layout.addSpacing(10)
         radio_layout.addWidget(self.oobi_radio)
         radio_layout.addSpacing(10)
         radio_layout.addWidget(self.file_radio)
-        radio_layout.addSpacing(10)
-        radio_layout.addWidget(self.builtin_radio)
         radio_layout.addStretch()
         layout.addLayout(radio_layout)
 
         layout.addSpacing(15)
 
-        # Schema source controls
+        # OOBI/File path container
         self.input_container = QHBoxLayout()
 
         # OOBI field (shown by default)
@@ -88,18 +82,9 @@ class AddSchemaDialog(LocksmithDialog):
         self.browse_button.setFixedWidth(48)
         self.browse_button.hide()
         self.input_container.addWidget(self.browse_button)
-
-        self.builtin_dropdown = FloatingLabelComboBox("Schema")
-        self.builtin_dropdown.setFixedWidth(340)
-        self.builtin_dropdown.hide()
-        self.input_container.addWidget(self.builtin_dropdown)
         self.input_container.addStretch()
 
         layout.addLayout(self.input_container)
-
-        self.builtin_version = QLabel()
-        self.builtin_version.hide()
-        layout.addWidget(self.builtin_version)
 
         layout.addSpacing(15)
         self.said_field = FloatingLabelLineEdit("SAID")
@@ -180,21 +165,17 @@ class AddSchemaDialog(LocksmithDialog):
             show_overlay=False
         )
 
-        self.setFixedSize(420, 580)
-        self.file_dialog = None
+        self.setFixedSize(420, 540)
 
         # Create button group for connection type radios (must be after super().__init__)
         self.connection_type_group = QButtonGroup(self)
         self.connection_type_group.addButton(self.oobi_radio)
         self.connection_type_group.addButton(self.file_radio)
-        self.connection_type_group.addButton(self.builtin_radio)
 
         # Connect signals
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
         self.oobi_radio.toggled.connect(self._on_connection_type_changed)
         self.file_radio.toggled.connect(self._on_connection_type_changed)
-        self.builtin_radio.toggled.connect(self._on_connection_type_changed)
-        self.builtin_dropdown.currentIndexChanged.connect(self._on_builtin_changed)
         self.browse_button.clicked.connect(self._browse_file)
         self.load_button.clicked.connect(self._on_primary_clicked)
         self.oobi_field.line_edit.textChanged.connect(self._on_oobi_changed)
@@ -202,7 +183,6 @@ class AddSchemaDialog(LocksmithDialog):
 
         # Populate issuer dropdown with local identifiers
         self._populate_issuer_dropdown()
-        self._populate_builtin_dropdown()
 
         # Connect to vault signal bridge for doer events
         if self.app and hasattr(self.app, 'vault') and self.app.vault and hasattr(self.app.vault, 'signals'):
@@ -239,53 +219,16 @@ class AddSchemaDialog(LocksmithDialog):
         self.load_button.setText("Load Schema")
 
 
-    def _on_connection_type_changed(self, checked):
+    def _on_connection_type_changed(self):
         """Handle connection type radio button selection changes."""
-        if not checked:
-            return
-        self.clear_error()
-        self.oobi_field.setVisible(self.oobi_radio.isChecked())
-        self.file_path_field.setVisible(self.file_radio.isChecked())
-        self.browse_button.setVisible(self.file_radio.isChecked())
-        self.builtin_dropdown.setVisible(self.builtin_radio.isChecked())
-        self.builtin_version.setVisible(self.builtin_radio.isChecked())
-        self.said_field.setText("")
         if self.oobi_radio.isChecked():
-            self._on_oobi_changed(self.oobi_field.text())
-        elif self.file_radio.isChecked():
-            self._on_file_selected(self.file_path_field.text())
+            self.oobi_field.show()
+            self.file_path_field.hide()
+            self.browse_button.hide()
         else:
-            self._on_builtin_changed()
-
-    def _populate_builtin_dropdown(self):
-        """Read the bundled schema names and bytes from Qt resources."""
-        self.builtin_dropdown.addItem("Select a schema...")
-        directory = QDir(":/assets/schemas/sedi")
-        try:
-            for filename in directory.entryList(["*.json"], QDir.Filter.Files):
-                source = QFile(directory.filePath(filename))
-                if not source.open(QIODevice.OpenModeFlag.ReadOnly):
-                    raise OSError(source.errorString())
-                try:
-                    raw = bytes(source.readAll())
-                finally:
-                    source.close()
-                schema = json.loads(raw)
-                self.builtin_dropdown.addItem(schema['title'], userData={
-                    'raw': raw, 'said': schema['$id'], 'version': schema['version'],
-                })
-        except (OSError, ValueError, KeyError) as error:
-            self.show_error(f"Failed to read built-in schemas: {error}")
-
-    def _on_builtin_changed(self):
-        """Show the selected schema identity without loading it into the vault."""
-        if not self.builtin_radio.isChecked():
-            return
-        schema = self.builtin_dropdown.currentData()
-        self.said_field.setText(schema['said'] if schema else "")
-        self.said_field.setCursorPosition(0)
-        self.builtin_version.setText(f"Draft · Version {schema['version']}" if schema else "")
-        self.builtin_dropdown.setToolTip(self.builtin_dropdown.currentText() if schema else "")
+            self.oobi_field.hide()
+            self.file_path_field.show()
+            self.browse_button.show()
 
     def _on_issuance_checkbox_toggled(self, checked):
         """
@@ -320,14 +263,16 @@ class AddSchemaDialog(LocksmithDialog):
             self.show_error(f"Failed to load issuers: {str(e)}")
 
     def _browse_file(self):
-        """Select a schema without nesting the Qt event loop."""
-        if self.file_dialog is None:
-            self.file_dialog = QFileDialog(self, "Select Schema File", "",
-                                           "JSON Files (*.json);;All Files (*)")
-            self.file_dialog.setFileMode(QFileDialog.FileMode.ExistingFile)
-            self.file_dialog.fileSelected.connect(self._on_file_selected)
-            self.finished.connect(self.file_dialog.reject)
-        self.file_dialog.open()
+        """Open file dialog to select a schema file."""
+        file_path, _ = QFileDialog.getOpenFileName(
+            self,
+            "Select Schema File",
+            "",
+            "JSON Files (*.json);;All Files (*)"
+        )
+        if file_path:
+            self.file_path_field.setText(file_path)
+            self._extract_said_from_file(file_path)
 
     def _on_oobi_changed(self, text):
         """
@@ -336,8 +281,6 @@ class AddSchemaDialog(LocksmithDialog):
         Args:
             text: Current OOBI text
         """
-        if not self.oobi_radio.isChecked():
-            return
         if not text:
             self.said_field.setText("")
             return
@@ -357,15 +300,15 @@ class AddSchemaDialog(LocksmithDialog):
             logger.warning(f"Failed to parse OOBI: {e}")
             self.said_field.setText("")
 
-    def _on_file_selected(self, file_path):
-        """Show the selected path and its schema SAID."""
-        if not file_path:
-            return
-        self.file_path_field.setText(file_path)
-        if not self.file_radio.isChecked():
-            return
-        self.said_field.setText("")
+    def _extract_said_from_file(self, file_path):
+        """
+        Extract and display SAID from a schema file.
+
+        Args:
+            file_path: Path to the schema file
+        """
         try:
+            import json
             with open(file_path, 'r') as f:
                 schema_data = json.load(f)
                 # Look for SAID in common locations
@@ -375,20 +318,14 @@ class AddSchemaDialog(LocksmithDialog):
                 else:
                     logger.warning("No SAID found in schema file")
                     self.said_field.setText("")
-            return True
         except Exception as e:
             logger.error(f"Failed to extract SAID from file: {e}")
             self.show_error(f"Failed to read schema file: {str(e)}")
-            return False
 
     def _on_load(self):
         """Handle Load Schema button click."""
         # Clear any previous errors
         self.clear_error()
-
-        if self.file_radio.isChecked() and self.file_path_field.text().strip():
-            if not self._on_file_selected(self.file_path_field.text().strip()):
-                return
 
         # Validate fields
         if not self._validate_fields():
@@ -401,12 +338,6 @@ class AddSchemaDialog(LocksmithDialog):
         # Determine which workflow to use
         if self.oobi_radio.isChecked():
             self._load_oobi()
-        elif self.builtin_radio.isChecked():
-            self._create_load_schema_doer(
-                file_content=self.builtin_dropdown.currentData()['raw'],
-                enable_issuance=self.enable_issuance_checkbox.isChecked(),
-                issuer_aid=self.issuer_dropdown.currentData(),
-            )
         else:
             self._load_file()
 
@@ -426,10 +357,6 @@ class AddSchemaDialog(LocksmithDialog):
         self.file_path_field.style().unpolish(self.file_path_field)
         self.file_path_field.style().polish(self.file_path_field)
 
-        self.builtin_dropdown.setProperty("error", False)
-        self.builtin_dropdown.style().unpolish(self.builtin_dropdown)
-        self.builtin_dropdown.style().polish(self.builtin_dropdown)
-
         self.said_field.setProperty("error", False)
         self.said_field.style().unpolish(self.said_field)
         self.said_field.style().polish(self.said_field)
@@ -440,7 +367,7 @@ class AddSchemaDialog(LocksmithDialog):
 
         failed_fields = []
 
-        # Validate the selected source
+        # Validate OOBI or file path
         if self.oobi_radio.isChecked():
             oobi = self.oobi_field.text().strip()
             if not oobi:
@@ -448,18 +375,13 @@ class AddSchemaDialog(LocksmithDialog):
                 self.oobi_field.setProperty("error", True)
                 self.oobi_field.style().unpolish(self.oobi_field)
                 self.oobi_field.style().polish(self.oobi_field)
-        elif self.file_radio.isChecked():
+        else:
             file_path = self.file_path_field.text().strip()
             if not file_path:
                 failed_fields.append("File Path")
                 self.file_path_field.setProperty("error", True)
                 self.file_path_field.style().unpolish(self.file_path_field)
                 self.file_path_field.style().polish(self.file_path_field)
-        elif self.builtin_dropdown.currentData() is None:
-            failed_fields.append("Schema")
-            self.builtin_dropdown.setProperty("error", True)
-            self.builtin_dropdown.style().unpolish(self.builtin_dropdown)
-            self.builtin_dropdown.style().polish(self.builtin_dropdown)
 
         # Validate SAID
         said = self.said_field.text().strip()
