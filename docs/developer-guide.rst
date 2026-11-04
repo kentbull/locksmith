@@ -66,6 +66,66 @@ Once the editable install is in place:
 
    uv run --locked python -m locksmith.main
 
+Local Development Provider
+--------------------------
+
+The normal package install also discovers the **Local Development** provider.
+Its entry point is ``localdev`` and its implementation is
+``locksmith.plugins.localdev.plugin.LocalDevelopmentPlugin``. It reuses the
+Foundation onboarding client and pages with separate page names, per-vault
+provider data and hidden onboarding identifiers.
+The inherited direct-to-witness allocation controls are unavailable for this
+provider: account onboarding allocates through kf-boot. Additional identifier
+allocation through the account API remains unfinished.
+
+The local provider expects kf-boot at ``http://127.0.0.1:19723``. Its explicit
+``KFSurfaceConfig`` selects ``/onboarding`` and ``/account``; discovery reads
+``/bootstrap/config``. To change this development endpoint, edit the local
+plugin's configuration rather than the Foundation provider's defaults.
+
+With ``witness-hk`` and ``watcher-hk`` checked out beside Locksmith under
+``core/python`` and ``kf-boot`` under ``infra``, start the host services in one
+terminal from the Locksmith repository:
+
+.. code-block:: bash
+
+   bash scripts/local-provider.sh
+
+The launcher installs each service's locked dependencies, writes its KERI JSON
+endpoint configuration, and starts four witnesses, one watcher service, and
+kf-boot. It refuses occupied ports. Set ``KERI_WORKSPACE`` if these repositories
+live under a different KERI workspace root. An optional first argument selects
+the service state directory; the default is
+``~/.local/share/locksmith-local-provider``. The launcher prints log locations
+and the isolated base used by service index databases in the normal KERI root.
+
+kf-boot reads ``KF_BOOT_*`` environment settings and supplies JSON bootstrap
+discovery. Its existing ``Provisioner`` allocates resources through the witness
+and watcher boot APIs; the wallet does not call that class directly.
+
+In another terminal, launch Locksmith normally:
+
+.. code-block:: bash
+
+   uv sync --locked
+   uv run --locked python -m locksmith.main
+
+Create and open a fresh passcode-protected vault, select **Local Development**,
+connect to the boot service, choose a new account alias and the **3-of-4** witness
+profile, then review and start onboarding. Ctrl-C in the service terminal stops
+only the processes it launched and preserves their state for the next run.
+Keep the services running when reopening an onboarded wallet. When deleting a
+vault, the first request may queue remote cleanup; retry after cleanup finishes.
+The vault is retained until kf-boot confirms account deletion.
+
+All tests and rehearsals for this integration run directly on macOS. Real
+Qt controls have completed protected vault creation, account onboarding,
+witnessed rotation and watcher introduction. Reopening in a fresh wallet process
+preserves the account AID, four witnesses, threshold three and KEL sequence.
+The deletion dialog retains the vault while remote cleanup is pending and
+clears it after a successful retry. These are automated host UI checks; manual
+acceptance and the complete credential/disclosure workflow remain open.
+
 ACDC Graph Policy
 -----------------
 

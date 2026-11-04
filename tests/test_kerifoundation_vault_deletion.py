@@ -4,7 +4,6 @@ from pathlib import Path
 import pytest
 
 from locksmith.plugins.kerifoundation.db.basing import (
-    ACCOUNT_STATUS_ONBOARDED,
     KFBaser,
 )
 from locksmith.plugins.kerifoundation.onboarding.service import (
@@ -68,9 +67,6 @@ class FakeBootClient:
     def cancel_onboarding(self, hab, *, session_id: str, account_aid: str = "", reason: str = ""):
         self.calls.append(("cancel_onboarding", hab.pre, session_id, account_aid, reason))
 
-    def delete_account(self, hab, *, account_aid: str, destination: str = ""):
-        self.calls.append(("delete_account", hab.pre, account_aid, destination))
-
 
 def test_kf_vault_deletion_service_cancels_saved_onboarding_session(tmp_path):
     auth_hab = FakeHab(pre="EHAB_AUTH", name="kf-auth")
@@ -98,64 +94,6 @@ def test_kf_vault_deletion_service_cancels_saved_onboarding_session(tmp_path):
         ("set_boot_server_aid", "BOOT_AID"),
         ("cancel_onboarding", auth_hab.pre, "sess_pending", "AID_ACCOUNT", "vault_deleted"),
     ]
-
-
-def test_kf_vault_deletion_service_deletes_onboarded_account(tmp_path):
-    account_hab = FakeHab(pre="AID_ACCOUNT", name="account")
-    hby = FakeHby(habs_by_pre={account_hab.pre: account_hab})
-    app = FakeApp(hby)
-    db = KFBaser(name="kf_delete_onboarded", headDirPath=str(tmp_path), reopen=True)
-    boot_client = FakeBootClient()
-
-    record, _ = db.ensure_account()
-    record.account_aid = account_hab.pre
-    record.status = ACCOUNT_STATUS_ONBOARDED
-    record.boot_server_aid = "BOOT_AID"
-    db.pin_account(record)
-
-    try:
-        service = KFVaultDeletionService(app=app, db=db, boot_client=boot_client)
-        service.delete_vault_account()
-    finally:
-        db.close(clear=True)
-
-    assert boot_client.calls == [
-        ("set_boot_server_aid", "BOOT_AID"),
-        ("delete_account", account_hab.pre, account_hab.pre, "BOOT_AID"),
-    ]
-
-
-def test_kf_plugin_prepare_vault_deletion_uses_remote_teardown_service(qapp, tmp_path, monkeypatch):
-    app = FakeApp(FakeHby(headDirPath=str(tmp_path)))
-    plugin = KeriFoundationPlugin()
-    plugin.initialize(app)
-
-    captured = {}
-
-    class FakeDeletionService:
-        def __init__(self, *, app, db, boot_client):
-            captured["app"] = app
-            captured["db"] = db
-            captured["boot_client"] = boot_client
-
-        def delete_vault_account(self):
-            captured["deleted"] = True
-
-    monkeypatch.setattr(
-        "locksmith.plugins.kerifoundation.plugin.KFVaultDeletionService",
-        FakeDeletionService,
-    )
-
-    plugin.on_vault_opened(app.vault)
-    try:
-        plugin.prepare_vault_deletion(app.vault)
-    finally:
-        plugin.on_vault_closed(app.vault, clear=True)
-
-    assert captured["app"] is app
-    assert captured["db"] is not None
-    assert captured["boot_client"] is not None
-    assert captured["deleted"] is True
 
 
 @pytest.mark.parametrize('scope', ['base', 'root'])

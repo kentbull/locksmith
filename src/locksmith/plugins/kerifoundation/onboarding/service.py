@@ -692,10 +692,14 @@ class KFOnboardingService:
         db: Any,
         boot_client: KFBootClient,
         witness_registrar: HostedWitnessRegistrar | None = None,
+        auth_namespace: str = ONBOARDING_AUTH_NAMESPACE,
+        auth_alias_prefix: str = ONBOARDING_AUTH_ALIAS_PREFIX,
     ):
         self._app = app
         self._db = db
         self._boot_client = boot_client
+        self._auth_namespace = auth_namespace
+        self._auth_alias_prefix = auth_alias_prefix
         self._witness_registrar = witness_registrar or HostedWitnessRegistrar(app=app, db=db)
 
     async def onboard_async(
@@ -1207,7 +1211,7 @@ class KFOnboardingService:
         if record.onboarding_auth_alias:
             existing = self._app.vault.hby.habByName(
                 record.onboarding_auth_alias,
-                ns=ONBOARDING_AUTH_NAMESPACE,
+                ns=self._auth_namespace,
             )
             if existing is not None:
                 return existing, False
@@ -1216,10 +1220,10 @@ class KFOnboardingService:
                 "Do not start a second onboarding run until the stored state is cleared."
             )
 
-        alias = f"{ONBOARDING_AUTH_ALIAS_PREFIX}-{uuid4().hex[:12]}"
+        alias = f"{self._auth_alias_prefix}-{uuid4().hex[:12]}"
         hab = self._app.vault.hby.makeHab(
             name=alias,
-            ns=ONBOARDING_AUTH_NAMESPACE,
+            ns=self._auth_namespace,
             transferable=False,
             icount=1,
             isith="1",
@@ -1240,7 +1244,7 @@ class KFOnboardingService:
 
     def _delete_onboarding_hab(self, alias: str) -> None:
         try:
-            self._app.vault.hby.deleteHab(alias, ns=ONBOARDING_AUTH_NAMESPACE)
+            self._app.vault.hby.deleteHab(alias, ns=self._auth_namespace)
         except Exception:
             logger.warning("Failed deleting hidden KF onboarding AID %s", alias, exc_info=True)
 
@@ -1884,10 +1888,12 @@ class KFVaultDeletionService:
         app: Any,
         db: Any,
         boot_client: KFBootClient,
+        auth_namespace: str = ONBOARDING_AUTH_NAMESPACE,
     ):
         self._app = app
         self._db = db
         self._boot_client = boot_client
+        self._auth_namespace = auth_namespace
 
     def delete_vault_account(self) -> None:
         if self._db is None:
@@ -1919,7 +1925,7 @@ class KFVaultDeletionService:
 
         ehab = self._app.vault.hby.habByName(
             record.onboarding_auth_alias,
-            ns=ONBOARDING_AUTH_NAMESPACE,
+            ns=self._auth_namespace,
         )
         if ehab is None:
             raise KFBootError(
@@ -1948,11 +1954,18 @@ class KFVaultDeletionService:
             "Deleting hosted KF account state for %s before vault deletion",
             record.account_aid,
         )
-        self._boot_client.delete_account(
+        reply = self._boot_client.delete_account(
             hab,
             account_aid=record.account_aid,
             destination=record.boot_server_aid,
         )
+        # The boot service queues remote cleanup. Keep the signing keys until
+        # a later idempotent delete request confirms that cleanup has finished.
+        if reply.payload.get("deleted") is not True:
+            raise KFBootError(
+                "Provider account deletion is not complete. The vault has been kept. "
+                "Try deleting it again after the provider finishes cleanup."
+            )
 
 
 def split_cesr_message(ims: bytearray | bytes) -> tuple[bytes, bytes]:

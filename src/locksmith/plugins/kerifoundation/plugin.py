@@ -16,6 +16,7 @@ from PySide6.QtCore import Qt, QEvent, QObject
 from keri import help
 
 from locksmith.plugins.base import AccountProviderPlugin, PluginBase, WitnessProviderPlugin
+from locksmith.plugins.kerifoundation.core.configing import KFSurfaceConfig
 from locksmith.plugins.kerifoundation.db.basing import (
     ACCOUNT_STATUS_FAILED,
     ACCOUNT_STATUS_ONBOARDED,
@@ -53,6 +54,15 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
 
     ONBOARDING_SHUTDOWN_TIMEOUT_MS = 2000
 
+    # Providers sharing the KF boot contract keep separate UI and vault state.
+    page_prefix = "kf"
+    provider_name = "KERI Foundation"
+    boot_surfaces: KFSurfaceConfig | None = None
+    allow_direct_provisioning = True
+
+    def _page_key(self, name: str) -> str:
+        return f"{self.page_prefix}_{name}"
+
     @property
     def plugin_id(self) -> str:
         return "kerifoundation"
@@ -63,18 +73,22 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         self._wit_btn = None
         self._id_btn = None
         self._wat_btn = None
-        self._boot_client = KFBootClient(app)
+        self._boot_client = KFBootClient(app, surfaces=self.boot_surfaces)
         self._onboarding_task: asyncio.Task | None = None
         self._deferred_db_close_tasks: set[asyncio.Task] = set()
         self._closing_vault = False
 
         # Build pages
-        self._onboarding_page = KFOnboardingPage(app)
+        self._onboarding_page = KFOnboardingPage(app, provider_name=self.provider_name)
         self._onboarding_page.set_boot_client(self._boot_client)
-        self._witness_overview = WitnessOverviewPage(app)
-        self._identifiers_page = IdentifierListPage(app)
+        self._witness_overview = WitnessOverviewPage(
+            app, provider_name=self.provider_name, allow_provisioning=self.allow_direct_provisioning,
+        )
+        self._identifiers_page = IdentifierListPage(
+            app, provider_name=self.provider_name, allow_provisioning=self.allow_direct_provisioning,
+        )
         self._witness_provision = WitnessProvisionPage(app)
-        self._watcher_list = WatcherListPage(app)
+        self._watcher_list = WatcherListPage(app, provider_name=self.provider_name)
         self._watcher_register = WatcherRegisterPage(app)
 
         # Wire internal signals
@@ -94,6 +108,8 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
 
     def _on_add_witnesses(self, hab_pre):
         """Navigate to the provision page for a specific identifier."""
+        if not self.allow_direct_provisioning:
+            return
         if not self._has_onboarded_account():
             self._show_onboarding(
                 reason="witness provisioning blocked until the local KF account is onboarded"
@@ -101,7 +117,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
             return
 
         self._witness_provision.set_identifier(hab_pre)
-        self._navigate("kf_provision")
+        self._navigate(self._page_key("provision"))
         self._witness_provision.on_show()
 
     def _on_provision_completed(self, hab_pre: str, created_witnesses: list[dict]):
@@ -143,7 +159,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
 
     def on_vault_opened(self, vault: Any) -> None:
         self._closing_vault = False
-        self._db = KFBaser(name=f"kf_{vault.hby.name}", base=vault.hby.base,
+        self._db = KFBaser(name=f"{self.page_prefix}_{vault.hby.name}", base=vault.hby.base,
                           temp=vault.hby.temp, headDirPath=vault.hby.db.headDirPath,
                           reopen=True)
         self._boot_client.set_boot_server_aid("")
@@ -167,6 +183,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
             app=self._app,
             db=self._db,
             boot_client=self._boot_client.clone(),
+            auth_namespace=self._page_key("onboarding"),
         )
         service.delete_vault_account()
 
@@ -282,7 +299,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
     def is_setup_complete(self, vault: Any) -> bool:
         record = self._get_account_record()
         setup_complete = record is not None and record.status == ACCOUNT_STATUS_ONBOARDED
-        chosen_destination = "kf_witnesses" if setup_complete else "kf_onboarding"
+        chosen_destination = self._page_key("witnesses") if setup_complete else self._page_key("onboarding")
         logger.info(
             f"KF plugin entry decision for vault '{self._vault_name(vault)}': "
             f"account_lookup={self._describe_account_record(record)} "
@@ -302,12 +319,12 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
                     f"account_lookup={self._describe_account_record(record)}"
                 )
 
-        page_key = "kf_onboarding"
+        page_key = self._page_key("onboarding")
         should_push_menu = True
         if record is not None and record.status == ACCOUNT_STATUS_ONBOARDED:
-            page_key = "kf_witnesses"
+            page_key = self._page_key("witnesses")
 
-        if page_key == "kf_onboarding":
+        if page_key == self._page_key("onboarding"):
             self._set_active_nav(None)
             self._onboarding_page.on_show()
 
@@ -320,7 +337,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
 
     def get_menu_entry(self) -> MenuButton:
         icon = QIcon(":/assets/custom/SymbolLogo.svg")
-        return MenuButton(icon=icon, label="KERI Foundation")
+        return MenuButton(icon=icon, label=self.provider_name)
 
     def get_menu_section(self) -> list[QWidget]:
         items = []
@@ -378,14 +395,16 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         return _LogoClickFilter()
 
     def get_pages(self) -> dict[str, QWidget]:
-        return {
-            "kf_onboarding": self._onboarding_page,
-            "kf_witnesses": self._witness_overview,
-            "kf_identifiers": self._identifiers_page,
-            "kf_provision": self._witness_provision,
-            "kf_watchers": self._watcher_list,
-            "kf_watcher_register": self._watcher_register,
+        pages = {
+            self._page_key("onboarding"): self._onboarding_page,
+            self._page_key("witnesses"): self._witness_overview,
+            self._page_key("identifiers"): self._identifiers_page,
+            self._page_key("watchers"): self._watcher_list,
+            self._page_key("watcher_register"): self._watcher_register,
         }
+        if self.allow_direct_provisioning:
+            pages[self._page_key("provision")] = self._witness_provision
+        return pages
 
     def get_witness_batches(self, vault: Any, hab_pre: str) -> Any | None:
         """Return batch groupings for KF witnesses belonging to this hab."""
@@ -451,7 +470,11 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         vault,
     ):
         task = asyncio.current_task()
-        service = KFOnboardingService(app=self._app, db=db, boot_client=boot_client)
+        service = KFOnboardingService(
+            app=self._app, db=db, boot_client=boot_client,
+            auth_namespace=self._page_key("onboarding"),
+            auth_alias_prefix=f"{self.page_prefix}-onboarding",
+        )
 
         def progress(**kwa):
             if self._is_current_onboarding_task(task, vault=vault, db=db):
@@ -574,7 +597,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
             f"KF plugin gated destination: page='kf_onboarding' "
             f"reason='{reason}' account_lookup={self._describe_account_record(self._get_account_record())}"
         )
-        self._navigate("kf_onboarding")
+        self._navigate(self._page_key("onboarding"))
         self._onboarding_page.on_show()
         self._set_active_nav(None)
 
@@ -587,7 +610,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
             f"KF plugin gated destination: page='kf_witnesses' "
             f"account_lookup={self._describe_account_record(self._get_account_record())}"
         )
-        self._navigate("kf_witnesses")
+        self._navigate(self._page_key("witnesses"))
         self._witness_overview.on_show()
         self._set_active_nav(self._wit_btn)
 
@@ -600,7 +623,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
             f"KF plugin gated destination: page='kf_identifiers' "
             f"account_lookup={self._describe_account_record(self._get_account_record())}"
         )
-        self._navigate("kf_identifiers")
+        self._navigate(self._page_key("identifiers"))
         self._identifiers_page.on_show()
         self._set_active_nav(self._id_btn)
 
@@ -613,7 +636,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
             f"KF plugin gated destination: page='kf_watchers' "
             f"account_lookup={self._describe_account_record(self._get_account_record())}"
         )
-        self._navigate("kf_watchers")
+        self._navigate(self._page_key("watchers"))
         self._watcher_list.on_show()
         self._set_active_nav(self._wat_btn)
 
@@ -670,7 +693,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
         icon_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(icon_label)
 
-        text_label = QLabel("KERI Foundation")
+        text_label = QLabel(self.provider_name)
         text_label.setStyleSheet("font-size: 11px; font-weight: 600; color: #333;")
         text_label.setAlignment(Qt.AlignmentFlag.AlignCenter)
         layout.addWidget(text_label)
