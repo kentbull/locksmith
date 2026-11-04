@@ -66,6 +66,13 @@ Once the editable install is in place:
 
    uv run --locked python -m locksmith.main
 
+For an HTTPS development service signed by a local CA, launch the normal app
+with ``SSL_CERT_FILE=/absolute/path/to/ca.pem uv run --locked python -m locksmith.main``.
+Locksmith adds that PEM bundle to Qt's existing trusted roots for this process;
+certificate-chain and hostname verification remain enabled. An unreadable,
+empty or invalid bundle fails startup with its path. This does not change OS
+trust settings.
+
 Local Development Provider
 --------------------------
 

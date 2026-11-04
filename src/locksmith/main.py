@@ -7,6 +7,7 @@ import sys
 from ctypes.util import find_library
 from pathlib import Path
 
+from PySide6.QtNetwork import QSslCertificate, QSslConfiguration
 from PySide6.QtWidgets import (
     QApplication
 )
@@ -26,6 +27,22 @@ baseFormatter.default_msec_format = None
 help.ogler.baseConsoleHandler.setFormatter(baseFormatter)
 
 logger = help.ogler.getLogger(__name__)
+
+
+def configure_tls_trust(cafile):
+    """Add an explicit SSL_CERT_FILE bundle to Qt's existing trusted roots."""
+    if cafile is None:
+        return
+    path = Path(cafile).expanduser().resolve()
+    try:
+        certificates = QSslCertificate.fromData(path.read_bytes())
+    except OSError as error:
+        raise ValueError(f'Cannot read SSL_CERT_FILE CA bundle: {path}') from error
+    if not certificates:
+        raise ValueError(f'SSL_CERT_FILE contains no valid PEM certificates: {path}')
+    config = QSslConfiguration.defaultConfiguration()
+    config.setCaCertificates(config.caCertificates() + certificates)
+    QSslConfiguration.setDefaultConfiguration(config)
 
 # Custom Libsodium Loader #
 # This code has to be in the main module to avoid a partially initialized module error
@@ -128,6 +145,7 @@ if __name__ == "__main__":
     from locksmith.ui.window import LocksmithWindow
 
     app = QApplication(sys.argv)
+    configure_tls_trust(os.environ.get('SSL_CERT_FILE'))
     set_global_styles(app)
 
     loop = QEventLoop(app)
