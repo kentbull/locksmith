@@ -103,8 +103,8 @@ def test_historical_upd_remains_parseable_but_cannot_author_or_claim_standing(ip
         registry_authoring.stage(app.vault, registry, acdc, 'revoked', 'public')
 
 
-def test_new_derived_issuance_waits_for_future_dhke(ipex_vaults):
-    app = ipex_vaults('future-root', bran='0123456789abcdefghijk')
+def test_unencrypted_derived_issuance_refuses_before_registry_authorship(ipex_vaults):
+    app = ipex_vaults('unencrypted-root')
     issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
     schema = _load_schema(app, issuer)
     events = []
@@ -113,7 +113,7 @@ def test_new_derived_issuance_waits_for_future_dhke(ipex_vaults):
         {'LEI': 'example'}, registry_mode='derived', discloser=holder.pre)
     doing.Doist(doers=[worker], tock=.03125, limit=3).do()
     assert events[-1][0] == 'credential_issuance_failed'
-    assert 'futureDhke' in events[-1][1]['error']
+    assert 'encrypted, unlocked vault' in events[-1][1]['error']
     assert app.vault.rgy.regs == {}
     assert issuer.kever.sn == 0
     assert not list(app.hby.mgr.ks.rroots.getTopItemIter())

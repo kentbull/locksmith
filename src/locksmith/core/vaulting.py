@@ -19,10 +19,10 @@ from keri.app import (
     oobiing,
     signaling,
 )
-from keri.core import routing as keriRouting, eventing, coring, kraming
+from keri.core import eventing, coring, kraming
 from keri.peer import exchanging
 
-from locksmith.core import indirecting, challenging, ipexing, registries, evidence
+from locksmith.core import indirecting, challenging, ipexing, registries, evidence, auxiliary
 from locksmith.core.adjudication import Watchmen, KeyStateVarianceAuthority
 from locksmith.core.configing import ENABLE_TURRET_BROWSER_PLUGIN
 from locksmith.core.grouping import CounselingCompletionDoer
@@ -59,12 +59,24 @@ class Vault(doing.DoDoer):
         self.hby.free = False
         self.rgy = rgy
         config = hby.cf.get()
-        config['kram'] = {
+        policy = config.setdefault('kram', {
             'enabled': True,
             'caches': {'~': (10000, 300000, 3600000, 86400000, 300000, 3600000, 86400000)},
-            'denials': [[[2, 0], 'qry', ''], [[2, 0], 'rpy', ''],
-                        [[2, 0], 'exn', '/multisig'], [[2, 0], 'exn', '/challenge']],
-        }
+            'denials': ([[[2, 0], 'qry', route] for route in ('logs', 'ksn', 'mbx', 'tels', 'tsn')]
+                        + [[[2, 0], 'rpy', route] for route in ('/ksn/', '/watcher/')]
+                        + [[[2, 0], 'exn', '/multisig'], [[2, 0], 'exn', '/challenge']]),
+        })
+        # Preserve operator policy while replacing the old blanket exemptions.
+        denials = policy.setdefault('denials', [])
+        for ilk, routes in (('qry', ('logs', 'ksn', 'mbx', 'tels', 'tsn')),
+                            ('rpy', ('/ksn/', '/watcher/'))):
+            broad = [[2, 0], ilk, '']
+            if broad in denials:
+                denials.remove(broad)
+                for route in routes:
+                    entry = [[2, 0], ilk, route]
+                    if entry not in denials:
+                        denials.append(entry)
         hby.cf.put(config)
         self.kram_cues = decking.Deck()
         self.kramer = kraming.Kramer(db=hby.db, cf=hby.cf, cues=self.kram_cues)
@@ -155,11 +167,13 @@ class Vault(doing.DoDoer):
         challenging.loadHandlers(db=self.hby.db, exc=self.exc, notifier=self.notifier)
 
         # KEL and credential verification
-        self.rvy = keriRouting.Revery(db=hby.db, cues=self.cues)
+        self.rvy = hby.rvy
+        self.rvy.cues = self.cues
         self.kvy = eventing.Kevery(db=hby.db, lax=True, local=False, rvy=self.rvy,
                                   cues=self.cues, kramer=self.kramer, exc=self.exc)
         self.kramer.cues = self.kram_cues
         self.kvy.registerReplyRoutes(router=self.rvy.rtr)
+        auxiliary.install(self)
 
         watchmen = Watchmen(hby=hby, tock=15.0)
         kva = KeyStateVarianceAuthority(hby=hby, notifier=self.notifier, cues=watchmen.cues)
@@ -175,6 +189,7 @@ class Vault(doing.DoDoer):
             rvy=self.rvy,
             rgy=self.rgy,
             evidence=evidence.processor(self),
+            auxiliary=self.auxiliary,
         )
 
         # Notification toast doer
@@ -202,6 +217,7 @@ class Vault(doing.DoDoer):
             watchmen,
             kva,
             self.mbx,
+            self.auxiliary,
             self.registry_evidence,
             self.ipex_outbox,
             kraming.Pruner(self.kramer, tock=1.0),
