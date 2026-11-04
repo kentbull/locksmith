@@ -460,6 +460,8 @@ def create_identifier(app, alias, key_type='salty', **kwargs):
                 wits=creation_kwargs.get('wits', []),
                 toad=int(creation_kwargs.get('toad', 0)),
                 delpre=creation_kwargs.get('delpre'),
+                estOnly=creation_kwargs['estOnly'],
+                DnD=creation_kwargs['DnD'],
                 signal_bridge=app.vault.signals
             )
             app.vault.extend([group_incept_doer])

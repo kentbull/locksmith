@@ -11,12 +11,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QHBoxLayout, QScrollArea,
     QFrame
 )
-from keri import help
+from keri import help, kering
 from keri.help import helping
-from keri.peer import exchanging
-from keri.core.serdering import SerderKERI
-
-from locksmith.core.grouping import MultisigJoinDoer
+from locksmith.core.grouping import MultisigJoinDoer, inception_proposal
 from locksmith.ui import colors
 from locksmith.ui.toolkit.widgets import (
     LocksmithDialog,
@@ -94,15 +91,7 @@ class AcceptMultisigProposalDialog(LocksmithDialog):
         """Load proposal message using exchanging.cloneMessage()"""
         logger.info(f"Loading multisig proposal: {self.proposal_said}")
 
-        self.exn, self.pathed = exchanging.cloneMessage(self.app.vault.hby, self.proposal_said)
-
-        if self.exn is None:
-            raise ValueError(f"Proposal message not found: {self.proposal_said}")
-
-        # Validate it's a multisig inception proposal
-        route = self.exn.ked.get('r', '')
-        if '/multisig/icp' not in route:
-            raise ValueError(f"Not a multisig inception proposal, route: {route}")
+        self.exn, self.icp_serder = inception_proposal(self.app.vault, self.proposal_said)
 
         logger.debug(f"Proposal message loaded successfully: {self.exn.ked}")
 
@@ -115,18 +104,12 @@ class AcceptMultisigProposalDialog(LocksmithDialog):
         self.gid = payload.get('gid', '')
         self.smids = payload.get('smids', [])
         self.rmids = payload.get('rmids', self.smids)
-        self.delegator = payload.get('delegator')
+        self.delegator = self.icp_serder.ked.get('di')
 
-        # Get inception event from embeds (as SAD/dict, not raw bytes)
-        embeds = self.exn.ked.get('e', {})
-        icp_sad = embeds.get('icp')
-        if icp_sad is None:
-            raise ValueError("No inception event found in proposal")
-
-        # Create serder from SAD (dictionary), not raw bytes
-        self.icp_serder = SerderKERI(sad=icp_sad)
-        self.isith = self.icp_serder.ked.get('kt', '1')
-        self.nsith = self.icp_serder.ked.get('nt', self.isith)
+        # Display numeric thresholds in decimal while preserving weighted expressions.
+        tholder, ntholder = self.icp_serder.tholder, self.icp_serder.ntholder
+        self.isith = tholder.sith if tholder.weighted else tholder.num
+        self.nsith = ntholder.sith if ntholder.weighted else ntholder.num
 
         # Check if local identifier is in smids
         self.local_smids = []
@@ -200,6 +183,16 @@ class AcceptMultisigProposalDialog(LocksmithDialog):
         add_info_row(content_layout, "Signing Threshold:", str(self.isith))
         add_info_row(content_layout, "Rotation Threshold:", str(self.nsith))
         add_info_row(content_layout, "Total Participants:", str(len(self.smids)))
+        add_info_row(content_layout, "Rotation Members:", "Same as signing members"
+                     if self.rmids == self.smids else ", ".join(self.rmids))
+
+        # Consent includes the signed inception's witness policy and configuration traits.
+        add_info_row(content_layout, "Witnesses:", ", ".join(self.icp_serder.ked['b']) or "None")
+        add_info_row(content_layout, "Witness Threshold:", str(self.icp_serder.bner.num))
+        trait_names = {kering.TraitDex.EstOnly: "Establishment Only",
+                       kering.TraitDex.DoNotDelegate: "Do Not Delegate"}
+        traits = [trait_names.get(trait, trait) for trait in self.icp_serder.traits]
+        add_info_row(content_layout, "Traits:", ", ".join(traits) or "None")
 
         if self.delegator:
             delegator_alias = resolve_alias(self.app,self.delegator)
