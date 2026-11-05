@@ -522,8 +522,17 @@ class IssueCredentialDoer(CredentialUpdateDoer):
             hab = self.vault.hby.habByPre(issuer)
             if hab is None:
                 raise ValueError('Select a local identifier for this schema')
-            if isinstance(hab, GroupHab) and (self.authentication != 'registry' or self.registry_mode == 'derived'):
-                raise ValueError('Group issuance requires public or per-event blinded registry authentication')
+            if isinstance(hab, GroupHab):
+                if self.authentication != 'registry':
+                    raise ValueError('Group issuance requires registry authentication')
+                if self.registry_mode == 'derived':
+                    from locksmith.core.group_dh import election
+                    _, custodian = election(hab)
+                    if hab.mhab.pre != custodian:
+                        raise ValueError('Only the elected issuer custodian may start derived issuance')
+                    recipient = self.vault.hby.habByPre(self.recipient_pre)
+                    if isinstance(recipient, GroupHab):
+                        raise ValueError('Group holder agreement requires its separate approval adapter')
             if set(self.auths) - set(hab.kever.wits):
                 raise ValueError('Authorization names a witness outside the issuer witness set')
             schemer = self.vault.hby.db.schema.get(keys=(self.schema_said,))
