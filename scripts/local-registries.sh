@@ -19,7 +19,7 @@ observer_repo="$keri_workspace/core/python/kf-observer"
 # Fail before provisioning identities or installing anything if another stack owns a port.
 python3 - <<'PY'
 import socket
-for port in (19931, 19932, 19942):
+for port in (19931, 19932, 19941, 19942):
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', port))
 PY
@@ -118,7 +118,7 @@ trap 'exit 143' TERM
 pids+=("$!")
 (cd "$observer_repo" && KLI_KEYSTORE_PASSCODE=$(cat "$state_dir/service-passcode") \
     exec .venv/bin/kf-observer start --name localdev-observer --alias observer \
-    --base "$registry_base/observer" --host 127.0.0.1 --http 19942 \
+    --base "$registry_base/observer" --host 127.0.0.1 --http 19942 --bootport 19941 \
     --registrar https://localhost:19932/ --registrar-ca "$ca" \
     --keypath "$key" --certpath "$certificate" --cafilepath "$ca" \
     "${readers[@]}" --kel "$state_dir/public-bootstrap.cesr" --poll 1 --timeout 5 --no-prompt) \
@@ -130,8 +130,8 @@ import os, ssl, sys, time
 from urllib.request import urlopen
 context = ssl.create_default_context(cafile=sys.argv[1])
 deadline = time.monotonic() + 15
-pending = {'https://localhost:19931/health', 'https://localhost:19932/health',
-           'https://localhost:19942/health'}
+pending = {'http://127.0.0.1:19931/health', 'https://localhost:19932/health',
+           'http://127.0.0.1:19941/health', 'https://localhost:19942/health'}
 while pending:
     for pid in map(int, sys.argv[2:]):
         try:
@@ -140,7 +140,7 @@ while pending:
             raise SystemExit('Registry service exited during startup; inspect registrar.log and observer.log') from None
     for url in list(pending):
         try:
-            with urlopen(url, context=context, timeout=.3) as response:
+            with urlopen(url, context=context if url.startswith('https://') else None, timeout=.3) as response:
                 if response.status == 200:
                     pending.remove(url)
         except OSError:

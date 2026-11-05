@@ -42,8 +42,11 @@ must be installed beside Locksmith. Their locked dependencies require Python
 
 The launcher runs ``uv sync --locked --extra dev --python 3.14`` for each service,
 refuses occupied ports and waits at most 15 seconds for startup health. It binds
-Registrar public/admin listeners to loopback ports 19932/19931 and Observer to
-loopback port 19942. Ctrl-C stops only its own children. A child failure also stops
+both services to loopback: Registrar public HTTPS on port 19932 and private HTTP
+administration on port 19931; Observer public HTTPS on port 19942 and private HTTP
+administration on port 19941. Preflight and startup health checks cover all four
+ports. TLS credentials apply to the public listeners; the private enrollment APIs
+use HTTP on loopback only. Ctrl-C stops only its own children. A child failure also stops
 the other child. Logs, public bootstrap and service credentials remain in the
 selected state directory. Restart with the same directory to reuse the identities.
 
