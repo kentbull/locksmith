@@ -16,7 +16,7 @@ if TYPE_CHECKING:
 
 from hio.base import doing
 from keri import help, kering
-from keri.app import organizing, forwarding
+from keri.app import organizing, forwarding, oobiing
 from keri.app.habbing import GroupHab
 from keri.core import eventing, exchange, parsing, serdering
 from keri.core.serdering import SerderKERI
@@ -534,8 +534,9 @@ class ResolveOobiDoer(doing.DoDoer):
             obr = basing.OobiRecord(date=helping.nowIso8601())
             obr.oobialias = self.alias
 
-            # Force re-resolution if requested
-            if self.force:
+            # A failed URL needs a fresh result; a known AID does not resolve its endpoints.
+            previous = self.app.vault.hby.db.roobi.get(keys=(self.oobi,))
+            if self.force or (previous is not None and previous.state == oobiing.Result.failed):
                 self.app.vault.hby.db.roobi.rem(keys=(self.oobi,))
                 logger.info(f"Forcing re-resolution of OOBI: {self.oobi}")
 
@@ -547,7 +548,7 @@ class ResolveOobiDoer(doing.DoDoer):
             start_time = helping.nowUTC()
             timeout_delta = datetime.timedelta(seconds=self.timeout_seconds)
 
-            while not self.app.vault.hby.db.roobi.get(keys=(self.oobi,)) and self.pre not in self.app.vault.hby.kevers:
+            while not self.app.vault.hby.db.roobi.get(keys=(self.oobi,)):
                 if helping.nowUTC() > start_time + timeout_delta:
                     logger.warning(f'OOBI resolve timeout for {self.alias} ({self.oobi})')
 
@@ -567,8 +568,9 @@ class ResolveOobiDoer(doing.DoDoer):
 
                 yield self.tock
 
-            # Verify the prefix is now in kevers
-            if self.pre not in self.app.vault.hby.kevers:
+            result = self.app.vault.hby.db.roobi.get(keys=(self.oobi,))
+            # Both the selected URL and its key state must have been accepted.
+            if result.state != oobiing.Result.resolved or self.pre not in self.app.vault.hby.kevers:
                 logger.error(
                     f'OOBI Resolution failed for alias {self.alias} and OOBI {self.oobi}, '
                     f'{self.pre} not found in KERI DB after resolution.'
