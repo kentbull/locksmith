@@ -112,12 +112,12 @@ class GroupHolders:
 
     def snapshot(self, entry, operation=None):
         grant, hab = entry.grant, entry.hab
-        deadline = self.vault.hby.db.epsd.get((grant.said,))
+        deadline = self.vault.exc.exchangeDeadline(grant)
         phase = operation.phase if operation else ('interrupted' if entry.interrupted else 'approval_required')
-        if phase not in self.owner.Terminal and (deadline is None or helping.nowUTC() >= deadline.datetime):
+        if phase not in self.owner.Terminal and (deadline is None or helping.nowUTC() >= deadline):
             phase = 'expired'
         return dict(aid=hab.pre, grant=grant.said, xid=entry.xid, kind='dh', phase=phase,
-            deadline=deadline.dts if deadline else '', active=operation is not None,
+            deadline=helping.toIso8601(deadline) if deadline else '', active=operation is not None,
             submitted=operation.submitted if operation else False, error=operation.error if operation else '',
             actions=('approve_dh',) if phase == 'approval_required' else (),
             credential=grant.sad['a']['o'][0], sender=grant.pre, recipient=hab.pre,
@@ -275,11 +275,13 @@ class GroupHolders:
             regeventing.vetAnchor(head, db=entry.hab.db, issuer=entry.grant.pre)
             if state.said != head.said or state.state != 'issued':
                 raise kering.ValidationError('Holder proof does not verify the current issued head')
-        deadline = entry.hab.db.epsd.get((entry.grant.said,)).dts
+        deadline = self.vault.exc.exchangeDeadline(entry.grant)
+        if deadline is None or helping.nowUTC() >= deadline:
+            raise kering.ValidationError('The original group Grant deadline has ended')
         protected = Parser(version=V2, kvy=self.vault.hby.kvy, exc=self.vault.exc,
                            rvy=self.vault.hby.rvy, rgy=self.vault.rgy, local=True)
         protected.parse(ims=exchanging.serializeParsedSubstream(child), local=True)
-        if entry.hab.db.epsd.get((entry.grant.said,)).dts != deadline:
+        if self.vault.exc.exchangeDeadline(entry.grant) != deadline:
             raise kering.ValidationError('Holder proof changed the original Grant deadline')
         from locksmith.core import ipexing
         ipexing._validate_grant_graph(self.vault, entry.grant.said)

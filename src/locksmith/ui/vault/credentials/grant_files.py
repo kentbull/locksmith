@@ -4,6 +4,7 @@ from pathlib import Path
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from keri.app.habbing import GroupHab
+from keri.help import helping
 
 from locksmith.core import credentialing, grant_files
 from locksmith.ui.toolkit.widgets import LocksmithButton, LocksmithDialog, LocksmithInvertedButton
@@ -73,9 +74,9 @@ class GrantFilesDialog(LocksmithDialog):
                     if (body.route == '/ipex/grant' and body.pre in self.vault.hby.prefixes
                             and body.sad['a'].get('o') == [said]
                             and self.preparation.combo_box.findData(body.said) < 0):
-                        deadline = self.vault.hby.db.epsd.get((body.said,))
+                        deadline = self.vault.exc.exchangeDeadline(body)
                         self.preparation.addItem(body.said + ' · ' +
-                            (deadline.dts if deadline else 'deadline unavailable'), body.said)
+                            (helping.toIso8601(deadline) if deadline else 'deadline unavailable'), body.said)
             self._view()
         self.disclosure.refresh.hide()
         self._mode()
