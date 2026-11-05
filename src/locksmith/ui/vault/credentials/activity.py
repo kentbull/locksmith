@@ -142,6 +142,9 @@ class CredentialActivityPage(BaseListPage):
         self.endorse_file = LocksmithInvertedButton('Endorse presentation file…')
         self.endorse_file.clicked.connect(self._endorse_file)
         layout.addWidget(self.endorse_file)
+        self.group_roots = LocksmithInvertedButton('Group registry roots…')
+        self.group_roots.clicked.connect(self._group_roots)
+        layout.addWidget(self.group_roots)
         self.registry_requests = QWidget()
         self.registry_layout = QVBoxLayout(self.registry_requests)
         self.registry_layout.setContentsMargins(0, 0, 0, 0)
@@ -277,6 +280,13 @@ class CredentialActivityPage(BaseListPage):
         from locksmith.ui.vault.credentials.grant_files import GrantFilesDialog
         self._grant_files_dialog = GrantFilesDialog(self.app, self)
         self._grant_files_dialog.open()
+
+    def _group_roots(self):
+        if not self._current_vault():
+            return
+        from locksmith.ui.vault.credentials.root_copy import GroupRootCopyDialog
+        self._root_copy_dialog = GroupRootCopyDialog(self.app, self)
+        self._root_copy_dialog.open()
 
     @property
     def table(self):

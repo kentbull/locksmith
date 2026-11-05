@@ -8,7 +8,7 @@ from keri import kering
 from keri.acdc import Registrar, acdcmap, grant
 from keri.core import Parser, SealSource, SerderKERI, messagize, receipt
 
-from locksmith.core import credentialing, evidence, grouping, ipexing
+from locksmith.core import credentialing, evidence, grouping, ipexing, root_copying
 from test_credentialing import _load_schema
 from test_keri_v2_compat import ipex_vaults as ipex_vaults, _deliver_ipex
 
@@ -255,7 +255,7 @@ def test_issuance_worker_finishes_dh_and_cancellation_drops_live_authority(ipex_
     assert holder.hby.cf.get()['kram'] == config['kram']
 
 
-def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ipex_vaults):
+def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ipex_vaults, qapp, tmp_path):
     """Independent issuer and holder groups approve setup, then separately accept."""
     issuer, peer, holder, holder_peer = [ipex_vaults(name, bran='0123456789abcdefghijk')
         for name in ('group-dh-lead', 'group-dh-peer', 'group-dh-holder', 'group-dh-holder-peer')]
@@ -450,5 +450,75 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         for app in holders:
             accepted = app.vault.db.accepted.get((message.sad['a']['o'][0],))
             assert accepted.grant == grant_said and accepted.admit == admitted.said
+
+        # Root copying is a later explicit file operation; it changes neither admission nor held proof.
+        credential_said = message.sad['a']['o'][0]
+        historical = [(app.vault.db.accepted.get((credential_said,)),
+                       credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'])
+                      for app in holders]
+        event, opening = root_copying.held_openings(holder.vault, credential_said, grant_said)[0]
+        assert event == bup.said
+
+        def prepare_copy(source, target, author, recipient, member):
+            coordinator = (author.kever.sn, author.kever.serder.said)
+            partial, proposal = source.vault.root_copies.prepare_group(
+                author.pre, rip.said, recipient.pre, member.pre, coordinator)
+            selected = root_copying.inspect(partial)
+            body = SerderKERI(raw=partial)
+            wrapper = Parser(version=kering.Vrsn_2_0).parseOneBare(
+                ims=bytearray(proposal), processive=False)
+            assert wrapper.serder.route == '/multisig/rpy' and wrapper.serder.pre == author.mhab.pre
+            assert wrapper.nests[0].serder.raw == body.raw
+            assert selected.sender == author.pre and selected.recipient == recipient.pre
+            assert selected.target == member.pre
+            assert target.hby.mgr.getRegistryRoot(recipient.pre, rip.said) is None
+            with pytest.raises(kering.ValidationError):
+                target.vault.root_copies.receive_group(selected, recipient.pre, rip.said, event, opening)
+            assert target.hby.mgr.getRegistryRoot(recipient.pre, rip.said) is None
+            assert target.vault.root_copies.active is None
+            contributed = target.vault.root_copies.contribute_group(
+                proposal, recipient.pre, rip.said, recipient.pre, member.pre, coordinator)
+            assert SerderKERI(raw=contributed).raw == body.raw
+            assert target.hby.mgr.getRegistryRoot(recipient.pre, rip.said) is None
+            assert all(root.qb64b not in raw for raw in (partial, proposal, contributed))
+            return selected, contributed
+
+        selected, contribution = prepare_copy(holder, holder_peer, hh, hph, holder_members[1])
+        result = holder_peer.vault.root_copies.receive_group(selected, hph.pre, rip.said, event, opening,
+            contributions=(root_copying.inspect(contribution),))
+        assert result == selected.said and holder_peer.vault.root_copies.active is None
+        assert holder_peer.hby.mgr.getRegistryRoot(hph.pre, rip.said).qb64 == root.qb64
+        # The issuer peer naturally has no inventory row; native accepted BUP/opening evidence suffices.
+        assert peer.vault.db.issued.get((credential_said,)) is None
+        assert peer.vault.db.accepted.get((credential_said,)) is None
+        selected, contribution = prepare_copy(issuer, peer, groups[0], groups[1], members[1])
+        from PySide6.QtCore import Qt
+        from PySide6.QtTest import QTest
+        from PySide6.QtWidgets import QWidget
+        from locksmith.ui.vault.credentials.root_copy import GroupRootCopyDialog
+        partial_path, signatures_path = tmp_path / 'partial.cesr', tmp_path / 'signatures.cesr'
+        partial_path.write_bytes(selected.wire)
+        signatures_path.write_bytes(contribution)
+        parent = QWidget()
+        imported = GroupRootCopyDialog(peer, parent)
+        imported.open()
+        imported.group.setCurrentIndex(imported.group.combo_box.findData(groups[1].pre))
+        imported.mode.setCurrentIndex(imported.mode.combo_box.findData('import'))
+        imported.event_field.setText(event)
+        imported.opening.setPlainText(opening.qb64)
+        imported.inspect_files([partial_path, signatures_path])
+        qapp.processEvents()
+        assert imported.action.isEnabled(), imported.status.text()
+        assert peer.hby.mgr.getRegistryRoot(gid, rip.said) is None
+        QTest.mouseClick(imported.action, Qt.MouseButton.LeftButton)
+        assert 'retained under the group AID' in imported.status.text(), imported.status.text()
+        assert peer.hby.mgr.getRegistryRoot(gid, rip.said).qb64 == root.qb64
+        assert peer.vault.root_copies.active is None
+        imported.close()
+        assert peer.vault.db.issued.get((credential_said,)) is None
+        assert peer.vault.db.accepted.get((credential_said,)) is None
+        for app, (admission, proof) in zip(holders, historical):
+            assert app.vault.db.accepted.get((credential_said,)) == admission
+            assert credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'] == proof
     finally:
         scheduler.exit()
