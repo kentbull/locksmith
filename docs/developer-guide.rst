@@ -187,6 +187,12 @@ Current IPEX wire values carry one DAG: ``q.dp = [[[schema, "/", fields], ...]]`
 ``[[]]`` inherits the earlier plan. Opening exchanges use native ``xip`` and do
 not contain reply-only ``p``/``x`` fields. Retired flat plans are not rewritten.
 
+The Offer form exposes only attribute material held in the selected view.
+Credentials with flat attributes offer an unchecked **Reveal the whole held
+attribute block** choice. Select it explicitly when the schema requires the
+attribute object. Send remains disabled while the exact preview violates the
+schema; the wallet never expands the disclosure automatically to satisfy it.
+
 Registry Evidence and Existing Roots
 ------------------------------------
 

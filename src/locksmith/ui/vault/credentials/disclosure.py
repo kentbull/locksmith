@@ -128,8 +128,8 @@ class DisclosureFields(QWidget):
         """Populate from one exact view, never from fuller cached attributes.
 
         key identifies the selected credential/admission pair; sad is its retained
-        body. Only expanded committed sections can be independently selected by
-        this control. Empty selection preserves the existing metadata Offer.
+        body. Expanded committed child sections can be independently selected;
+        flat values require choosing their whole held block. No choice is automatic.
         """
         if key == self.key:
             return
@@ -146,6 +146,13 @@ class DisclosureFields(QWidget):
                 field.toggled.connect(lambda *_: self.changed.emit())
                 self.body.addWidget(field)
                 self.fields.append((f'a/{name}/', field))
+        if not self.fields and isinstance(attrs, dict) and any(name not in ('d', 'u') for name in attrs):
+            # Flat values share one commitment and require an explicit whole-block choice.
+            field = LocksmithCheckbox('Reveal the whole held attribute block')
+            field.setAccessibleName('Disclose whole held attribute block')
+            field.toggled.connect(lambda *_: self.changed.emit())
+            self.body.addWidget(field)
+            self.fields.append(('a/', field))
         self.setVisible(bool(self.fields))
 
     def paths(self):

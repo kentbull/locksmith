@@ -2,6 +2,10 @@
 from PySide6.QtCore import Qt, Signal, QSignalBlocker
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 
+from keri import kering
+from keri.acdc.scheming import validateSchema
+from keri.core import SerderACDC
+
 from locksmith.core import credentialing, ipexing
 from locksmith.ui.vault.credentials.disclosure import DisclosureOptions, DisclosureFields
 from locksmith.core.habbing import list_eligible_local_identifiers
@@ -148,6 +152,11 @@ class StartExchangeDialog(LocksmithDialog):
                     for node in disclosed_credentials(self.vault, self.selection.currentData(),
                             metadata=not self.fields.paths(), preview=True, disclose=self.fields.paths(),
                             **self.disclosure.selection()):
+                        try:
+                            validateSchema(SerderACDC(sad=node), self.vault.hby.db)
+                        except kering.FailedSchemaValidationError as error:
+                            raise ValueError('This offer does not satisfy the credential schema. '
+                                             'Choose held attributes to reveal and review the preview before sending.') from error
                         layout.addWidget(credential_details(self.vault, node))
             except Exception as error:
                 self._offer_error = str(error)

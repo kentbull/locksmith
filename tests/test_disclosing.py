@@ -234,6 +234,45 @@ def test_offer_start_selects_sections_with_real_controls(ipex_vaults, qapp):
     assert isinstance(node.serder.sad['a']['private'], str)
 
 
+
+def test_flat_offer_requires_explicit_whole_attribute_selection(ipex_vaults, qapp):
+    """A schema-invalid metadata Offer stays disabled until the whole held block is selected."""
+    from PySide6.QtCore import Qt
+    from PySide6.QtTest import QTest
+    from PySide6.QtWidgets import QWidget
+    from keri.acdc.scheming import validateSchema
+    from locksmith.ui.vault.credentials.start import StartExchangeDialog
+
+    app = ipex_vaults('ui-flat-offer')
+    issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
+    _, schema = acmSchemaDefault()
+    schema['properties']['a'] = {'type': 'object', 'properties': {
+        key: {'type': 'string'} for key in ('d', 'u', 'i', 'dt', 'value')},
+        'required': ['value'], 'additionalProperties': False}
+    schema = _load_schema(app, issuer, schema)
+    said = _issue(app, schema, holder, authentication='anchor', attributes={'value': 'whole-held-value'})
+    held = SerderACDC(sad=credentialing.credential(app.vault, said)['sad'])
+    parent = QWidget()
+    dialog = StartExchangeDialog(app, parent, 'Offer', credential_said=said)
+    dialog.open()
+    dialog.recipient.setCurrentIndex(dialog.recipient.combo_box.findData(holder.pre))
+    (path, field), = dialog.fields.fields
+    assert path == 'a/' and not field.isChecked()
+    assert dialog.fields.paths() == []
+    assert not dialog.send_button.isEnabled() and 'schema' in dialog.error.text()
+
+    dialog.scroll_area.ensureWidgetVisible(field)
+    field.setFocus()
+    QTest.keyClick(field, Qt.Key.Key_Space)
+    qapp.processEvents()
+    assert dialog.fields.paths() == ['a/'] and dialog.send_button.isEnabled()
+    QTest.mouseClick(dialog.send_button, Qt.MouseButton.LeftButton)
+    offer, = [exn for _, exn in app.hby.db.exns.getTopItemIter() if exn.route == '/ipex/offer']
+    node, = exchanging.loadParsedNestedSubstreams(app.hby, offer.said)
+    assert node.serder.raw == held.raw
+    assert validateSchema(node.serder, app.hby.db)
+
+
 def _existing_root_fixture(ipex_vaults, bound=False):
     """Existing encrypted issuer custody and one real exact recipient admission."""
     from keri.core import Salter
