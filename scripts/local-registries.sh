@@ -120,6 +120,7 @@ pids+=("$!")
     exec .venv/bin/kf-observer start --name localdev-observer --alias observer \
     --base "$registry_base/observer" --host 127.0.0.1 --http 19942 \
     --registrar https://localhost:19932/ --registrar-ca "$ca" \
+    --keypath "$key" --certpath "$certificate" --cafilepath "$ca" \
     "${readers[@]}" --kel "$state_dir/public-bootstrap.cesr" --poll 1 --timeout 5 --no-prompt) \
     > "$state_dir/observer.log" 2>&1 &
 pids+=("$!")
@@ -130,7 +131,7 @@ from urllib.request import urlopen
 context = ssl.create_default_context(cafile=sys.argv[1])
 deadline = time.monotonic() + 15
 pending = {'https://localhost:19931/health', 'https://localhost:19932/health',
-           'http://127.0.0.1:19942/health'}
+           'https://localhost:19942/health'}
 while pending:
     for pid in map(int, sys.argv[2:]):
         try:
@@ -150,7 +151,7 @@ while pending:
 PY
 printf 'Local registry services ready. Logs/state: %s\n' "$state_dir"
 printf 'KERI service state namespace: %s\n' "$registry_base"
-printf 'Registrar: https://localhost:19932; Observer: http://127.0.0.1:19942\n'
+printf 'Registrar: https://localhost:19932; Observer: https://localhost:19942\n'
 printf 'Explicit wallet CA: %s\n' "$ca"
 printf 'Wallet: SSL_CERT_FILE="%s" uv run --locked python -m locksmith.main\n' "$ca"
 printf 'Ctrl-C stops only these services and preserves their state.\n'
