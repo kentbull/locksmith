@@ -319,9 +319,9 @@ class CreateGroupIdentifierDialog(DelegationMixin, LocksmithDialog):
         elif event_type == "group_inception_failed":
             logger.error(f"Group identifier creation failed: {data.get('error')}")
             self.show_error(f"Group identifier creation failed: {data.get('error')}")
-        elif event_type == "group_inception_exn_sent":
-            logger.info(f"Group identifier creation exception sent for: {data.get('pre')}")
-            self.show_success(f"Group Identifier inception event sent to participants! If your mailbox is not already "
+        elif event_type == "group_inception_exn_queued":
+            logger.info(f"Group inception proposal queued for: {data.get('pre')}")
+            self.show_success(f"Group inception proposal queued for participants. If your mailbox is not already "
                               f"active, you may close this dialog and activate it now.")
             self.create_button.setText("Waiting...")
             self.create_button.setEnabled(False)

@@ -11,13 +11,34 @@ from keri import help, kering
 from keri.app import grouping as keri_grouping
 from keri.app import habbing as keri_habbing
 from keri.app import organizing
-from keri.core import coring
+from keri.core import coring, messagize
 from keri.core.serdering import SerderKERI
 from keri.peer import exchanging
 
 from locksmith.db.basing import IdentifierMetaInfo
 
 logger = help.ogler.getLogger(__name__)
+
+
+def inception_proposal(vault, said):
+    """Read one authenticated v2 KERI proposal before showing or approving it."""
+    exn, _ = exchanging.cloneMessage(vault.hby, said=said)
+    if (exn is None or exn.pvrsn != kering.Vrsn_2_0
+            or exn.route != '/multisig/icp' or not vault.exc.complete(said)):
+        raise ValueError('Select an authenticated v2 KERI group inception proposal')
+    children = exchanging.loadParsedNestedSubstreams(vault.hby, said)
+    vault.mux.validate(exn, nests=children)
+    child = children[0]['serder'] if isinstance(children[0], dict) else children[0].serder
+    payload = exn.sad['a']
+    if child.pvrsn != kering.Vrsn_2_0 or child.pre != payload['gid']:
+        raise ValueError('Group inception does not match the selected v2 KERI group')
+    smids, rmids = payload['smids'], payload.get('rmids', payload['smids'])
+    if exn.pre not in smids:
+        raise ValueError('Group inception proposer is not a signing member')
+    verfers, digers = vault.hby.extractMerfersMigers(smids, rmids)
+    if child.keys != [key.qb64 for key in verfers] or child.ndigs != [key.qb64 for key in digers]:
+        raise ValueError('Group inception does not match the accepted member key states')
+    return exn, child
 
 
 def get_contacts_for_multisig(app):
@@ -267,11 +288,12 @@ class GroupMultisigInceptDoer(doing.DoDoer):
                 wits=self.wits,
                 toad=self.toad,
                 delpre=self.delpre,
+                version=kering.Vrsn_2_0,
                 **self.kwargs
             )
 
             # Step 2: Get inception event (partially signed)
-            icp = ghab.msgOwnInception(allowPartiallySigned=True)
+            icp = ghab.msgOwnInception(allowPartiallySigned=True, gvrsn=kering.Vrsn_2_0)
             serder = SerderKERI(raw=icp)
 
             logger.info(f"Group hab created with prefix: {ghab.pre}")
@@ -282,8 +304,11 @@ class GroupMultisigInceptDoer(doing.DoDoer):
                 smids=self.smids,
                 rmids=self.rmids,
                 icp=icp,
-                delegator=self.delpre
+                delegator=self.delpre,
+                version=kering.Vrsn_2_0, gvrsn=kering.Vrsn_2_0
             )
+            # The Create click approves this exact child; upstream Mux retains that contribution.
+            self.app.vault.mbx.parser.parse(ims=bytearray(exn.raw + atc), local=True)
 
             logger.info(f"Created multisig inception EXN: {exn.said}")
 
@@ -295,15 +320,15 @@ class GroupMultisigInceptDoer(doing.DoDoer):
                     dest=recpt,
                     topic="multisig",
                     serder=exn,
-                    attachment=atc
+                    attachment=atc, stream=True
                 )
                 logger.info(f"Sent multisig inception EXN to {recpt}")
 
-            # Signal EXN sent
+            # Queueing is separate from transport and the group signature threshold below.
             if self.signal_bridge:
                 self.signal_bridge.emit_doer_event(
                     doer_name="GroupMultisigInceptDoer",
-                    event_type="group_inception_exn_sent",
+                    event_type="group_inception_exn_queued",
                     data={'alias': self.alias, 'pre': ghab.pre, 'recipients': others}
                 )
 
@@ -417,26 +442,16 @@ class MultisigJoinDoer(doing.DoDoer):
         _ = (yield self.tock)
 
         try:
-            # Step 1: Clone the proposal EXN message
-            exn, pathed = exchanging.cloneMessage(self.hby, said=self.proposal_said)
-            if exn is None:
-                raise ValueError(f"Could not find proposal EXN: {self.proposal_said}")
+            # Authenticate the retained proposal before creating local group state.
+            exn, oicp = inception_proposal(self.app.vault, self.proposal_said)
 
             # Extract proposal data
             payload = exn.ked.get('a', {})
-            embeds = exn.ked.get('e', {})
 
             gid = payload.get('gid')
             smids = payload.get('smids', [])
             rmids = payload.get('rmids', smids)
-            delegator = payload.get('delegator')
-
-            # Get the inception event from embeds (as SAD/dict, not raw bytes from pathed)
-            icp_sad = embeds.get('icp')
-            if icp_sad is None:
-                raise ValueError("No inception event found in proposal")
-
-            oicp = SerderKERI(sad=icp_sad)
+            delegator = oicp.ked.get('di')
 
             logger.info(f"Joining group '{self.alias}' with prefix {gid}")
 
@@ -444,43 +459,37 @@ class MultisigJoinDoer(doing.DoDoer):
             if self.mhab.pre not in smids:
                 raise ValueError(f"Local identifier {self.mhab.pre} not in proposal smids")
 
-            # Step 2: Extract initialization parameters from the original inception event
-            inits = dict()
-            inits["isith"] = oicp.ked["kt"]
-            inits["nsith"] = oicp.ked["nt"]
-            inits["estOnly"] = kering.TraitCodex.EstOnly in oicp.ked.get("c", [])
-            inits["DnD"] = kering.TraitCodex.DoNotDelegate in oicp.ked.get("c", [])
-            inits["toad"] = oicp.ked["bt"]
-            inits["wits"] = oicp.ked["b"]
-            inits["delpre"] = oicp.ked["di"] if "di" in oicp.ked else None
-
-            # Step 3: Create group hab with the same parameters (derives same prefix)
-            ghab = self.hby.makeGroupHab(
+            # Join and sign the retained body; never reconstruct an inception from form fields.
+            ghab = self.hby.joinGroupHab(
+                pre=gid,
                 group=self.alias,
                 mhab=self.mhab,
                 smids=smids,
-                rmids=rmids,
-                **inits
+                rmids=rmids
             )
 
             logger.info(f"Created group hab with prefix: {ghab.pre}")
 
-            # Step 4: Get our own signed version of the inception
-            own_icp = ghab.msgOwnInception(allowPartiallySigned=True)
+            # Contribute our signature to the exact retained inception.
+            own_icp = messagize(oicp, sigers=ghab.sign(oicp.raw, verfers=oicp.verfers),
+                               gvrsn=kering.Vrsn_2_0)
+            self.app.vault.mbx.parser.parse(ims=bytearray(own_icp), local=True)
             own_serder = SerderKERI(raw=own_icp)
 
-            # Step 5: Create response EXN
+            # Retain the approved response before queueing it for other members.
             resp_exn, resp_atc = keri_grouping.multisigInceptExn(
                 hab=self.mhab,
                 smids=smids,
                 rmids=rmids,
                 icp=own_icp,
-                delegator=delegator
+                delegator=delegator,
+                version=kering.Vrsn_2_0, gvrsn=kering.Vrsn_2_0
             )
+            self.app.vault.mbx.parser.parse(ims=bytearray(resp_exn.raw + resp_atc), local=True)
 
             logger.info(f"Created response EXN: {resp_exn.said}")
 
-            # Step 6: Send to all other participants
+            # Queue the response for all other signing members.
             others = [pre for pre in smids if pre != self.mhab.pre]
             for recpt in others:
                 self.postman.send(
@@ -488,11 +497,11 @@ class MultisigJoinDoer(doing.DoDoer):
                     dest=recpt,
                     topic="multisig",
                     serder=resp_exn,
-                    attachment=resp_atc
+                    attachment=resp_atc, stream=True
                 )
                 logger.info(f"Sent multisig join response to {recpt}")
 
-            # Step 7: Start counselor escrow
+            # Ordinary Counselor escrow enforces the group threshold.
             prefixer = coring.Prefixer(qb64=ghab.pre)
             seqner = coring.Number(sn=0)
             saider = coring.Diger(qb64=own_serder.said)
@@ -508,11 +517,11 @@ class MultisigJoinDoer(doing.DoDoer):
                     data={'alias': self.alias, 'pre': ghab.pre}
                 )
 
-            # Step 8: Wait for completion
+            # Wait for the ordinary group completion boundary.
             while not self.counselor.complete(prefixer, seqner):
                 yield self.tock
 
-            # Step 9: Signal success
+            # Report completion to the UI.
             logger.info(f"Successfully joined group {self.alias} ({ghab.pre})")
 
             if self.signal_bridge:
