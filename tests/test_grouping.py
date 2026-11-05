@@ -12,17 +12,22 @@ from hio.core import http
 from keri import Vrsn_2_0 as V2
 from keri import kering
 from keri.app import habbing, indirecting, storing
-from keri.core import Number, Prefixer
+from keri.core import Number, Prefixer, SerderACDC
 from keri.db import openLMDB
 
-from locksmith.core.grouping import get_pending_multisig_proposals, inception_proposal
+from locksmith.core.grouping import (get_pending_multisig_proposals, inception_proposal,
+                                     pending_registry_proposals, registry_proposal)
+from locksmith.ui.vault.credentials.activity import CredentialActivityPage
+from locksmith.ui.vault.credentials.issued.issue import IssueCredentialDialog
+from locksmith.ui.vault.credentials.schema.add import AddSchemaDialog
 from locksmith.ui.vault.groups.create import CreateGroupIdentifierDialog
 from locksmith.ui.vault.groups.accept_multisig import AcceptMultisigProposalDialog
 from test_keri_v2_compat import _deliver_ipex, ipex_vaults as ipex_vaults
+from test_credential_ui import schema
 
 
 @pytest.mark.real_routes
-def test_create_join_v2_group_preserves_inception_and_reopens(ipex_vaults, qapp):
+def test_create_join_v2_group_preserves_inception_and_reopens(ipex_vaults, qapp, tmp_path):
     """Two encrypted member stores explicitly contribute over witnessed mailboxes."""
     names = ('group-ui-one', 'group-ui-two')
     passcode = '0123456789abcdefghijk'
@@ -133,3 +138,109 @@ def test_create_join_v2_group_preserves_inception_and_reopens(ipex_vaults, qapp)
             group = app.hby.habByName('group')
             assert group.pre == gid and group.mhab.pre == member.pre
             assert group.kever.serder.raw == original
+
+        # EO group anchors use member keys that were independently rotated and witnessed first.
+        one, two = apps
+        members = [app.hby.habByName(f'member-{index}') for index, app in enumerate(apps)]
+        issuance = []
+        for app in apps:
+            app.vault.signals.doer_event.connect(
+                lambda name, event, data: failures.append(data) if event.endswith('_failed') else None)
+        two.vault.signals.doer_event.connect(
+            lambda name, event, data: issuance.append((event, data)) if name == 'IssueCredentialDoer' else None)
+
+        def rotate_members():
+            for app, member in zip(apps, members):
+                member.rotate(version=V2, gvrsn=V2)
+                app.vault.receiptor.msgs.append(dict(pre=member.pre, sn=member.kever.sn))
+            pump(lambda: all(app.hby.db.fullyWitnessed(member.kever.serder)
+                             for app, member in zip(apps, members)))
+            for index, member in enumerate(members):
+                _deliver_ipex(apps[1 - index].vault, member.replay(gvrsn=V2))
+
+        rotate_members()
+        # Actual schema selection makes member 1 the issuer; member 0 remains the elected witnesser.
+        schemer = schema()
+        source = tmp_path / 'group-schema.json'
+        source.write_bytes(schemer.raw)
+        load = AddSchemaDialog(two)
+        load.open()
+        load.file_radio.setChecked(True)
+        load.file_path_field.setText(str(source))
+        load.enable_issuance_checkbox.setChecked(True)
+        load.issuer_dropdown.setCurrentIndex(next(index for index in range(load.issuer_dropdown.count())
+                                                if load.issuer_dropdown.itemData(index) == gid))
+        QTest.mouseClick(load.load_button, Qt.MouseButton.LeftButton)
+        pump(lambda: two.vault.db.issuers.get((schemer.said,)) == gid)
+        load.close()
+        parent.app = one
+        page = CredentialActivityPage(parent)
+        page.set_vault_name(one.name)
+        page.show()
+        issue = IssueCredentialDialog(two, parent)
+        issue.open()
+        issue.schema_dropdown.setCurrentIndex(next(index for index in range(issue.schema_dropdown.count())
+                                                  if issue.schema_dropdown.itemData(index) == schemer.said))
+        issue.recipient_dropdown.setCurrentIndex(next(index for index in range(issue.recipient_dropdown.count())
+                                                     if issue.recipient_dropdown.itemData(index) == members[0].pre))
+        issue._dynamic_field_widgets['nickname']['widget'].setText('Group credential')
+        publication = issue.state_options.mode.combo_box
+        publication.setCurrentIndex(publication.findData('public'))
+        QTest.mouseClick(issue.issue_button, Qt.MouseButton.LeftButton)
+
+        accepted = []
+        stale = None
+        for ordinal, route in enumerate(('/multisig/rip', '/multisig/bup')):
+            pump(lambda: any(proposal.route == route for proposal in pending_registry_proposals(one.vault)))
+            proposal, = [proposal for proposal in pending_registry_proposals(one.vault) if proposal.route == route]
+            _, children, group = registry_proposal(one.vault, proposal.said)
+            tel, anchor = [child.serder for child in children]
+            regid = tel.said if ordinal == 0 else tel.sad['rd']
+            assert proposal.pre == members[1].pre and group.mhab.pre == members[0].pre
+            assert anchor.ilk == 'rot' and anchor.sn == ordinal + 1
+            assert not one.hby.db.sigs.get((gid, anchor.said))
+            assert all(app.vault.rgy.store.seqEvent(regid, ordinal) is None for app in apps)
+            assert not any(event == 'credential_issued' for event, _ in issuance)
+
+            # Receipt and closing a review do not contribute a signature or accept a TEL event.
+            QTest.mouseClick(page.table.header.add_button, Qt.MouseButton.LeftButton)
+            QTest.mouseClick(page.group_registry_buttons[proposal.said], Qt.MouseButton.LeftButton)
+            review = page._response_dialog
+            assert tel.said in review.summary.text() and anchor.said in review.summary.text()
+            review.close()
+            assert not one.hby.db.sigs.get((gid, anchor.said))
+            if ordinal == 0:
+                stale = review
+                rotate_members()  # Prepare the next committed keys before RIP approval releases the BUP.
+            else:
+                # The old RIP review cannot sign again once the group has accepted a newer parent.
+                before = [siger.qb64 for siger in one.hby.db.sigs.get((gid, accepted[0][1].said))]
+                stale.open()
+                QTest.mouseClick(stale.approve, Qt.MouseButton.LeftButton)
+                assert stale.error.text()
+                assert [siger.qb64 for siger in one.hby.db.sigs.get((gid, accepted[0][1].said))] == before
+                stale.close()
+                assert all(app.vault.rgy.store.headEvent(regid).said == accepted[0][0].said for app in apps)
+
+            QTest.mouseClick(page.group_registry_buttons[proposal.said], Qt.MouseButton.LeftButton)
+            review = page._response_dialog
+            QTest.mouseClick(review.approve, Qt.MouseButton.LeftButton)
+            pump(lambda: all((event := app.vault.rgy.store.seqEvent(regid, ordinal)) is not None
+                             and event.said == tel.said for app in apps))
+            assert one.hby.habByName('group').witnesser(sn=anchor.sn, dig=anchor.said)
+            assert not two.hby.habByName('group').witnesser(sn=anchor.sn, dig=anchor.said)
+            accepted.append((tel, anchor))
+            review.close()
+
+        pump(lambda: any(event == 'credential_issued' for event, _ in issuance))
+        ((_,), record), = two.vault.db.issued.getTopItemIter()
+        credential = SerderACDC(raw=record.raw.encode())
+        assert credential.sad['i'] == gid and credential.regid == regid
+        for app in apps:
+            for tel, anchor in accepted:
+                assert app.vault.rgy.store.seqEvent(regid, Number(numh=tel.sad['n']).num).raw == tel.raw
+                assert app.hby.db.evts.get((gid, anchor.said)).raw == anchor.raw
+                assert app.vault.rgy.store.anchor(tel.said)[1].qb64 == anchor.said
+            assert app.hby.db.evts.get((gid, gid)).raw == original
+        issue.close()
+        page.close()

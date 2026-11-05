@@ -1,7 +1,11 @@
 """Explicit approval of authenticated live registry setup, separate from Admit."""
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QHBoxLayout, QLabel, QTextEdit, QVBoxLayout, QWidget
+import json
+from keri.help import helping
 
+from locksmith.ui.vault.shared.witness_auth_mixin import WitnessAuthenticationPanel
+from locksmith.core import grouping
 from locksmith.ui.toolkit.widgets import LocksmithButton, LocksmithDialog, LocksmithInvertedButton
 from locksmith.ui.vault.credentials.presentation import identifier_name
 from locksmith.ui.vault.credentials.received.accept_grant import AcceptGrantDialog
@@ -16,6 +20,69 @@ SETUP_PHASES = {
     'cancelled': 'Registry setup cancelled',
     'interrupted': 'Registry setup interrupted',
 }
+
+
+class GroupRegistryDialog(LocksmithDialog):
+    """Review one authenticated retained registry commitment before contributing."""
+
+    def __init__(self, page, said):
+        self.page, self.vault, self.said = page, page.vault, said
+        wrapper, children, group = grouping.registry_proposal(self.vault, said)
+        tel, anchor = [child.serder for child in children]
+        self.prior = group.kever.serder.said
+        content = QWidget()
+        layout = QVBoxLayout(content)
+        self.summary = QLabel(f'Group: {group.name} ({group.pre})\n'
+            f"Registry: {tel.said if tel.ilk == 'rip' else tel.sad['rd']}\n"
+            f"TEL: {tel.said} ({tel.ilk.upper()}, ordinal {tel.sad['n']})\nExact anchor: {anchor.said}")
+        purpose = QLabel('Approving contributes your signature to this exact group anchor. '
+            + ('RIP establishes the group-controlled registry.' if tel.ilk == 'rip' else
+               'BUP records a blinded commitment. This proposal alone does not reveal the credential '
+               'or its state, and transfers no derivation keys.'))
+        self.error = QLabel()
+        for label in (self.summary, purpose, self.error):
+            label.setTextFormat(Qt.TextFormat.PlainText)
+            label.setWordWrap(True)
+            layout.addWidget(label)
+        details = QTextEdit()
+        details.setReadOnly(True)
+        details.setPlainText(json.dumps({'tel': tel.sad, 'anchor': anchor.sad}, indent=2))
+        layout.addWidget(details)
+        self.auth_panel = None
+        wits = [wit for wit in group.kever.wits if wit not in anchor.sad.get('br', [])]
+        wits.extend(anchor.sad.get('ba', []))
+        if wits:
+            self.auth_panel = WitnessAuthenticationPanel(page.app, group, wits)
+            layout.addWidget(self.auth_panel)
+        buttons = QHBoxLayout()
+        close = LocksmithInvertedButton('Close')
+        self.approve = LocksmithButton('Approve exact registry anchor')
+        buttons.addWidget(close)
+        buttons.addWidget(self.approve)
+        super().__init__(parent=page, title='Group registry approval', content=content, buttons=buttons)
+        close.clicked.connect(self.close)
+        self.approve.clicked.connect(self._approve)
+        self.resize(650, 650)
+
+    def _approve(self):
+        """Closing or receiving contributes nothing; this click rechecks the parent."""
+        try:
+            if not self.page._current_vault() or self.page.vault is not self.vault:
+                raise ValueError('This vault is closed')
+            auths = {}
+            if self.auth_panel:
+                valid, codes, error = self.auth_panel.validate_authentication_codes()
+                if not valid:
+                    raise ValueError(error)
+                auths = {wit: f'{code}#{helping.nowIso8601()}'
+                         for wit, code in (entry.split(':', 1) for entry in codes)}
+            grouping.approve_registry_proposal(self.vault, self.said, self.prior, auths=auths)
+        except Exception as error:
+            self.error.setText(str(error))
+        else:
+            self.approve.setEnabled(False)
+            self.error.setText('Your contribution is queued. Group approval and registry acceptance remain separate.')
+            self.page.refresh()
 
 
 class RegistrySetupDialog(LocksmithDialog):

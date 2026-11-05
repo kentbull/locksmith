@@ -18,7 +18,7 @@ from locksmith.ui.vault.credentials.disclosure import DisclosureOptions
 from locksmith.ui.vault.credentials.registry_setup import RegistrySetupDialog, SETUP_PHASES
 from locksmith.ui.vault.credentials.state_openings import StateOpeningsDialog, OPENING_PHASES
 
-from locksmith.core import credentialing, ipexing
+from locksmith.core import credentialing, grouping, ipexing
 from locksmith.ui import colors
 from locksmith.ui.toolkit.tables import PaginatedTableWidget
 from locksmith.ui.toolkit.tables.components import SkewersMenuButton
@@ -146,6 +146,7 @@ class CredentialActivityPage(BaseListPage):
         self.registry_layout = QVBoxLayout(self.registry_requests)
         self.registry_layout.setContentsMargins(0, 0, 0, 0)
         self.registry_buttons = {}
+        self.group_registry_buttons = {}
         layout.addWidget(self.registry_requests)
         self.opening_requests = QWidget()
         self.opening_layout = QVBoxLayout(self.opening_requests)
@@ -352,7 +353,7 @@ class CredentialActivityPage(BaseListPage):
             self.refresh()
 
     def _on_doer_event(self, doer_name, event_type, data):
-        if doer_name in ('Ipex', 'RegistryEvidence', 'Auxiliary'):
+        if doer_name in ('Ipex', 'RegistryEvidence', 'Auxiliary', 'GroupRegistry'):
             self.refresh()
 
     def _current_vault(self):
@@ -388,8 +389,10 @@ class CredentialActivityPage(BaseListPage):
     def refresh(self, *_):
         rows = [[], []]
         requests = []
+        group_proposals = []
         if self._current_vault():
             requests = self.vault.auxiliary.pending()
+            group_proposals = grouping.pending_registry_proposals(self.vault)
             for exchange in ipexing.exchanges(self.vault):
                 chain = exchange['messages']
                 tip = chain[-1] if chain else None
@@ -436,7 +439,7 @@ class CredentialActivityPage(BaseListPage):
                     if exchange.get('expired'):
                         row['Status'] = 'Expired'
                     rows[index].append(row)
-        self._show_registry_requests([status for status in requests if status['kind'] == 'dh'])
+        self._show_registry_requests([status for status in requests if status['kind'] == 'dh'], group_proposals)
         self._show_opening_requests([status for status in requests if status['kind'] == 'unblind'])
         self._rows = rows[0] + rows[1]
         for index, table in enumerate(self.tables):
@@ -451,6 +454,7 @@ class CredentialActivityPage(BaseListPage):
             self.scope_labels[index].setVisible(bool(self._credential_filter))
             self.clear_buttons[index].setVisible(bool(self._credential_filter))
         attention = [any(row['_attention'] for row in direction) for direction in rows]
+        attention[1] = attention[1] or bool(group_proposals)
         for status in requests:
             if status['actions'] or status['phase'] in ('refused', 'expired', 'interrupted'):
                 attention[int(status['recipient'] == status['aid'])] = True
@@ -460,15 +464,21 @@ class CredentialActivityPage(BaseListPage):
         self.attention_changed.emit(any(attention))
         self._show_details(next((row for row in self._rows if row['_key'] == self._selected), None))
 
-    def _show_registry_requests(self, requests):
+    def _show_registry_requests(self, requests, group_proposals):
         """Keep authenticated setup requests visibly separate from accepted credentials."""
         while self.registry_layout.count():
             self.registry_layout.takeAt(0).widget().deleteLater()
         self.registry_buttons.clear()
-        self.registry_requests.setVisible(bool(requests))
-        if not requests:
+        self.group_registry_buttons.clear()
+        self.registry_requests.setVisible(bool(requests or group_proposals))
+        if not requests and not group_proposals:
             return
         self.registry_layout.addWidget(QLabel('Registry setup'))
+        for proposal in group_proposals:
+            button = LocksmithInvertedButton(f"Review group {proposal.route.rsplit('/', 1)[-1].upper()} anchor")
+            button.clicked.connect(lambda checked=False, said=proposal.said: self._review_group_registry(said))
+            self.group_registry_buttons[proposal.said] = button
+            self.registry_layout.addWidget(button)
         for status in requests:
             card = QWidget()
             row = QHBoxLayout(card)
@@ -482,6 +492,18 @@ class CredentialActivityPage(BaseListPage):
             row.addWidget(button)
             self.registry_buttons[(status['aid'], status['grant'])] = button
             self.registry_layout.addWidget(card)
+
+    def _review_group_registry(self, said):
+        from locksmith.ui.vault.credentials.registry_setup import GroupRegistryDialog
+        if not self._current_vault():
+            return
+        try:
+            self._response_dialog = GroupRegistryDialog(self, said)
+        except (ValueError, kering.ValidationError) as error:
+            self.show_error(str(error))
+            return
+        self._response_dialog.finished.connect(self.refresh)
+        self._response_dialog.open()
 
     def _review_registry_setup(self, aid, grant):
         """Open an authenticated local request without implying credential consent."""

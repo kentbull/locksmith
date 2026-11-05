@@ -12,6 +12,7 @@ from PySide6.QtCore import Qt, QDateTime, Signal
 from PySide6.QtGui import QIcon, QIntValidator, QDoubleValidator
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QButtonGroup, QDateTimeEdit, QCheckBox
 from keri import help, kering
+from keri.app.habbing import GroupHab
 from keri.core import coring, scheming
 
 from locksmith.ui import colors
@@ -831,15 +832,21 @@ class IssueCredentialDialog(LocksmithDialog):
         requires_registry = 'rd' in schemer.sed.get('required', [])
         permits_registry = 'rd' in properties or schemer.sed.get('additionalProperties', True)
         issuer = self.vault.hby.habByPre(self.vault.db.issuers.get(keys=(schema_said,)))
+        group = isinstance(issuer, GroupHab)
+        publication = self.state_options.mode.combo_box
+        publication.model().item(publication.findData('derived')).setEnabled(not group)
+        if group and publication.currentData() == 'derived':
+            publication.setCurrentIndex(publication.findData('blinded'))
         modes = self.authentication_dropdown.combo_box
         for index in range(modes.count()):
             mode = modes.itemData(index)
             enabled = permits_registry if mode == 'registry' else not requires_registry
+            enabled = enabled and (not group or mode == 'registry')
             if mode == 'anchor':
                 enabled = enabled and issuer is not None and issuer.kever.prefixer.transferable
             modes.model().item(index).setEnabled(enabled)
         if not modes.model().item(modes.currentIndex()).isEnabled():
-            preferred = ('registry' if requires_registry else
+            preferred = ('registry' if requires_registry or group and permits_registry else
                          'anchor' if modes.model().item(modes.findData('anchor')).isEnabled() else 'signature')
             modes.setCurrentIndex(modes.findData(preferred))
 

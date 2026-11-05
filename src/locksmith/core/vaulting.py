@@ -152,7 +152,7 @@ class Vault(doing.DoDoer):
                 temp=self.hby.temp,
             ),
         )
-        self.mux = grouping.Multiplexor(hby=hby, notifier=self.notifier)
+        self.mux = grouping.Multiplexor(hby=hby, notifier=self.notifier, rgy=self.rgy)
 
         # Exchange handling
         self.exc = exchanging.Exchanger(hby=hby, handlers=[])
@@ -191,7 +191,9 @@ class Vault(doing.DoDoer):
             rgy=self.rgy,
             evidence=evidence.processor(self),
             auxiliary=self.auxiliary,
+            mux=self.mux,
         )
+        self.mux.replay = self.mbx.parser
 
         # Notification toast doer
         self.toast_doer = NotificationToastDoer(vault=self)
