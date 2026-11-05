@@ -2,6 +2,7 @@
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
 from keri.core import SerderACDC
+from keri.app.habbing import GroupHab
 
 from locksmith.core.credentialing import RevokeCredentialDoer
 from locksmith.ui.toolkit.widgets import LocksmithDialog, LocksmithButton, LocksmithInvertedButton
@@ -31,6 +32,10 @@ class RevokeCredentialDialog(LocksmithDialog):
         record = self.vault.db.issued.get((credential_said,))
         acdc = SerderACDC(raw=record.raw.encode()) if record else None
         hab = self.vault.hby.habByPre(acdc.israid) if acdc else None
+        self._group = isinstance(hab, GroupHab)
+        if self._group:
+            notice.setText(notice.text() + ' Other members approve the exact group registry anchor '
+                'in Activity before revocation completes. Retrying preserves that proposal.')
         self.bound_event = FloatingLabelLineEdit('Current issuee event (optional)')
         self.bound_event.setToolTip('For bound state, select the new current issuee event if it has advanced since issuance.')
         self.bound_event.setVisible(bool(record and record.registry_mode != 'public'))
@@ -73,7 +78,7 @@ class RevokeCredentialDialog(LocksmithDialog):
                                     bound_event=self.bound_event.text().strip() or None)
         self._revocation_id = doer.revocation_id
         self.revoke_button.setEnabled(False)
-        self.revoke_button.setText('Revoking…')
+        self.revoke_button.setText('Waiting for group approval…' if self._group else 'Revoking…')
         self.vault.extend([doer])
 
     def _on_event(self, name, event, data):
