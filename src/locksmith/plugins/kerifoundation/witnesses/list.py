@@ -33,10 +33,12 @@ class WitnessOverviewPage(QWidget):
 
     add_witnesses_requested = Signal()
 
-    def __init__(self, app=None, parent=None):
+    def __init__(self, app=None, parent=None, *, provider_name="KERI Foundation", allow_provisioning=True):
         super().__init__(parent)
         self._app = app
         self._db = None
+        self._provider_name = provider_name
+        self._allow_provisioning = allow_provisioning
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._setup_ui()
 
@@ -59,10 +61,10 @@ class WitnessOverviewPage(QWidget):
 
         self._table = PaginatedTableWidget(
             columns=["Identifier", "Name", "Witness AID", "Auth", "Endpoint"],
-            title="KERI Foundation Witnesses",
+            title=f"{self._provider_name} Witnesses",
             icon_path=":/assets/material-icons/witness1.svg",
             show_search=True,
-            show_add_button=True,
+            show_add_button=self._allow_provisioning,
             add_button_text="Add Witnesses",
             items_per_page=10,
             row_actions=[],

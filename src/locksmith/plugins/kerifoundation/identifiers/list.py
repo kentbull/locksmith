@@ -37,10 +37,12 @@ def _shrink_empty_state_title(table: PaginatedTableWidget, font_size: int = 20):
 class IdentifierListPage(QWidget):
     add_witnesses_requested = Signal(str)
 
-    def __init__(self, app=None, parent=None):
+    def __init__(self, app=None, parent=None, *, provider_name="KERI Foundation", allow_provisioning=True):
         super().__init__(parent)
         self._app = app
         self._db = None
+        self._provider_name = provider_name
+        self._allow_provisioning = allow_provisioning
         self.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Expanding)
         self._setup_ui()
 
@@ -56,13 +58,13 @@ class IdentifierListPage(QWidget):
 
         self._table = PaginatedTableWidget(
             columns=["Alias", "Prefix", "Seq No.", "Witnesses"],
-            title="KERI Foundation Identifiers",
+            title=f"{self._provider_name} Identifiers",
             icon_path=":/assets/custom/identifiers.png",
             show_search=True,
             show_add_button=True,
             add_button_text="Add Identifier",
             items_per_page=10,
-            row_actions=["Add Witnesses"],
+            row_actions=["Add Witnesses"] if self._allow_provisioning else [],
             row_action_icons={"Add Witnesses": ":/assets/material-icons/witness1.svg"},
             monospace_columns=["Prefix"],
         )

@@ -41,9 +41,10 @@ def _shrink_empty_state_title(table: PaginatedTableWidget, font_size: int = 20):
 class WatcherListPage(QWidget):
     """Shows hosted watcher rows for the permanent KF account AID."""
 
-    def __init__(self, app=None, parent=None):
+    def __init__(self, app=None, parent=None, *, provider_name="KERI Foundation"):
         super().__init__(parent)
         self._app = app
+        self._provider_name = provider_name
         self._db = None
         self._boot_client = None
         self._refresh_task: asyncio.Task | None = None
@@ -78,7 +79,7 @@ class WatcherListPage(QWidget):
 
         self._table = PaginatedTableWidget(
             columns=["Name", "Watcher AID", "Region", "Status", "Endpoint"],
-            title="KERI Foundation Watchers",
+            title=f"{self._provider_name} Watchers",
             icon_path=":/assets/material-icons/watcher.svg",
             show_search=True,
             show_add_button=False,

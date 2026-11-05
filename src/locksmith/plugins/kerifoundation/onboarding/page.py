@@ -103,9 +103,10 @@ class KFOnboardingPage(QWidget):
     confirm_requested = Signal(str, str, str)  # (alias, witness_profile_code, account_aid)
     open_account_requested = Signal()
 
-    def __init__(self, app=None, parent=None):
+    def __init__(self, app=None, parent=None, *, provider_name="KERI Foundation"):
         super().__init__(parent)
         self._app = app
+        self._provider_name = provider_name
         self._db = None
         self._boot_client = None
         self._phase = PHASE_NOT_STARTED
@@ -181,7 +182,7 @@ class KFOnboardingPage(QWidget):
         outer.addWidget(scroll)
 
     def _build_header(self):
-        title = QLabel("KERI Foundation Onboarding")
+        title = QLabel(f"{self._provider_name} Onboarding")
         title.setStyleSheet(
             f"""
             font-size: 24px;
@@ -302,7 +303,7 @@ class KFOnboardingPage(QWidget):
 
         desc = QLabel(
             "Choose the permanent local AID that will represent this vault's "
-            "KERI Foundation account. You can reuse an existing local AID or "
+            f"{self._provider_name} account. You can reuse an existing local AID or "
             "create a new one as part of onboarding."
         )
         desc.setWordWrap(True)
@@ -393,7 +394,7 @@ class KFOnboardingPage(QWidget):
         lay.addWidget(heading)
 
         desc = QLabel(
-            "The boot surface always allocates one hosted watcher for the KF "
+            f"The boot surface always allocates one hosted watcher for the {self._provider_name} "
             "account. The wallet resolves that watcher locally before onboarding completes."
         )
         desc.setWordWrap(True)
@@ -683,13 +684,13 @@ class KFOnboardingPage(QWidget):
 
     def _update_subtitle(self):
         msgs = {
-            PHASE_NOT_STARTED: "Prepare the vault's KF account setup.",
+            PHASE_NOT_STARTED: f"Prepare the vault's {self._provider_name} account setup.",
             PHASE_BOOTSTRAP_REQUIRED: "Connect to the boot surface before registration becomes available.",
             PHASE_ALIAS_INPUT: "Choose or create the permanent local account identity.",
             PHASE_WITNESS_CHOICE: "Select a hosted witness profile for the account.",
             PHASE_REVIEW: "Review the account setup and begin onboarding.",
             PHASE_IN_PROGRESS: "Onboarding is in progress. Keep this page open.",
-            PHASE_COMPLETED: "Your KERI Foundation account is set up.",
+            PHASE_COMPLETED: f"Your {self._provider_name} account is set up.",
         }
         self._subtitle.setText(msgs.get(self._phase, ""))
 
@@ -915,8 +916,8 @@ class KFOnboardingPage(QWidget):
             seed = self._qr_results[0]["totp_seed"]
             uri = create_totp_uri(
                 secret=seed,
-                vault_name=f"KF-Batch-{controller_aid[:8]}",
-                issuer="KERI Foundation",
+                vault_name=f"{self._provider_name}-Batch-{controller_aid[:8]}",
+                issuer=self._provider_name,
             )
             panel = LocksmithQRPanel(
                 number="1",
@@ -932,12 +933,12 @@ class KFOnboardingPage(QWidget):
         for idx, res in enumerate(self._qr_results, start=1):
             uri = create_totp_uri(
                 secret=res["totp_seed"],
-                vault_name=f"KF-{res['eid'][:12]}",
-                issuer="KERI Foundation",
+                vault_name=f"{self._provider_name}-{res['eid'][:12]}",
+                issuer=self._provider_name,
             )
             panel = LocksmithQRPanel(
                 number=str(idx),
-                witness_name=res.get("name") or f"KF Witness {res['eid'][:12]}",
+                witness_name=res.get("name") or f"{self._provider_name} Witness {res['eid'][:12]}",
                 witness_eid=res["eid"],
                 controller_alias=controller_alias,
                 controller_aid=controller_aid,
@@ -958,8 +959,8 @@ class KFOnboardingPage(QWidget):
 
         if not self._boot_client:
             self._boot_connected = False
-            self._boot_error = "KF onboarding boot client is not available."
-            self._boot_detail = "Configure the KF onboarding surface before starting."
+            self._boot_error = f"{self._provider_name} onboarding boot client is not available."
+            self._boot_detail = f"Configure the {self._provider_name} onboarding surface before starting."
             self._bootstrap = None
             self._update_phase()
             self._apply_phase_visibility()
@@ -987,7 +988,7 @@ class KFOnboardingPage(QWidget):
                 return
             self._boot_connected = False
             self._bootstrap = None
-            self._boot_error = f"Could not connect to the KF boot surface: {ex}"
+            self._boot_error = f"Could not connect to the {self._provider_name} boot surface: {ex}"
             self._boot_detail = "Retry after the boot server becomes reachable."
             logger.warning("KF onboarding boot preflight failed: %s", ex)
         else:
@@ -1038,7 +1039,7 @@ class KFOnboardingPage(QWidget):
         alias = data.get("alias", "")
         if aid:
             self._aid_hint.setText(
-                f"Reuse the existing local AID `{self._shorten(aid)}` for the KF account alias `{alias}`."
+                f"Reuse the existing local AID `{self._shorten(aid)}` for the {self._provider_name} account alias `{alias}`."
             )
         else:
             self._aid_hint.setText("Select a local AID or create a new one.")
