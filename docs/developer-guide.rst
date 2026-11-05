@@ -215,11 +215,26 @@ The dialog identifies the member, frozen coordinator event and elected custodian
 
 Only the elected custodian establishes and retains the issuer group's derivation
 root. Other members contribute signatures; this does not copy the root to their
-stores. The individual holder separately approves registry setup. Issuance then
+stores. The holder separately approves registry setup. Issuance then
 proposes its BUP through the registry-approval controls described above. The
 original Grant and deadline remain unchanged; an expired exchange cannot be
 revived. The holder's **Review credential / Accept Grant** decision remains
 separate from DH and issuer-group approval.
+
+A group holder uses the same single setup decision. Each participating member
+authorizes its contribution to the custodian's reply for that exact exchange;
+there is no additional reply-approval click. The normal group threshold must
+authenticate the reply before it leaves. Only the elected holder custodian
+derives the root. Other members verify the issued Grant using public registry
+evidence and the exact event opening, without receiving that root.
+
+After setup verifies, **Review credential** offers a separate group acceptance
+decision. The custodian proposes one Admit; other members review and approve
+that same acknowledgment. The wallet waits for the group signature threshold
+before adding the credential. Setup, receiving an Admit proposal and closing
+its review do not record acceptance. The selected sender handles delivery only
+after the threshold is satisfied; transport submission does not prove the
+issuer received it.
 
 Individual derived issuance now anchors a fresh RIP, retains one signed proofless
 Grant and waits for explicit DH approval before issuing its BUP. The vault owns

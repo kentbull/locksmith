@@ -152,12 +152,16 @@ class RegistrySetupDialog(LocksmithDialog):
                 + f"\nDH custodian: {identifier_name(self.vault, status['custodian'])}"
                 + f"\nCoordinator event: {status['coordinator'][1]}")
             self.details.setPlainText(json.dumps(status['detail'], indent=2))
-            self.approve.setText('Approve Grant and registry setup')
+            holder = status['recipient'] == self.hab.pre
+            self.approve.setText('Approve registry setup' if holder else 'Approve Grant and registry setup')
             self.purpose.setText(
+                'Authorize this member’s contribution to the custodian’s DH reply for the displayed Grant.'
+                if holder else
                 'Approve this member’s signature on the displayed Grant and credential, '
-                'and its associated DH query from the selected custodian within this exchange’s deadline.')
+                'and its associated DH query from the selected custodian.')
             self.purpose.setText(self.purpose.text()
-                + ' Only the elected custodian establishes and retains this group’s derivation root. '
+                + ' This consent is limited to the displayed exchange and its original deadline. '
+                  'Only the elected custodian establishes and retains this group’s derivation root. '
                   'Contributing a signature does not copy the root to this member. '
                   'Credential admission remains a separate decision.')
         else:

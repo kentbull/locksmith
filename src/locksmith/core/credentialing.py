@@ -530,9 +530,6 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                     _, custodian = election(hab)
                     if hab.mhab.pre != custodian:
                         raise ValueError('Only the elected issuer custodian may start derived issuance')
-                    recipient = self.vault.hby.habByPre(self.recipient_pre)
-                    if isinstance(recipient, GroupHab):
-                        raise ValueError('Group holder agreement requires its separate approval adapter')
             if set(self.auths) - set(hab.kever.wits):
                 raise ValueError('Authorization names a witness outside the issuer witness set')
             schemer = self.vault.hby.db.schema.get(keys=(self.schema_said,))

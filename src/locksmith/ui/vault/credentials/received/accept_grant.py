@@ -4,13 +4,15 @@ locksmith.ui.vault.credentials.received.accept_grant module
 
 Dialog for accepting and admitting credentials from IPEX grant messages.
 """
+import json
 from typing import TYPE_CHECKING
 
 from PySide6.QtCore import Qt, QTimer
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFileDialog
+    QWidget, QVBoxLayout, QLabel, QHBoxLayout, QFileDialog, QTextEdit
 )
 from keri import help, kering
+from keri.app.habbing import GroupHab
 from keri.peer import exchanging
 
 from locksmith.core import credentialing, ipexing
@@ -98,6 +100,10 @@ class AcceptGrantDialog(LocksmithDialog):
         self.cancel_button.clicked.connect(self.close)
         self.admit_button.clicked.connect(self._on_admit)
         self.finished.connect(self._disconnect)
+        if self._group:
+            self.vault.signals.doer_event.connect(self._on_doer_event)
+            self._listening = True
+            self._show_group_proposal()
 
 
     def _load_grant_message(self):
@@ -113,6 +119,10 @@ class AcceptGrantDialog(LocksmithDialog):
         credential = ipexing.grant_credential(self.vault, self.grant_said)
         self.sender = exn.sad['i']
         self.recipient = exn.sad['ri']
+        hab = self.vault.hby.habByPre(self.recipient)
+        self._group = isinstance(hab, GroupHab)
+        self._reviewed_admit = (ipexing.group_admit_proposal(self.vault, hab, self.grant_said)
+                                if self._group else None)
         self.timestamp = exn.sad.get('dt', '')
         self.requires_anchor = (exn.sad['a'].get('ax', [False])[0]
                                 and self.vault.hby.db.erpy.get((self.grant_said,)) is None)
@@ -219,6 +229,10 @@ class AcceptGrantDialog(LocksmithDialog):
         self.credential_details.set_content_layout(attributes)
         layout.addWidget(self.credential_details)
         self._create_credential_details_section(layout)
+        if self._group:
+            self.group_proposal = QTextEdit()
+            self.group_proposal.setReadOnly(True)
+            layout.addWidget(self.group_proposal)
 
         self.delivery_notice = QLabel('Delivery retries automatically. Follow progress in Activity.')
         self.delivery_notice.setWordWrap(True)
@@ -240,6 +254,38 @@ class AcceptGrantDialog(LocksmithDialog):
         self.admit_button = LocksmithButton('Add and export receipt' if self.save else 'Add credential')
         self.admit_button.setEnabled(not self._anchor_error)
         self.button_row.addWidget(self.admit_button)
+
+    def _show_group_proposal(self):
+        """Display the exact acknowledgment to sign, or wait for its author."""
+        hab = self.vault.hby.habByPre(self.recipient)
+        status = self.vault.auxiliary.status(hab.pre, self.grant_said)
+        proposal = self._reviewed_admit
+        self.group_proposal.setVisible(proposal is not None)
+        if proposal is not None:
+            self.group_proposal.setPlainText(json.dumps(proposal.sad, indent=2))
+        waiting = (proposal is None and status is not None
+                   and status.get('custodian') != hab.mhab.pre)
+        self.admit_button.setText('Waiting for group proposal' if waiting else
+                                 'Approve group acceptance' if proposal else 'Propose group acceptance')
+        self.admit_button.setEnabled(not waiting and not self._anchor_error)
+        self.delivery_notice.setText(
+            'Acceptance requires the group signature threshold. Registry setup alone does not accept the credential.')
+        self.delivery_notice.show()
+
+    def _admit_options(self):
+        """Bind a contribution to the proposal actually displayed in this dialog."""
+        return {'proposal': self._reviewed_admit.said if self._reviewed_admit else None} if self._group else {}
+
+    def _waiting_for_group(self, said):
+        """Keep the dialog open while the exact Admit collects member signatures."""
+        self._pending_said = said
+        self.cancel_button.setText('Close')
+        self.cancel_button.show()
+        self.decline_button.hide()
+        self.delivery_notice.setText('Waiting for group approval before accepting the credential.')
+        self.delivery_notice.show()
+        self.admit_button.setText('Waiting for group approval...')
+        self.admit_button.setEnabled(False)
 
     def _can_decline(self):
         grant = self.vault.hby.db.exns.get((self.grant_said,))
@@ -307,13 +353,16 @@ class AcceptGrantDialog(LocksmithDialog):
         """Accept the credential and save its signed acknowledgment."""
         try:
             hab = self.vault.hby.habByPre(self.recipient)
-            serder, attachment = ipexing.admit(self.vault, hab, self.grant_said)
+            serder, attachment = ipexing.admit(self.vault, hab, self.grant_said, **self._admit_options())
             receipt = self.vault.db.receipts.get((hab.pre, self.grant_said))
             if receipt.status != 'accepted':
                 self._pending_said = serder.said
                 if not self._listening:
                     self.vault.signals.doer_event.connect(self._on_doer_event)
                     self._listening = True
+                if self._group and not self.vault.exc.complete(serder.said):
+                    self._waiting_for_group(serder.said)
+                    return
                 self.delivery_notice.setText('Waiting for witness receipts before accepting and exporting.')
                 self.delivery_notice.show()
                 self.admit_button.setText('Waiting for witnesses...')
@@ -334,12 +383,18 @@ class AcceptGrantDialog(LocksmithDialog):
                 ipexing.retry(self.vault, self._pending_said)
             else:
                 hab = self.vault.hby.habByPre(self.recipient)
-                serder, _ = ipexing.admit(self.vault, hab, self.grant_said, send=True)
+                serder, _ = ipexing.admit(self.vault, hab, self.grant_said, send=True, **self._admit_options())
                 self._pending_said = serder.said
+                if not self._listening:
+                    self.vault.signals.doer_event.connect(self._on_doer_event)
+                    self._listening = True
+                if self._group and self.vault.db.receipts.get((hab.pre, self.grant_said)).status != 'accepted':
+                    self._waiting_for_group(serder.said)
+                    return
                 if self.vault.db.receipts.get((hab.pre, self.grant_said)).status == 'accepted':
                     self.vault.signals.emit_doer_event("Ipex", "accepted", {'said': serder.said})
-                self.vault.signals.doer_event.connect(self._on_doer_event)
-                self._listening = True
+                if self._group and self.vault.db.outbox.get((serder.said,)) is None:
+                    return
             self.cancel_button.setText("Close")
             self.cancel_button.show()
             self.decline_button.hide()
@@ -348,9 +403,9 @@ class AcceptGrantDialog(LocksmithDialog):
             self.delivery_notice.show()
             self.admit_button.setText("Sending acknowledgment...")
             record = self.vault.db.outbox.get((self._pending_said,))
-            if record.status == 'submitted':
+            if record is not None and record.status == 'submitted':
                 self._on_doer_event('Ipex', 'transport_submitted', {'said': self._pending_said})
-            elif record.status == 'blocked':
+            elif record is not None and record.status == 'blocked':
                 self._on_doer_event('Ipex', 'send_failed',
                                     {'said': self._pending_said, 'error': record.error})
         except Exception as error:
@@ -381,12 +436,29 @@ class AcceptGrantDialog(LocksmithDialog):
             return
         if not self._listening:
             return
+        if (self._group and doer_name == 'Ipex' and event_type == 'group_admit_proposed'
+                and data.get('grant') == self.grant_said and self._reviewed_admit is None
+                and self._pending_said is None):
+            hab = self.vault.hby.habByPre(self.recipient)
+            self._reviewed_admit = ipexing.group_admit_proposal(self.vault, hab, self.grant_said)
+            self._show_group_proposal()
+            return
         if doer_name != "Ipex" or data.get('said') != self._pending_said:
             return
         if self.save and event_type == 'accepted':
             self._disconnect()
             stream = exchanging.serializeMessage(self.vault.hby, self._pending_said)
             self._save_admit_to_file(self._pending_said, stream)
+            return
+        if self._group and event_type == 'awaiting_group':
+            self._waiting_for_group(self._pending_said)
+            return
+        if self._group and event_type == 'accepted':
+            self.admit_button.setEnabled(False)
+            self.admit_button.setText('Credential accepted')
+            self.delivery_notice.setText('The group accepted this credential. '
+                'Its selected sender handles acknowledgment delivery.')
+            self.delivery_notice.show()
             return
         if event_type == 'awaiting_witnesses':
             self.delivery_notice.setText('Waiting for witness receipts before accepting.')
