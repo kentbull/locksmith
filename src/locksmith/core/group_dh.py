@@ -123,6 +123,16 @@ class GroupIssuers:
                 continue
             self.seen.add(said)
 
+    def partial(self, grant):
+        """Whether an issuer proposal still awaits threshold intake.
+
+        Core assigns the accepted KRAM lifetime only at threshold intake and
+        bounds the partial escrow until then. DH work still requires the
+        accepted deadline through pendingGrant and Dhke.
+        """
+        return (self.vault.exc.exchangeDeadline(grant) is None
+                and self.vault.hby.db.epse.get((grant.said,)) is not None)
+
     def snapshot(self, proposal, operation=None):
         grant, hab = proposal.grant, proposal.hab
         deadline = self.vault.exc.exchangeDeadline(grant)
@@ -131,7 +141,7 @@ class GroupIssuers:
         selected = proposal.query.serder if stage == 'query' else grant
         if phase not in self.owner.Terminal:
             phase = 'waiting' if proposal.approved else 'approval_required'
-            if deadline is None or helping.nowUTC() >= deadline:
+            if deadline is None and not self.partial(grant) or deadline is not None and helping.nowUTC() >= deadline:
                 phase = 'expired'
         return dict(aid=hab.pre, grant=grant.said, xid=grant.said, kind='dh', phase=phase,
             deadline=helping.toIso8601(deadline) if deadline else '', active=operation is not None,

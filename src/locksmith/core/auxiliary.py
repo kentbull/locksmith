@@ -586,7 +586,10 @@ class Auxiliary(doing.DoDoer):
             if operation.phase in self.Terminal:
                 continue
             deadline = self.vault.exc.exchangeDeadline(operation.grant)
-            if deadline is None or helping.nowUTC() >= deadline:
+            # An issuer group proposal has no accepted lifetime until threshold intake.
+            awaiting = (deadline is None and operation.group is not None and operation.kind == 'dh'
+                        and operation.hab.pre == operation.grant.pre and self.groups.partial(operation.grant))
+            if not awaiting and (deadline is None or helping.nowUTC() >= deadline):
                 self._terminate(operation, 'expired', 'The original Grant deadline has elapsed')
                 continue
             if operation.kind == 'unblind' and operation.hab.pre == operation.grant.pre:

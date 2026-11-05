@@ -338,7 +338,12 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
     wires = []
 
     def deliver_aux(source, target, topic):
-        _, destination, raw, selected_topic = source.vault.auxiliary.outgoing.popleft()
+        outgoing = source.vault.auxiliary.outgoing
+        item = outgoing.popleft()
+        # A slow loop can queue an exact DH query retry; delivery drops it once agreement completes.
+        while item[2] in wires and any(op.query == item for op in source.vault.auxiliary.operations.values()):
+            item = outgoing.popleft()
+        _, destination, raw, selected_topic = item
         assert destination in target.hby.habs and selected_topic == topic
         wires.append(raw)
         _deliver_ipex(target.vault, raw)
@@ -363,8 +368,10 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         message = operation.grant
         gid, grant_said = groups[0].pre, message.said
         original = message.raw
-        deadline = io.status(gid, grant_said)['deadline']
-        assert deadline and all(topic == 'multisig' for _, _, _, topic in io.outgoing)
+        # A partial group Grant has no accepted KRAM lifetime before threshold intake.
+        status = io.status(gid, grant_said)
+        assert status['phase'] == 'waiting' and not status['deadline']
+        assert all(topic == 'multisig' for _, _, _, topic in io.outgoing)
         deliver_aux(issuer, peer, 'multisig')
         po.process()
         selected = po.status(gid, grant_said)
@@ -378,8 +385,11 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         po.approve_dh(groups[1], grant_said, proposal=selected['proposal'])
         deliver_aux(peer, issuer, 'multisig')
         advance(lambda: any(topic == 'multisig' for _, _, _, topic in io.outgoing))
+        deadline = io.status(gid, grant_said)['deadline']
+        assert deadline
         deliver_aux(issuer, holder, 'credential')
-        holder_deadline = holder.hby.db.epsd.get((grant_said,)).dts
+        holder_deadline = holder.vault.exc.exchangeDeadline(message)
+        assert holder_deadline is not None
         deliver_aux(issuer, peer, 'multisig')
         po.process()
         selected = po.status(gid, grant_said)
@@ -396,7 +406,8 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         assert not any(destination == gid and topic == 'reply'
                        for _, destination, _, topic in ho.outgoing)
         deliver_aux(holder, holder_peer, 'credential')
-        peer_deadline = holder_peer.hby.db.epsd.get((grant_said,)).dts
+        peer_deadline = holder_peer.vault.exc.exchangeDeadline(message)
+        assert peer_deadline is not None
         deliver_aux(holder, holder_peer, 'reply')
         deliver_aux(holder, holder_peer, 'multisig')
         hpo.process()
@@ -430,8 +441,8 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         bup = update[0].serder
         assert all(app.vault.rgy.store.seqEvent(rip.said, 1) is None for app in issuers)
         assert operation.grant.raw == original and io.status(gid, grant_said)['deadline'] == deadline
-        assert holder.hby.db.epsd.get((grant_said,)).dts == holder_deadline
-        assert holder_peer.hby.db.epsd.get((grant_said,)).dts == peer_deadline
+        assert holder.vault.exc.exchangeDeadline(message) == holder_deadline
+        assert holder_peer.vault.exc.exchangeDeadline(message) == peer_deadline
         grouping.approve_registry_proposal(peer.vault, bup_proposal.said, groups[1].kever.serder.said)
         deliver_member(peer, issuer)
         advance(lambda: worker.done)
@@ -450,7 +461,7 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         assert hpo.status(hph.pre, grant_said)['phase'] == 'verified'
         for app, cutoff in zip(holders, (holder_deadline, peer_deadline)):
             assert app.hby.db.exns.get((grant_said,)).raw == original
-            assert app.hby.db.epsd.get((grant_said,)).dts == cutoff
+            assert app.vault.exc.exchangeDeadline(message) == cutoff
             assert app.vault.db.accepted.get((message.sad['a']['o'][0],)) is None
             assert app.vault.db.receipts.get((hh.pre, grant_said)) is None
         assert peer.hby.mgr.getRegistryRoot(gid, rip.said) is None

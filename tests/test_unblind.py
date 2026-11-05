@@ -167,7 +167,9 @@ def test_accepted_live_grant_rechecks_after_newer_witnessed_head(ipex_vaults):
     agree = verifier.hby.db.exns.get((message.sad['p'],))
     assert agree.route == '/ipex/agree'
     assert message.sad['x'] == agree.sad['p'] != message.said
-    deadline = verifier.hby.db.epsd.get((message.said,)).dts
+    # Acceptance clears signature-escrow timing; the accepted KRAM row owns the deadline.
+    deadline = verifier.vault.exc.exchangeDeadline(message)
+    assert deadline is not None
     previous = exchanging.serializeParsedSubstream(exchanging.loadParsedNestedSubstreams(verifier.hby, message.said)[0])
     assert next(row for row in vo.pending(vh) if row['grant'] == message.said)['phase'] == 'request_required'
     vo.request_openings(vh, message.said)
@@ -179,7 +181,7 @@ def test_accepted_live_grant_rechecks_after_newer_witnessed_head(ipex_vaults):
     status = vo.status(vh.pre, message.said)
     assert status['phase'] == 'verified', status
     assert verifier.hby.db.exns.get((message.said,)).raw == message.raw
-    assert verifier.hby.db.epsd.get((message.said,)).dts == deadline
+    assert verifier.vault.exc.exchangeDeadline(message) == deadline
     assert verifier.hby.db.erpy.get((agree.said,)).qb64 == message.said
     updated = exchanging.serializeParsedSubstream(exchanging.loadParsedNestedSubstreams(verifier.hby, message.said)[0])
     assert updated != previous
