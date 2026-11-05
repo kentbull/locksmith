@@ -9,9 +9,9 @@ public CA, during onboarding. See :doc:`developer-guide` for that complete path.
 
 The standalone ``scripts/local-registries.sh STATE_DIR [CONFIG_JSON]`` command is
 for independently operated services. With no configuration file it starts with
-no wallet roles, ready for provider enrollment. With the Python backend, an explicit file grants the selected operator-managed
-publisher and reader roles described below. The TypeScript launcher requires
-provider enrollment and refuses an explicit participant file. Do not run
+no wallet roles, ready for provider enrollment. An explicit file grants operator-managed readers on either backend. Python also
+supports static publishers; TypeScript publishers use provider enrollment, so
+its ``publishers`` array must be empty. Do not run
 it on ports already owned by the complete provider launcher.
 
 Export introductions
@@ -26,6 +26,19 @@ actual public introduction. Put the files beside a small configuration file:
      "publishers": ["issuer.cesr"],
      "readers": ["issuer.cesr", "holder.cesr", "verifier.cesr"]
    }
+
+For a Dolly service using TypeScript infrastructure, export its actual public
+introduction and use ``{"publishers": [], "readers": ["dolly.cesr"]}``. Pass the
+file as the second argument to the complete provider launcher:
+
+.. code-block:: bash
+
+   LOCAL_PROVIDER_BACKEND=typescript bash scripts/local-provider.sh \
+     "$HOME/.local/share/locksmith-local-provider-ts" /absolute/path/to/participants.json
+
+Dolly keeps its own keys and signs Observer queries as its existing service AID.
+Configured reader permission survives deletion of a provider-managed account
+with the same AID. The Observer still verifies each query and its KERI evidence.
 
 Paths are relative to that JSON file. Publishers may submit registry evidence;
 readers may query Observer. Both arrays are required; either may be empty. Only explicitly selected

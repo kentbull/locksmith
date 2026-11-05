@@ -113,3 +113,8 @@ def test_provider_capabilities_select_transport_account_without_changing_issuer_
         hby.cf.put(config)
         owner._configure()
         assert not owner._published
+        # Renewed access must invalidate the same coordinates, not just changed settings.
+        owner._published[registry.regk] = rip.said
+        owner._fetched[registry.regk] = rip.said
+        owner.reset()
+        assert not owner._published and not owner._fetched

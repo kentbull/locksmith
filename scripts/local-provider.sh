@@ -2,6 +2,10 @@
 # Run the normal Foundation provider locally; wallet access is enrolled by kf-boot.
 set -euo pipefail
 umask 077
+if [ "$#" -gt 2 ]; then
+    echo 'Usage: bash scripts/local-provider.sh [STATE_DIR [PARTICIPANTS_JSON]]' >&2
+    exit 2
+fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 keri_workspace=${KERI_WORKSPACE:-$(cd "$script_dir/../../../.." && pwd)}
 state_dir=${1:-${XDG_DATA_HOME:-$HOME/.local/share}/locksmith-local-provider}
@@ -74,7 +78,9 @@ trap 'exit 143' TERM
 # Registry capabilities must exist in provider configuration before an account activates.
 mkdir -p "$registry_state"
 rm -f "$registry_state/registry-services.env"
-bash "$script_dir/local-registries.sh" "$registry_state" > "$state_dir/registries.log" 2>&1 &
+registry_args=("$registry_state")
+if [ "$#" -eq 2 ]; then registry_args+=("$2"); fi
+bash "$script_dir/local-registries.sh" "${registry_args[@]}" > "$state_dir/registries.log" 2>&1 &
 pids+=("$!")
 registry_pid=$!
 deadline=$((SECONDS + 180))

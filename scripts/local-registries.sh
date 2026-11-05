@@ -36,8 +36,6 @@ PYPORTS
 uv sync --project "$registrar_repo" --locked --extra dev --python 3.14
 if [ "$backend" = python ]; then
     uv sync --project "$observer_repo" --locked --extra dev --python 3.14
-else
-    (cd "$ts_repo" && deno task setup:compat-lmdb)
 fi
 service_python="$registrar_repo/.venv/bin/python"
 pids=()
@@ -159,7 +157,7 @@ else
         --head-dir "$state_dir/tufa" --passcode "$passcode" --url "https://localhost:$observer_public" \
         --http "$observer_public" --boot-port "$observer_boot" --registrar "https://localhost:$registrar_public" \
         --registrar-ca "$ca" --kel "$state_dir/public-bootstrap.cesr" --poll-interval 1 \
-        --tls-key "$key" --tls-cert "$certificate") > "$state_dir/observer.log" 2>&1 &
+        ${readers[@]+"${readers[@]}"} --tls-key "$key" --tls-cert "$certificate") > "$state_dir/observer.log" 2>&1 &
     pids+=("$!")
 fi
 

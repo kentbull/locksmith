@@ -39,7 +39,7 @@ def service_settings(payload, *, account):
 
 
 async def activate_services(vault, account, client):
-    """Finish one existing boot operation under the onboarding task's cancellation ownership."""
+    """Finish one service operation under the provider task's cancellation ownership."""
     def opened():
         if (getattr(vault, 'closed', False) or not vault.hby.db.opened
                 or vault.hby.habByPre(account.pre) is not account):
@@ -69,9 +69,9 @@ async def activate_services(vault, account, client):
             vault.hby.cf.put(config)
             return settings
         if operation.get('state') not in ('pending', 'running'):
-            raise KFBootError('Credential-service activation failed; retry the existing onboarding session')
+            raise KFBootError('Service access could not be activated; try again')
         if monotonic() >= deadline:
-            raise KFBootError('Credential-service activation is pending; retry the existing onboarding session')
+            raise KFBootError('Service access is still pending; try again')
         await asyncio.sleep(0.5)
         opened()
         reply = await KFOnboardingService._await_blocking_result(
