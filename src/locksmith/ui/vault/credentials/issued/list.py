@@ -9,6 +9,7 @@ from typing import Dict, Any, TYPE_CHECKING
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QVBoxLayout, QSizePolicy
 from keri import help
+from keri.app.habbing import GroupHab
 
 from locksmith.ui import colors
 from locksmith.core import credentialing
@@ -147,8 +148,11 @@ class IssuedCredentialsListPage(BaseListPage):
         elif action == "Offer":
             self.parent.start_credential_exchange('Offer', credential_said=credential_said)
         elif action == "Export encrypted registry root":
-            from locksmith.ui.vault.credentials.root_copy import RootCopyDialog
-            self._root_copy_dialog = RootCopyDialog(self.app, self.parent, credential_said)
+            from locksmith.ui.vault.credentials.root_copy import GroupRootCopyDialog, RootCopyDialog
+            if isinstance(self.app.vault.hby.habByPre(credential_issuer), GroupHab):
+                self._root_copy_dialog = GroupRootCopyDialog(self.app, self.parent, said=credential_said)
+            else:
+                self._root_copy_dialog = RootCopyDialog(self.app, self.parent, credential_said)
             self._root_copy_dialog.open()
         elif action == "View":
             # Open view credential dialog

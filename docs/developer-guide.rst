@@ -279,8 +279,39 @@ new root generation or timestamp renewal. Normal operator KRAM policy applies
 (the wallet's default single-key reply lag is five minutes); Exchanger's pending
 Grant timeout does not govern root replies. Cancellation, refusal, completion
 and vault close abandon process-local approval. Closing after successful import
-does not undo the retained root. Groups and network delivery/acknowledgment are
-outside this file workflow.
+does not undo the retained root. Network delivery/acknowledgment remains outside
+this file workflow.
+
+Group encrypted root files
+~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+**Activity → Group registry roots** opens group provisioning without requiring a
+credential inventory row. Issued and Received credential actions also open it
+with the registry and an existing held opening selected where available. A new
+member must already belong to the accepted group; importing a root does not join
+the group or accept a credential.
+
+Choose the local group, registry, recipient AID and encryption target member.
+The recipient owns the retained root; the target member's current key decrypts
+the file. An issuer group may provision a recipient; a holder group may provision
+its own current members. **Prepare encrypted copy** requires an exact accepted
+coordinator event whose elected member already holds the root. The default is
+the displayed current event; select the appropriate accepted historical event
+when needed. There is no root generation or coordinator fallback.
+
+Preparation writes an encrypted reply and a sibling ``.proposal.cesr`` file.
+Other members choose **Contribute signature**, inspect that original proposal,
+select the same coordinator and transfer scope, then explicitly export their
+signature on the unchanged ciphertext. Preparation alone does not establish the
+group's full threshold or recipient retention.
+
+The target member chooses **Import encrypted copy**, inspects sufficient reply
+signature files for the same exact reply, and supplies an already held opening
+for an accepted BUP. **Approve and import** uses KERIpy to verify the current
+sender threshold, target membership, decryption and root/opening match before
+encrypted Keeper retention under the group AID. A partial signature set retains
+no root. Closing discards inspected files and receive approval; existing
+credential admissions and public registry evidence remain unchanged.
 
 Signed presentation files
 ~~~~~~~~~~~~~~~~~~~~~~~~~

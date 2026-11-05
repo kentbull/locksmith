@@ -9,6 +9,7 @@ from typing import Dict, Any, TYPE_CHECKING
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QVBoxLayout, QSizePolicy
 from keri import help
+from keri.app.habbing import GroupHab
 
 from locksmith.ui import colors
 from locksmith.core import credentialing
@@ -125,13 +126,16 @@ class ReceivedCredentialsListPage(BaseListPage):
 
                 recipient_name = identifier_name(self.app.vault, credential['sender'])
                 status_text = status_label(status)
+                root_action = ('Group registry roots' if isinstance(
+                    self.app.vault.hby.habByPre(credential['recipient']), GroupHab) else
+                    'Import encrypted registry root')
                 cred_dict = {
                     "Credential": credential_name(schemer),
                     "From": recipient_name,
                     "Status": status_text,
                     "Accepted": date_label(credential['accepted_at']),
                     "SAID": sad['d'],
-                    "_actions": (["View", "Offer", "Signed presentation files", "Import encrypted registry root", "View exchange history", "Delete"]
+                    "_actions": (["View", "Offer", "Signed presentation files", root_action, "View exchange history", "Delete"]
                                  if credential['held'] else ["View", "View exchange history", "Delete"]),
                 }
                 received_credentials_data.append(cred_dict)
@@ -162,6 +166,10 @@ class ReceivedCredentialsListPage(BaseListPage):
         elif action == "Import encrypted registry root":
             from locksmith.ui.vault.credentials.root_copy import RootCopyDialog
             self._root_copy_dialog = RootCopyDialog(self.app, self.parent, credential_said, received=True)
+            self._root_copy_dialog.open()
+        elif action == "Group registry roots":
+            from locksmith.ui.vault.credentials.root_copy import GroupRootCopyDialog
+            self._root_copy_dialog = GroupRootCopyDialog(self.app, self.parent, said=credential_said, received=True)
             self._root_copy_dialog.open()
         elif action == "Signed presentation files":
             from locksmith.ui.vault.credentials.grant_files import GrantFilesDialog
