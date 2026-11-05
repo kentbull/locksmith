@@ -343,7 +343,7 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         assert not io.outgoing and not po.outgoing and not ho.operations
         assert all(app.hby.mgr.getRegistryRoot(gid, rip.said) is None for app in issuers)
 
-        # Grant consent completes its signature threshold; the DH query still needs a second decision.
+        # One setup decision authorizes the Grant and its scoped DH contribution.
         po.approve_dh(groups[1], grant_said, proposal=selected['proposal'])
         deliver_aux(peer, issuer, 'multisig')
         advance(lambda: any(topic == 'multisig' for _, _, _, topic in io.outgoing))
@@ -352,11 +352,11 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         deliver_aux(issuer, peer, 'multisig')
         po.process()
         selected = po.status(gid, grant_said)
-        assert selected['stage'] == 'query' and selected['actions'] == ('approve_dh',)
-        assert not selected['contributed']
+        assert selected['stage'] == 'query' and selected['actions'] == ()
+        assert selected['contributed']
+        # The issuer still waits for the actual query signature threshold.
         assert not any(topic == 'reply' for _, _, _, topic in io.outgoing)
         assert holder.hby.mgr.getRegistryRoot(hh.pre, rip.said) is None
-        po.approve_dh(groups[1], grant_said, proposal=selected['proposal'])
         deliver_aux(peer, issuer, 'multisig')
         advance(lambda: any(topic == 'reply' for _, _, _, topic in io.outgoing))
         deliver_aux(issuer, holder, 'reply')

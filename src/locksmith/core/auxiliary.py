@@ -368,7 +368,7 @@ class Auxiliary(doing.DoDoer):
         selected = self._query_attachments(serder, attachments)
         operation = self.operations.get((serder.pre, serder.sad['q']['x']))
         if (serder.route == Dhke.Route and operation is not None and operation.group is not None
-                and operation.group.started and operation.group.query_approved):
+                and operation.group.started and operation.group.query_signed):
             self.groups._live(operation.group)
             operation.protocol.processQuery(serder, **selected)
             self._drain(operation)

@@ -40,8 +40,7 @@ class _Proposal:
     approved: bool = False
     started: bool = False
     query: object = None
-    query_approved: bool = False
-    contributed: bool = False
+    query_signed: bool = False
     publication: bytes = b''
     interrupted: bool = False
     query_sent: bool = False
@@ -133,9 +132,8 @@ class GroupIssuers:
         phase = operation.phase if operation else ('interrupted' if proposal.interrupted else 'approval_required')
         stage = 'query' if proposal.approved and proposal.query is not None else 'grant'
         selected = proposal.query.serder if stage == 'query' else grant
-        approve = not proposal.approved or stage == 'query' and not proposal.query_approved
         if phase not in self.owner.Terminal:
-            phase = 'approval_required' if approve else 'waiting'
+            phase = 'waiting' if proposal.approved else 'approval_required'
             if deadline is None or helping.nowUTC() >= deadline.datetime:
                 phase = 'expired'
         return dict(aid=hab.pre, grant=grant.said, xid=grant.said, kind='dh', phase=phase,
@@ -145,7 +143,7 @@ class GroupIssuers:
             actions=('approve_dh',) if phase == 'approval_required' else (),
             credential=grant.sad['a']['o'][0], sender=grant.pre, recipient=grant.sad['ri'],
             group=True, member=hab.mhab.pre, custodian=proposal.custodian,
-            coordinator=proposal.coordinator, contributed=proposal.contributed, stage=stage,
+            coordinator=proposal.coordinator, contributed=proposal.query_signed, stage=stage,
             proposal=selected.said, detail=(selected.sad if stage == 'query' else
                 dict(grant=grant.sad, credential=proposal.child.nests[0].serder.sad)))
 
@@ -182,23 +180,14 @@ class GroupIssuers:
         status = self.snapshot(proposal, operation)
         if status['actions'] != ('approve_dh',) or status['proposal'] != selected:
             raise kering.ValidationError('Review this exact current group proposal before signing')
-        if status['stage'] == 'grant':
-            signed = hab.endorse(proposal.grant, last=False, framed=False, gvrsn=V2,
-                nests=[exchanging.serializeParsedSubstream(node) for node in proposal.child.nests])
-            wrapper, atc = multisigExn(hab, signed, version=V2)
-            proposal.approved = True
-            operation = self.owner._group_operation(proposal)
-            self.vault.mbx.parser.parse(ims=bytearray(wrapper.raw + atc), local=True)
-            self._broadcast(operation, bytes(wrapper.raw + atc))
-            self.progress(operation)
-        else:
-            if operation is None or not proposal.started:
-                raise kering.ValidationError('Grant still needs its complete issuer threshold')
-            raw = exchanging.serializeParsedSubstream(proposal.query)
-            contribution = operation.protocol.contribute(operation.xid, raw)
-            proposal.query_approved = proposal.contributed = True
-            self.vault.mbx.parser.parse(ims=bytearray(raw))
-            self.broadcast_query(operation, contribution)
+        signed = hab.endorse(proposal.grant, last=False, framed=False, gvrsn=V2,
+            nests=[exchanging.serializeParsedSubstream(node) for node in proposal.child.nests])
+        wrapper, atc = multisigExn(hab, signed, version=V2)
+        proposal.approved = True
+        operation = self.owner._group_operation(proposal)
+        self.vault.mbx.parser.parse(ims=bytearray(wrapper.raw + atc), local=True)
+        self._broadcast(operation, bytes(wrapper.raw + atc))
+        self.progress(operation)
         return self.snapshot(proposal, operation)
 
     def broadcast_query(self, operation, raw):
@@ -242,7 +231,7 @@ class GroupIssuers:
         proposal = self.proposals[(child.serder.pre, child.serder.sad['q']['x'])]
         if proposal.query is None:
             proposal.query = child
-        if proposal.query_approved:
+        if proposal.query_signed:
             self.vault.mbx.parser.parse(ims=exchanging.serializeParsedSubstream(child))
 
     def progress(self, operation):
@@ -260,8 +249,16 @@ class GroupIssuers:
                     nests=[exchanging.serializeParsedSubstream(node) for node in proposal.child.nests], gvrsn=V2)
                 self.owner.outgoing.append(((operation.hab.pre, operation.grant.said),
                     operation.grant.sad['ri'], bytes(raw), 'credential'))
-                proposal.query_approved = True
+                proposal.query_signed = True
                 self.broadcast_query(operation, operation.protocol.start(operation.grant.said))
+        if proposal.query is not None and not proposal.query_signed:
+            # Setup consent covers this contribution. Dhke checks the frozen scope,
+            # original deadline and custodian signature before signing exact bytes.
+            raw = exchanging.serializeParsedSubstream(proposal.query)
+            contribution = operation.protocol.contribute(operation.xid, raw)
+            proposal.query_signed = True
+            self.vault.mbx.parser.parse(ims=bytearray(raw))
+            self.broadcast_query(operation, contribution)
 
     def publish(self, operation):
         """Deliver accepted public BUP evidence so the individual holder can finish."""
