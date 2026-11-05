@@ -59,9 +59,10 @@ Connect the wallets
 In each participating wallet's **Settings → Credential status services**, save:
 
 * Registrar publication URL: ``https://localhost:19932`` for publishers.
-* Observer URL: ``http://127.0.0.1:19942`` for readers.
+* Observer URL: ``https://localhost:19942`` for readers. Update saved HTTP URLs
+  from earlier local runs.
 
-Registrar uses an isolated, persistent certificate authority and a separate
+Registrar and Observer use an isolated, persistent certificate authority and a separate
 CA-signed localhost server certificate with a DNS SAN. The authority certificate
 is ``ca.pem``; it permits certificate signing and carries no server-authentication
 restriction. The server leaf is ``server-cert.pem`` with ``CA:FALSE`` and server
@@ -79,7 +80,7 @@ Preserve ``service-passcode`` and the service identities during certificate work
 if the CA changes, configure its replacement ``ca.pem`` in the wallets.
 
 Trust ``ca.pem`` through the normal application's explicit development CA support
-before HTTPS publication. For the example state directory, launch the normal
+before HTTPS publication or queries. For the example state directory, launch the normal
 application with:
 
 .. code-block:: bash
@@ -88,8 +89,12 @@ application with:
      uv run --locked python -m locksmith.main
 
 The launcher does not change system trust or disable certificate/hostname
-verification. Observer uses the same explicit CA for its HTTPS Registrar pulls;
-its wallet-facing listener is loopback HTTP.
+verification. Observer uses the same explicit CA for its HTTPS Registrar pulls
+and serves wallet and Dolly queries over HTTPS. In Dolly's JSON policy, configure
+``observer`` with ``url`` set to ``https://localhost:19942/`` and ``cafilepath``
+set to the absolute path of this state directory's ``ca.pem``. Dolly also needs
+its public introduction included in ``readers``; TLS trust alone does not grant
+query permission.
 
 Health reports listener availability. Successful publication requires acceptance
 of the exact submitted registry head. Observer independently polls Registrar and
