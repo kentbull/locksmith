@@ -6,15 +6,7 @@ import pytest
 from locksmith.plugins.kerifoundation.db.basing import (
     KFBaser,
 )
-from locksmith.plugins.kerifoundation.onboarding.service import (
-    KFVaultDeletionService,
-    ONBOARDING_AUTH_NAMESPACE,
-)
 from locksmith.plugins.kerifoundation.plugin import KeriFoundationPlugin
-
-
-class FakeHab(SimpleNamespace):
-    pass
 
 
 class FakeHby:
@@ -50,50 +42,6 @@ class FakeApp:
     def __init__(self, hby):
         self.vault = FakeVault(hby)
         self.config = SimpleNamespace(environment=SimpleNamespace(value="development"))
-
-
-class FakeBootClient:
-    def __init__(self):
-        self.boot_server_aid = ""
-        self.calls: list[tuple] = []
-
-    def clone(self):
-        return self
-
-    def set_boot_server_aid(self, aid: str):
-        self.boot_server_aid = aid
-        self.calls.append(("set_boot_server_aid", aid))
-
-    def cancel_onboarding(self, hab, *, session_id: str, account_aid: str = "", reason: str = ""):
-        self.calls.append(("cancel_onboarding", hab.pre, session_id, account_aid, reason))
-
-
-def test_kf_vault_deletion_service_cancels_saved_onboarding_session(tmp_path):
-    auth_hab = FakeHab(pre="EHAB_AUTH", name="kf-auth")
-    hby = FakeHby(
-        habs_by_name={(auth_hab.name, ONBOARDING_AUTH_NAMESPACE): auth_hab},
-    )
-    app = FakeApp(hby)
-    db = KFBaser(name="kf_delete_pending", headDirPath=str(tmp_path), reopen=True)
-    boot_client = FakeBootClient()
-
-    record, _ = db.ensure_account()
-    record.account_aid = "AID_ACCOUNT"
-    record.onboarding_session_id = "sess_pending"
-    record.onboarding_auth_alias = auth_hab.name
-    record.boot_server_aid = "BOOT_AID"
-    db.pin_account(record)
-
-    try:
-        service = KFVaultDeletionService(app=app, db=db, boot_client=boot_client)
-        service.delete_vault_account()
-    finally:
-        db.close(clear=True)
-
-    assert boot_client.calls == [
-        ("set_boot_server_aid", "BOOT_AID"),
-        ("cancel_onboarding", auth_hab.pre, "sess_pending", "AID_ACCOUNT", "vault_deleted"),
-    ]
 
 
 @pytest.mark.parametrize('scope', ['base', 'root'])

@@ -137,53 +137,34 @@ def test_kf_custom_komer_stores_round_trip_and_iterate(tmp_path):
         db.close()
 
 
-def test_parse_cesr_http_reply_uses_detected_parser_version(monkeypatch):
-    parser_kwargs = []
-    version_inputs = []
+def test_parse_cesr_http_reply_authenticates_exact_received_signature():
+    from keri.core import exchange, messagize
+    from requests import Response
 
-    class FakeParser:
-        def __init__(self, *args, **kwargs):
-            parser_kwargs.append(kwargs)
-
-        def parse(self, ims):
-            assert bytes(ims) == b"reply"
-
-    fake_serder = SimpleNamespace(
-        pre="BOOT_SERVER_AID",
-        ked={"t": "rpy", "r": "/account/witnesses", "a": {"witnesses": []}},
-        said="SAID_REPLY",
-    )
-    app = SimpleNamespace(
-        vault=SimpleNamespace(
-            hby=SimpleNamespace(
-                kvy=SimpleNamespace(processEscrows=lambda: None),
-                rvy=object(),
-                exc=object(),
-                kevers={"BOOT_SERVER_AID": object()},
-            )
-        )
-    )
-    response = SimpleNamespace(content=b"reply", headers={})
-
-    monkeypatch.setattr(onboarding_service.parsing, "Parser", FakeParser)
-    monkeypatch.setattr(
-        onboarding_service,
-        "message_version",
-        lambda ims: version_inputs.append(bytes(ims)) or kering.Vrsn_1_0,
-    )
-    monkeypatch.setattr(onboarding_service, "split_cesr_stream", lambda ims: [fake_serder])
-
-    reply = onboarding_service.parse_cesr_http_reply(
-        app,
-        response,
-        expected_kinds=("rpy",),
-        expected_route="/account/witnesses",
-        expected_sender="BOOT_SERVER_AID",
-    )
-
-    assert version_inputs == [b"reply"]
-    assert parser_kwargs[0]["version"] == kering.Vrsn_1_0
-    assert reply.sender == "BOOT_SERVER_AID"
+    with habbing.openHby(name='signed-boot-reply', temp=True, version=kering.Vrsn_2_0) as hby:
+        provider = hby.makeHab(name='provider', icount=2, isith='2', ncount=2, nsith='2')
+        account = hby.makeHab(name='account')
+        event = exchange(route='/account/services', attributes={'account_aid': account.pre},
+                         sender=provider.pre, receiver=account.pre, version=kering.Vrsn_2_0,
+                         pvrsn=kering.Vrsn_2_0, gvrsn=kering.Vrsn_2_0, kind=kering.Kinds.json)
+        wire = bytes(provider.endorse(event, last=False, gvrsn=kering.Vrsn_2_0))
+        app = SimpleNamespace(vault=SimpleNamespace(hby=hby))
+        response = Response()
+        response._content = wire
+        expected = dict(expected_kinds=('exn',), expected_route='/account/services',
+                        expected_sender=provider.pre, expected_recipient=account.pre)
+        verified = onboarding_service.parse_cesr_http_reply(app, response, **expected)
+        assert verified.said == event.said and verified.payload['account_aid'] == account.pre
+        # A cached valid reply does not authenticate a later partial or altered input.
+        frame = parsing.Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(wire), processive=False)
+        pre, sn, dig, sigs = frame.tsgs[0]
+        response._content = bytes(messagize(event, tsgs=[(pre, sn, dig, sigs[:1])], gvrsn=kering.Vrsn_2_0))
+        with pytest.raises(onboarding_service.KFBootError, match='did not authenticate'):
+            onboarding_service.parse_cesr_http_reply(app, response, **expected)
+        wrong = account.sign(ser=event.raw, indexed=True)[0]
+        response._content = bytes(messagize(event, tsgs=[(pre, sn, dig, [wrong, sigs[1]])], gvrsn=kering.Vrsn_2_0))
+        with pytest.raises(onboarding_service.KFBootError, match='did not authenticate'):
+            onboarding_service.parse_cesr_http_reply(app, response, **expected)
 
 
 def test_message_version_detects_existing_keri10_event():

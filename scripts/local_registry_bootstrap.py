@@ -1,28 +1,33 @@
 """Prepare explicit public introductions and isolated local service identities."""
+import argparse
 import hashlib
 import json
 import os
-from pathlib import Path
 import secrets
+import signal
 import string
-import sys
+import subprocess
+from pathlib import Path
 
 from keri import Vrsn_2_0
 from keri.app import Habery, openHby
 from keri.core import Parser, SerderKERI
+from keri.kering import KeriError
 from keri.peer.exchanging import serializeParsedSubstream
 from kfregistrar.core.serving import makeContext
 
 
 def introductions(config_path):
     """Verify each selected Share file, copying only its public KEL support."""
+    if config_path is None:
+        return {"publishers": [], "readers": []}, b""
     config_path = Path(config_path).resolve()
     config = json.loads(config_path.read_text())
     if not isinstance(config, dict) or set(config) != {'publishers', 'readers'}:
         raise ValueError('Config must contain only publishers and readers arrays')
     for role, paths in config.items():
-        if not isinstance(paths, list) or not paths or any(not isinstance(p, str) or not p for p in paths):
-            raise ValueError(f'{role} must be a nonempty array of public introduction paths')
+        if not isinstance(paths, list) or any(not isinstance(p, str) or not p for p in paths):
+            raise ValueError(f'{role} must be an array of public introduction paths')
     roles, streams = {}, {}
     with openHby(name='local-registry-introductions', temp=True, version=Vrsn_2_0) as hby:
         context = makeContext(hby)
@@ -60,11 +65,52 @@ def introductions(config_path):
     return roles, b''.join(kel for _, kel in streams.values())
 
 
-def bootstrap(state, config):
+def tufa_identity(state, service, passcode, ts_repo):
+    """Create/reopen one service only through normal Tufa commands, preserving its retained AID."""
+    store = ['--name', f'localdev-{service}', '--head-dir', str(state / 'tufa'), '--passcode', passcode]
+
+    def command(*arguments):
+        child = subprocess.Popen(['deno', 'run', '--allow-all', '--unstable-ffi', 'packages/tufa/mod.ts',
+                                  *arguments, *store], cwd=ts_repo, stdout=subprocess.PIPE,
+                                 stderr=subprocess.PIPE, text=True, start_new_session=True)
+        try:
+            stdout, stderr = child.communicate(timeout=120)
+            if child.returncode:
+                raise ValueError(f'Tufa {arguments[0]} failed: {stderr.strip()}')
+            return stdout.strip()
+        finally:
+            if child.poll() is None:
+                os.killpg(child.pid, signal.SIGTERM)
+                try:
+                    child.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    os.killpg(child.pid, signal.SIGKILL)
+                    child.wait()
+
+    retained = state / f'{service}.aid'
+    if not retained.exists():
+        command('init')
+        command('incept', '--alias', service, '--transferable')
+    aid = command('aid', '--alias', service)
+    if retained.exists() and retained.read_text().strip() != aid:
+        raise ValueError(f'Retained {service} AID differs from its actual Tufa store')
+    return aid, command('export', '--alias', service).encode()
+
+
+def bootstrap(state, config=None, *, backend='python', ts_repo=None):
     """Retain encrypted service identities; write only public bootstrap outputs."""
+    if backend == 'typescript' and config is not None:
+        raise ValueError('Explicit static wallet role files require the Python backend; TypeScript uses provider enrollment')
     roles, public = introductions(config)
     state = Path(state).resolve()
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
+    marker = state / 'backend'
+    if marker.exists():
+        if marker.read_text().strip() != backend:
+            raise ValueError('Backend differs from retained service state; use a separate state directory')
+    elif backend != 'python' and (state / 'service-passcode').exists():
+        raise ValueError('Existing Python service state cannot be reused for TypeScript')
+    marker.write_text(backend + '\n')
     base = 'locksmith-local-registries/' + hashlib.sha256(str(state).encode()).hexdigest()[:16]
     secret = state / 'service-passcode'
     if not secret.exists():
@@ -76,26 +122,41 @@ def bootstrap(state, config):
     if len(passcode) != 21 or '-' in passcode:
         raise ValueError('Invalid retained local service passcode; preserve existing identities')
     for service in ('registrar', 'observer'):
-        hby = Habery(name=f'localdev-{service}', base=f'{base}/{service}',
-                     bran=passcode, version=Vrsn_2_0)
-        try:
-            hab = hby.habByName(service) or hby.makeHab(service)
-            public += bytes(hab.replay(gvrsn=Vrsn_2_0))
-            (state / f'{service}.aid').write_text(hab.pre + '\n')
-            print(f'{service}: {hab.pre}')
-        finally:
-            hby.close()
+        if backend == 'typescript':
+            if ts_repo is None:
+                raise ValueError('TypeScript backend requires its explicit repository path')
+            aid, kel = tufa_identity(state, service, passcode, ts_repo)
+        else:
+            hby = Habery(name=f'localdev-{service}', base=f'{base}/{service}',
+                         bran=passcode, version=Vrsn_2_0)
+            try:
+                hab = hby.habByName(service) or hby.makeHab(service)
+                aid, kel = hab.pre, bytes(hab.replay(gvrsn=Vrsn_2_0))
+            finally:
+                hby.close()
+        public += kel
+        (state / f'{service}.aid').write_text(aid + '\n')
+        print(f'{service}: {aid}')
     for role, aids in roles.items():
-        (state / f'{role}.aids').write_text('\n'.join(aids) + '\n')
+        (state / f'{role}.aids').write_text('\n'.join(aids) + ('\n' if aids else ''))
     (state / 'public-bootstrap.cesr').write_bytes(public)
     (state / 'keri-base').write_text(base + '\n')
 
 
 if __name__ == '__main__':
-    if len(sys.argv) != 3:
-        raise SystemExit('Usage: local_registry_bootstrap.py STATE_DIR CONFIG_JSON')
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('state')
+    parser.add_argument('config', nargs='?')
+    parser.add_argument('--backend', choices=('python', 'typescript'), default='python')
+    parser.add_argument('--ts-repo', type=Path)
+    args = parser.parse_args()
     os.umask(0o077)
+    def stop(_signum, _frame):
+        raise KeyboardInterrupt
+    signal.signal(signal.SIGTERM, stop)
     try:
-        bootstrap(*sys.argv[1:])
-    except Exception as error:
+        bootstrap(args.state, args.config, backend=args.backend, ts_repo=args.ts_repo)
+    except KeyboardInterrupt:
+        raise SystemExit(130) from None
+    except (OSError, ValueError, KeriError, subprocess.SubprocessError) as error:
         raise SystemExit(f'Local registry bootstrap refused: {error}') from None

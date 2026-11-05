@@ -111,7 +111,7 @@ def receive(vault, regk, raw, headers):
 
 def sync(worker):
     """Drive one authenticated request through the finite cancellable Qt client."""
-    vault, hab, regk = worker.vault, worker.hab, worker.regk
+    vault, hab, regk = worker.vault, worker.transport_hab, worker.regk
     if worker.registrar_url:
         stream = clone(vault, regk)
         body = signed_query(hab, 'tels/publish', {'stream': stream.decode('ascii')})

@@ -1,9 +1,10 @@
 """Publish registry evidence and verify observer replies against the wallet KEL."""
 from time import monotonic
+from copy import deepcopy
 
 from hio.base import doing
 from PySide6.QtCore import QUrl
-from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
+from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest, QSslCertificate
 from keri import kering
 
 from locksmith.core import evidence
@@ -29,6 +30,20 @@ class RegistrySyncDoer(doing.DoDoer):
             raise ValueError('Provide either an observer URL or a registrar URL')
         self.vault, self.hab, self.regk = vault, hab, regk
         self.observer_url, self.registrar_url = observer_url, registrar_url
+        self.transport_hab, self.ca_pem = hab, ''
+        config = (vault.hby.cf.get() or {}).get('registries', {})
+        kind = 'registrar' if registrar_url else 'observer'
+        selected = registrar_url or observer_url
+        capability = config.get('capabilities', {}).get(kind)
+        if capability is not None and selected.rstrip('/') == config.get(kind, '').rstrip('/'):
+            if (capability.get('url', '').rstrip('/') != selected.rstrip('/')
+                    or capability.get('aid') != config.get('account')
+                    or capability.get('roles') != ['publisher' if registrar_url else 'reader']):
+                raise ValueError('Registry service permission differs from configured account and endpoint')
+            self.transport_hab = vault.hby.habByPre(config['account'])
+            if self.transport_hab is None:
+                raise ValueError('Enrolled provider account is not available in this vault')
+            self.ca_pem = capability.get('ca_pem', '')
         self.result, self.error, self.manager = None, '', None
         self.response_headers = {}
         super().__init__(doers=[doing.doify(self.sync_do)], **kwa)
@@ -54,7 +69,8 @@ class RegistrySyncDoer(doing.DoDoer):
         if (getattr(self.vault, 'closed', False) or not self.vault.hby.db.opened
                 or not self.vault.rgy.store.opened):
             raise ValueError('The vault is closed')
-        if self.vault.hby.habByPre(self.hab.pre) is not self.hab:
+        if (self.vault.hby.habByPre(self.hab.pre) is not self.hab
+                or self.vault.hby.habByPre(self.transport_hab.pre) is not self.transport_hab):
             raise ValueError('The query identifier does not belong to this vault')
 
     def _request(self, url, body, content_type):
@@ -69,6 +85,13 @@ class RegistrySyncDoer(doing.DoDoer):
         if target.scheme() not in ('http', 'https') or not target.host():
             raise ValueError('Registry services require an HTTP or HTTPS URL')
         request = QNetworkRequest(target)
+        if self.ca_pem:
+            certificates = QSslCertificate.fromData(self.ca_pem.encode('utf-8'))
+            if target.scheme() != 'https' or not certificates:
+                raise ValueError('Provider capability requires a valid HTTPS CA certificate')
+            tls = request.sslConfiguration()
+            tls.setCaCertificates(tls.caCertificates() + certificates)
+            request.setSslConfiguration(tls)
         request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, content_type)
         # A signed request must not be redirected to another endpoint.
         request.setAttribute(QNetworkRequest.Attribute.RedirectPolicyAttribute,
@@ -157,6 +180,7 @@ class RegistryEvidenceDoer(doing.DoDoer):
         HIO. Reopening starts with empty acquisition telemetry."""
         self.vault = vault
         config = (vault.hby.cf.get() or {}).get('registries', {})
+        self._service_config = deepcopy(config)
         self.registrar_url = config.get('registrar')
         self.observer_url = config.get('observer')
         self.errors = {}
@@ -169,7 +193,8 @@ class RegistryEvidenceDoer(doing.DoDoer):
         """Cancel old workers and clear acquisition telemetry when service configuration changes."""
         config = (self.vault.hby.cf.get() or {}).get('registries', {})
         endpoints = config.get('registrar'), config.get('observer')
-        if endpoints != (self.registrar_url, self.observer_url):
+        if config != self._service_config:
+            self._service_config = deepcopy(config)
             self.remove(list(self._active.values()))
             self._active.clear()
             self._fetched.clear()

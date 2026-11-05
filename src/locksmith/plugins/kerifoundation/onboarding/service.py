@@ -20,6 +20,7 @@ from keri.core import exchange, parsing
 from keri.core.serdering import SerderKERI
 from keri.db import dbing
 from keri.help import helping
+from keri.peer.exchanging import verifyAttachments
 from keri.kering import Kinds, Version, Vrsn_2_0
 from hio.base import doing
 
@@ -424,6 +425,7 @@ class KFBootClient:
             expected_kinds=("rpy", "exn"),
             expected_route=route,
             expected_sender=dest or self._boot_server_aid,
+            expected_recipient=hab.pre,
         )
 
     def _post_cesr(
@@ -438,6 +440,7 @@ class KFBootClient:
         expected_kinds: tuple[str, ...] = (),
         expected_route: str = "",
         expected_sender: str = "",
+        expected_recipient: str = "",
     ) -> CesrReply | None:
         if ims is not None:
             body, attachment = split_cesr_message(ims)
@@ -470,6 +473,7 @@ class KFBootClient:
             expected_kinds=expected_kinds,
             expected_route=expected_route,
             expected_sender=expected_sender,
+            expected_recipient=expected_recipient,
         )
         if reply.sender:
             self._boot_server_aid = reply.sender
@@ -694,12 +698,14 @@ class KFOnboardingService:
         witness_registrar: HostedWitnessRegistrar | None = None,
         auth_namespace: str = ONBOARDING_AUTH_NAMESPACE,
         auth_alias_prefix: str = ONBOARDING_AUTH_ALIAS_PREFIX,
+        activate_services=None,
     ):
         self._app = app
         self._db = db
         self._boot_client = boot_client
         self._auth_namespace = auth_namespace
         self._auth_alias_prefix = auth_alias_prefix
+        self._activate_services = activate_services
         self._witness_registrar = witness_registrar or HostedWitnessRegistrar(app=app, db=db)
 
     async def onboard_async(
@@ -947,7 +953,8 @@ class KFOnboardingService:
             )
             remote_completed = True
         except asyncio.CancelledError:
-            if remote_completed and account_hab is not None and start is not None and witness_registration is not None:
+            if (self._activate_services is None and remote_completed and account_hab is not None
+                    and start is not None and witness_registration is not None):
                 self._complete_onboarding_record(
                     record=record,
                     alias=alias,
@@ -997,6 +1004,12 @@ class KFOnboardingService:
 
         if account_hab is None or start is None or witness_registration is None:
             raise KFBootError("Onboarding did not complete all required phases")
+
+        # Required provider services finish before local completion and auth-key cleanup.
+        # A failed activation leaves the same remotely completed session available for retry.
+        if self._activate_services is not None:
+            self._emit(progress, stage="complete", detail="Activating credential services")
+            await self._activate_services(account_hab, self._boot_client)
 
         self._complete_onboarding_record(
             record=record,
@@ -1932,6 +1945,12 @@ class KFVaultDeletionService:
                 "The saved KF onboarding session is missing its hidden auth principal and cannot be cancelled safely."
             )
 
+        status = self._boot_client.session_status(
+            ehab, session_id=record.onboarding_session_id, fallback_region_id=record.region_id)
+        if status.state == "completed":
+            self._delete_onboarded_account(record)
+            return
+
         logger.info(
             "Cancelling saved KF onboarding session %s before vault deletion",
             record.onboarding_session_id,
@@ -1984,6 +2003,7 @@ def parse_cesr_http_reply(
     expected_kinds: tuple[str, ...] = (),
     expected_route: str = "",
     expected_sender: str = "",
+    expected_recipient: str = "",
 ) -> CesrReply:
     """Parse a CESR-over-HTTP reply and return the last KERI message payload."""
     ims = bytearray(response.content or b"")
@@ -2003,11 +2023,15 @@ def parse_cesr_http_reply(
     parser.parse(ims=bytearray(ims))
     app.vault.hby.kvy.processEscrows()
 
-    serders = split_cesr_stream(ims)
-    if not serders:
+    frames, remaining = [], bytearray(ims)
+    extractor = parsing.Parser(version=message_version(ims))
+    while remaining:
+        frames.append(extractor.parseOneBare(ims=remaining, processive=False))
+    if not frames:
         raise KFBootError("Unable to parse a KERI message from boot reply")
 
-    last = serders[-1]
+    frame = frames[-1]
+    last = frame.serder
     ilk = str(last.ked.get("t", "") or "")
     if expected_kinds and ilk not in expected_kinds:
         expected = ", ".join(expected_kinds)
@@ -2029,6 +2053,15 @@ def parse_cesr_http_reply(
     if sender and sender not in app.vault.hby.kevers:
         raise KFBootError(f"Boot reply sender {sender} is not verifiable after parsing the prepended KEL")
 
+    if expected_recipient and last.ked.get("ri") != expected_recipient:
+        raise KFBootError("Boot reply was not addressed to the requesting identifier")
+    tsgs, cigars, seals, invalid, missing = verifyAttachments(
+        app.vault.hby, last, tsgs=frame.tsgs, cigars=frame.cigars, sourceSeals=frame.ssts)
+    if (invalid or missing or not any(group[0].qb64 == sender for group in tsgs)
+            and not any(cigar.verfer.qb64 == sender for cigar in cigars)
+            and not any(seal[0].qb64 == sender for seal in seals)):
+        raise KFBootError("Boot reply did not authenticate its declared service signer")
+
     payload = last.ked.get("a", {})
     if not isinstance(payload, dict):
         payload = {}
@@ -2039,19 +2072,6 @@ def parse_cesr_http_reply(
         said=str(last.said or ""),
         payload=payload,
     )
-
-
-def split_cesr_stream(ims: bytes | bytearray) -> list[SerderKERI]:
-    """Split a JSON CESR stream into KERI serders."""
-    serders: list[SerderKERI] = []
-    buf = bytearray(ims)
-    while buf:
-        serder = SerderKERI(raw=bytes(buf))
-        serders.append(serder)
-        del buf[:serder.size]
-        while buf and buf[0] != 0x7B:  # '{' starts the next JSON-encoded message
-            del buf[:1]
-    return serders
 
 
 def _rows_from_payload(payload: dict[str, Any], key: str) -> list[dict[str, Any]]:

@@ -507,11 +507,20 @@ configuration. Account and onboarding actions use signed KERI exchange
 messages with their CESR attachments.
 
 ``KFBootClient`` asks Keripy to create and sign those exchange messages, sends
-them, and checks the route, sender, and message type in the reply. It also makes
-sure the remote service has the account AID's current key state before asking
-the service to verify an account request. ``kf-boot`` allocates hosted witnesses
+them, and verifies the exact reply attachments against the accepted sender key
+state. It checks the expected route, sender, recipient and message type before
+returning the payload. It also makes sure the remote service has the account
+AID's current key state before asking it to verify an account request. ``kf-boot`` allocates hosted witnesses
 and watchers and stores provider account and resource metadata. The witness and
 watcher services remain responsible for their KERI protocol state.
+
+Local Development additionally supplies an account-services activation callback
+inside the existing onboarding task. It runs after remote account completion and
+before the local completion record and temporary-key cleanup. If activation
+fails, the saved session remains available for normal retry. Verified public
+capabilities configure service access in the vault; the permanent provider
+account authenticates transport while issuer and group evidence keeps its own
+signatures. Endpoint-specific CA trust does not change global trust settings.
 
 A provider may use different routes, payloads, and account rules. The security
 properties should remain explicit: signing AID, expected remote AID, sender key
