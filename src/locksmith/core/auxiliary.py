@@ -16,6 +16,7 @@ from keri.acdc import chaining, regeventing
 from keri.app import agenting, forwarding
 from keri.app.habbing import GroupHab
 from keri.core import BlindState, BoundState, Parser, SealSource, SerderACDC, SerderKERI, messagize
+from keri.db import fetchTsgs
 from keri.help import helping
 from keri.peer import exchanging
 
@@ -66,6 +67,8 @@ class Auxiliary(doing.DoDoer):
         from locksmith.core.group_holding import GroupHolders
         self.groups = GroupIssuers(self)
         self.holders = GroupHolders(self)
+        from locksmith.core.group_unblind import GroupOpenings
+        self.openings = GroupOpenings(self)
         vault.hby.rtr.addRoute(Dhke.Route, self)
         vault.hby.rtr.addRoute(Unblind.Route, self, blinders=True, attachments=True)
         super().__init__(doers=[doing.doify(self.run)])
@@ -106,8 +109,6 @@ class Auxiliary(doing.DoDoer):
         """Keep native operation owners and their transient state within this vault."""
         if hab is not self.vault.hby.habByPre(hab.pre):
             raise ValueError('Live agreement requires a local identifier')
-        if isinstance(hab, GroupHab) and kind != 'dh':
-            raise ValueError('Group opening exchange requires its separate approval adapter')
         if kind == 'unblind':
             if hab.pre not in self._unblind:
                 self._unblind[hab.pre] = Unblind(hab, self.vault.exc, self.vault.rgy,
@@ -117,12 +118,14 @@ class Auxiliary(doing.DoDoer):
             self._dh[hab.pre] = Dhke(hab, self.vault.exc)
         return self._dh[hab.pre]
 
-    def _snapshot(self, hab, message, xid, operation=None, *, kind='dh'):
+    def _snapshot(self, hab, message, xid, operation=None, *, kind='dh', group=True):
         """Expose identifiers and readiness, never private keys or registry roots."""
-        if operation is not None and operation.group is not None:
+        if group and operation is not None and operation.group is not None:
+            if operation.kind == 'unblind':
+                return self.openings.snapshot(operation.group, operation)
             adapter = self.holders if hab.pre == message.sad['ri'] else self.groups
             return adapter.snapshot(operation.group, operation)
-        if kind == 'dh' and isinstance(hab, GroupHab) and hab.pre == message.sad['ri']:
+        if operation is None and kind == 'dh' and isinstance(hab, GroupHab) and hab.pre == message.sad['ri']:
             return self.holders.snapshot(self.holders.candidate(hab, message))
         phase = operation.phase if operation else ('approval_required'
                  if hab.pre == message.sad['ri'] else 'interrupted')
@@ -306,7 +309,7 @@ class Auxiliary(doing.DoDoer):
             return False
         return operation.protocol.complete(operation.xid)
 
-    def request_openings(self, hab, grant_said):
+    def request_openings(self, hab, grant_said, *, proposer=None):
         """Explicitly request missing current proofs for this new live Grant."""
         ipexing._require_vault(self.vault, hab)
         existing = self.operations.get((hab.pre, grant_said))
@@ -317,6 +320,8 @@ class Auxiliary(doing.DoDoer):
         context = self._presentation(hab, grant_said)
         if context is None or context[0].sad['ri'] != hab.pre:
             raise kering.ValidationError('Select a new live presentation addressed to this identifier')
+        if isinstance(hab, GroupHab):
+            return self.openings.approve(hab, context[0], proposer=proposer, requester=True)
         owner = self._owner(hab, 'unblind')
         xid = owner.approve(grant_said)
         operation = _Operation(hab, context[0], xid, owner, kind='unblind')
@@ -331,7 +336,7 @@ class Auxiliary(doing.DoDoer):
         self.vault.signals.emit_doer_event('Auxiliary', 'changed', dict(aid=hab.pre, grant=grant_said))
         return self.status(*key)
 
-    def approve_openings(self, hab, grant_said):
+    def approve_openings(self, hab, grant_said, *, proposer=None):
         """Approve native minimal proof selection for one exact live presentation."""
         ipexing._require_vault(self.vault, hab)
         existing = self.operations.get((hab.pre, grant_said))
@@ -343,6 +348,8 @@ class Auxiliary(doing.DoDoer):
         context = self._presentation(hab, grant_said)
         if context is None or context[0].pre != hab.pre:
             raise kering.ValidationError('Select this identifier\'s new live presentation')
+        if isinstance(hab, GroupHab):
+            return self.openings.approve(hab, context[0], proposer=proposer, requester=False)
         owner = self._owner(hab, 'unblind')
         xid = owner.approve(grant_said)
         key = (hab.pre, grant_said)
@@ -376,7 +383,15 @@ class Auxiliary(doing.DoDoer):
     def processQuery(self, serder, **attachments):
         """Retain a post-parser authenticated first arrival without granting consent."""
         selected = self._query_attachments(serder, attachments)
-        operation = self.operations.get((serder.pre, serder.sad['q']['x']))
+        operation = next((op for op in self.operations.values()
+                          if op.hab.pre == serder.pre and op.xid == serder.sad['q']['x']), None)
+        if (serder.route == Unblind.Route and operation is not None
+                and operation.group is not None and operation.kind == 'unblind'
+                and operation.group.requester and operation.phase not in self.Terminal):
+            self.openings.check(operation.group)
+            operation.protocol.processQuery(serder, **selected)
+            self._drain(operation)
+            return
         if (serder.route == Dhke.Route and operation is not None and operation.group is not None
                 and operation.hab.pre == operation.grant.pre
                 and operation.group.started and operation.group.query_signed):
@@ -432,8 +447,11 @@ class Auxiliary(doing.DoDoer):
                 operation.protocol.respond(operation.xid)
             else:
                 operation.protocol.processQuery(query.serder, **deepcopy(query.attachments))
-                if operation.group is not None and operation.hab.pre == operation.grant.sad['ri']:
-                    self.holders.peer_query(operation, query)
+                if operation.group is not None:
+                    if unblind:
+                        self.openings.peer_query(operation, query)
+                    elif operation.hab.pre == operation.grant.sad['ri']:
+                        self.holders.peer_query(operation, query)
         except kering.MissingOpeningError as error:
             operation.request_received = True
             self._changed(operation, 'waiting', str(error))
@@ -444,7 +462,7 @@ class Auxiliary(doing.DoDoer):
             raise
         self._queries.pop(key, None)
         self._drain(operation)
-        if unblind:
+        if unblind and operation.group is None:
             self._changed(operation, 'answered')
 
     def processReply(self, *, serder, diger, route, cigars=None, tsgs=None,
@@ -456,8 +474,8 @@ class Auxiliary(doing.DoDoer):
                       if op.xid == data.get('x') and op.kind == ('unblind' if unblind else 'dh')
                       and ((op.hab.pre == (op.grant.sad['ri'] if unblind else op.grant.pre)
                             and serder.pre == (op.grant.pre if unblind else op.grant.sad['ri']))
-                           or not unblind and op.group is not None and op.group.started
-                           and op.hab.pre == op.grant.sad['ri'] == serder.pre)]
+                           or op.group is not None and op.group.started
+                           and op.hab.pre == (op.grant.pre if unblind else op.grant.sad['ri']) == serder.pre)]
         if (route not in (Dhke.Route, Unblind.Route) or len(candidates) != 1
                 or candidates[0].phase in self.Terminal):
             raise kering.ValidationError('Reply has no matching local approval')
@@ -467,7 +485,20 @@ class Auxiliary(doing.DoDoer):
             operation.protocol.processReply(serder=serder, diger=diger, route=route,
                                            cigars=cigars, tsgs=tsgs, **kwa)
             if unblind:
-                self._finish_openings(operation)
+                self._drain(operation)
+                if operation.hab.pre == operation.grant.sad['ri']:
+                    if (operation.group is not None and operation.protocol.complete(operation.xid)
+                            and serder.said not in operation.group.forwarded):
+                        operation.group.forwarded.add(serder.said)
+                        verified, _, _, _, _ = exchanging.verifyAttachments(self.vault.hby, serder,
+                            tsgs=fetchTsgs(db=operation.hab.db.tsgs, diger=diger))
+                        state = operation.protocol._operations[operation.xid]
+                        proofs = {state['openings'][said].said: state['openings'][said]
+                                  for saids in state['selected'].values() for said in saids}
+                        raw = messagize(serder, cigars=cigars, tsgs=verified,
+                            bonds=[proof.data for proof in proofs.values()], gvrsn=kering.Vrsn_2_0)
+                        self.openings.broadcast(operation, raw, 'reply')
+                    self._finish_openings(operation)
             else:
                 self._drain(operation)
         except (kering.MissingChainError, kering.MissingAnchorError, kering.MissingSchemaError) as error:
@@ -491,16 +522,26 @@ class Auxiliary(doing.DoDoer):
             cue = operation.protocol.cues.popleft()
             if operation.group is not None:
                 if cue['kin'] == 'sign':
-                    self.holders.signing(operation, cue['msg'])
+                    adapter = self.openings if operation.kind == 'unblind' else self.holders
+                    adapter.signing(operation, cue['msg'])
                     continue
-                if cue['kin'] == 'query':
+                if cue['kin'] == 'query' and operation.kind != 'unblind':
                     if operation.group.query_sent:
                         continue
                     operation.group.query_sent = True
+            if operation.kind == 'unblind' and operation.group is not None:
+                identity = (cue['kin'], bytes(cue['msg']))
+                if identity in operation.group.sent:
+                    continue
+                operation.group.sent.add(identity)
             if operation.kind == 'unblind' and cue['kin'] == 'reply':
                 # Adopt the same authenticated own reply before a returned Admit can reference this Grant.
                 try:
-                    operation.protocol.finish(operation.xid)
+                    if operation.group is None or not operation.group.finished:
+                        operation.protocol.finish(operation.xid)
+                        if operation.group is not None:
+                            operation.group.finished = True
+                    self._changed(operation, 'answered')
                 except kering.KeriError as error:
                     self._terminate(operation, 'refused', str(error))
                     raise
@@ -526,11 +567,21 @@ class Auxiliary(doing.DoDoer):
             if deadline is None or helping.nowUTC() >= deadline.datetime:
                 self._terminate(operation, 'expired', 'The original Grant deadline has elapsed')
                 continue
+            if operation.kind == 'unblind' and operation.hab.pre == operation.grant.pre:
+                try:
+                    if self._admitted(operation):
+                        self._terminate(operation, 'admitted')
+                        continue
+                except kering.ValidationError as error:
+                    self._terminate(operation, 'refused', str(error))
+                    continue
             if operation.group is not None:
                 try:
-                    adapter = self.holders if operation.hab.pre == operation.grant.sad['ri'] else self.groups
+                    adapter = (self.openings if operation.kind == 'unblind' else
+                               self.holders if operation.hab.pre == operation.grant.sad['ri'] else self.groups)
                     adapter.progress(operation)
-                except (kering.MissingChainError, kering.MissingAnchorError, kering.MissingSchemaError) as error:
+                except (kering.MissingChainError, kering.MissingAnchorError, kering.MissingSchemaError,
+                        kering.MissingOpeningError) as error:
                     self._changed(operation, 'waiting', str(error))
                     continue
                 except kering.ValidationError as error:
@@ -626,6 +677,8 @@ class Auxiliary(doing.DoDoer):
         self.groups.seen.clear()
         self.holders.entries.clear()
         self.holders.noticed.clear()
+        self.openings.entries.clear()
+        self.openings.pending.clear()
         self.outgoing.clear()
         if self._delivery is not None:
             self.remove([self._delivery])
@@ -668,7 +721,9 @@ class _Delivery(doing.DoDoer):
             ipexing._require_vault(vault, hab)
             deadline = vault.hby.db.epsd.get((operation.grant.said,))
             publication = (operation.group is not None and operation.phase == 'verified'
-                           and self.wire == operation.group.publication)
+                           and (self.wire == operation.group.publication
+                                or operation.kind == 'unblind' and self.topic == 'reply'
+                                and self.destination in hab.db.signingMembers(pre=hab.pre)))
             if (operation.phase in self.owner.Terminal and not publication or original is None or deadline is None
                     or deadline.dts != original.dts or helping.nowUTC() >= deadline.datetime):
                 raise kering.ValidationError('The original live presentation deadline or approval has ended')

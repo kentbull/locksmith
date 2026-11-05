@@ -266,6 +266,21 @@ new Grant from the exact selected admitted view, never the old terminal exchange
 Closing or cancelling discards unfinished approvals and queued proofs. Unblind
 does not transfer a Keeper root.
 
+Group state openings use the same single **Request state openings** or
+**Approve state openings** decision per member. Select an ordinary current
+signing member as proposer; this role requires no DH root custody. The proposer
+authors one v2 query or minimal opening reply. Each consenting member contributes
+to those unchanged bytes, and KERIpy verifies the ordinary group threshold before
+delivery. Proposal intake grants no request, proof-release or acceptance consent.
+Missing proof waits within the original Grant deadline. Closing an unapproved
+review signs nothing; vault closure abandons the live approval.
+
+After opening verification, **Review credential** remains a separate exact group
+Admit decision, proposed by the selected member. A presentation that needs no
+setup or opening exchange allows any current signing member to propose its
+first Admit. Other members review and approve that same body. Conflicting
+proposals are refused; inventory changes only after the ordinary threshold.
+
 Individual encrypted root files
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
