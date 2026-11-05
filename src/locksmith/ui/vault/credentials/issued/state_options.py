@@ -23,7 +23,7 @@ class StatePublicationOptions(QWidget):
         layout.addWidget(self.mode)
         self.discloser = FloatingLabelComboBox('Designated state discloser')
         self.discloser.addItem('Issuer retains derivation locally', None)
-        for prefix in vault.hby.kevers:
+        for prefix in list(vault.hby.kevers):
             self.discloser.addItem(identifier_name(vault, prefix), prefix)
         layout.addWidget(self.discloser)
         self.bound_event = FloatingLabelLineEdit('Exact current issuee event (optional)')

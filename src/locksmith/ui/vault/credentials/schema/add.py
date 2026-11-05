@@ -16,6 +16,7 @@ from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QButton
 from locksmith import resources_rc  # noqa: F401 - register bundled schemas and icons
 from locksmith.core.credentialing import LoadSchemaDoer
 from locksmith.core.habbing import list_eligible_local_identifiers
+from keri.app.habbing import GroupHab
 from locksmith.ui.toolkit.widgets import (
     LocksmithDialog,
     FloatingLabelLineEdit,
@@ -313,6 +314,11 @@ class AddSchemaDialog(LocksmithDialog):
                 # Format: "Name (prefix)"
                 display_text = f"{hab.name} ({hab_pre[:15]}...)"
                 self.issuer_dropdown.addItem(display_text, userData=hab_pre)
+
+            for prefix, hab in self.app.vault.hby.habs.items():
+                if (isinstance(hab, GroupHab) and hab.accepted and hab.mhab is not None
+                        and hab.mhab.pre in self.app.vault.hby.db.signingMembers(pre=prefix)):
+                    self.issuer_dropdown.addItem(f'{hab.name} (group)', userData=prefix)
 
             logger.debug(f"Populated issuer dropdown with {self.issuer_dropdown.count() - 1} identifiers")
         except Exception as e:

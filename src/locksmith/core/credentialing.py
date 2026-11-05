@@ -12,7 +12,8 @@ from hio.base import doing
 from keri import help, kering
 from keri.acdc import Registrar, acdcmap, regeventing, chaining, ipexing as native_ipex
 from keri.app.habbing import GroupHab
-from keri.core import (Aggor, Blinder, BlindState, BoundState, Noncer, Number, SerderACDC,
+from keri.app import grouping
+from keri.core import (Aggor, Blinder, BlindState, BoundState, Diger, Noncer, Number, Prefixer, SerderACDC,
                        SerderKERI, SealSource, messagize, parsing, scheming)
 from keri.help import helping
 from keri.peer import exchanging
@@ -348,8 +349,10 @@ class LoadSchemaDoer(doing.DoDoer):
             schemer = scheming.Schemer(raw=raw)
             if self.enable_issuance:
                 hab = self.vault.hby.habByPre(self.issuer_aid)
-                if hab is None or isinstance(hab, GroupHab):
-                    raise ValueError('Select an individual local identifier for issuance')
+                if (hab is None or not hab.accepted or isinstance(hab, GroupHab)
+                        and (hab.mhab is None or hab.mhab.pre not in
+                             self.vault.hby.db.signingMembers(pre=hab.pre))):
+                    raise ValueError('Select an accepted local signing identifier for issuance')
             self.vault.hby.db.schema.pin(keys=(schemer.said,), val=schemer)
             if self.enable_issuance:
                 self.vault.db.issuers.pin(keys=(schemer.said,), val=hab.pre)
@@ -387,6 +390,9 @@ class CredentialUpdateDoer(doing.DoDoer):
         it selects authoring work, not evidence accepted on behalf of a verifier.
         """
         hab = registry.hab
+        if isinstance(hab, GroupHab):
+            yield from self.group_anchor(registry, event, auths)
+            return
         # A locally signed anchor can still lack receipts. vetAnchor verifies
         # quorum and therefore cannot locate pending authoring work for retry.
         # Reuse that exact event, then require normal receipt/TEL acceptance.
@@ -404,6 +410,42 @@ class CredentialUpdateDoer(doing.DoDoer):
         yield from self.receipt(hab, anchor, receiptor, auths)
         if not registry.anchorMsg(event.said):
             raise kering.ValidationError('Registry anchor is still pending')
+
+    def group_anchor(self, registry, event, auths):
+        """Propose one exact TEL anchor; ordinary group approval owns completion."""
+        hab = registry.hab
+        seal = dict(i=registry.regk, s=event.sad['n'], d=event.said)
+        kwa = {}
+        if hab.kever.estOnly:
+            verfers, digers = self.vault.hby.extractMerfersMigers(hab.smids, hab.rmids)
+            kwa = dict(verfers=verfers, digers=digers)
+        author = hab.rotate if hab.kever.estOnly else hab.interact
+        signed = author(data=[seal], version=kering.Vrsn_2_0, gvrsn=kering.Vrsn_2_0, **kwa)
+        anchor = SerderKERI(raw=signed)
+        tel = messagize(event, bonds=[SealSource(s=anchor.snh, d=anchor.said)], gvrsn=kering.Vrsn_2_0)
+        build = grouping.multisigRipExn if event.ilk == 'rip' else grouping.multisigBupExn
+        options = {} if event.ilk == 'rip' else dict(rgy=self.vault.rgy)
+        proposal, attachments = build(hab, tel, signed, **options)
+        self.vault.mbx.parser.parse(ims=bytearray(proposal.raw + attachments), local=True)
+        prefixer, number, diger = Prefixer(qb64=hab.pre), Number(num=anchor.sn), Diger(qb64=anchor.said)
+        self.vault.counselor.start(hab, prefixer, number, diger, auths=auths)
+        for member in self.vault.hby.db.signingMembers(pre=hab.pre):
+            if member != hab.mhab.pre:
+                self.vault.postman.send(src=hab.mhab.pre, dest=member, topic='multisig',
+                                        serder=proposal, attachment=attachments, stream=True)
+        self.vault.signals.emit_doer_event('GroupRegistry', 'proposal_queued', {'said': proposal.said})
+        # Member consent may take human time; the open vault owns this wait.
+        while True:
+            self.vault.mux.kvy.processEscrows()
+            self.vault.rgy.processEscrows()
+            accepted = self.vault.rgy.store.seqEvent(registry.regk, Number(numh=event.sad['n']).num)
+            if (accepted is not None and accepted.said == event.said
+                    and self.vault.counselor.complete(prefixer, number, diger)):
+                regeventing.vetAnchor(accepted, db=self.vault.hby.db, issuer=hab.pre)
+                return
+            if self.vault.closed:
+                raise kering.ConfigurationError('Vault closed while group registry approval was pending')
+            yield self.tock
 
     def receipt(self, hab, anchor, receiptor, auths):
         threshold = hab.kvy.fetchEstEvent(hab.pre, anchor.sn).bner.num
@@ -478,8 +520,10 @@ class IssueCredentialDoer(CredentialUpdateDoer):
         try:
             issuer = self.vault.db.issuers.get(keys=(self.schema_said,))
             hab = self.vault.hby.habByPre(issuer)
-            if hab is None or isinstance(hab, GroupHab):
-                raise ValueError('Select an individual local identifier for this schema')
+            if hab is None:
+                raise ValueError('Select a local identifier for this schema')
+            if isinstance(hab, GroupHab) and (self.authentication != 'registry' or self.registry_mode == 'derived'):
+                raise ValueError('Group issuance requires public or per-event blinded registry authentication')
             if set(self.auths) - set(hab.kever.wits):
                 raise ValueError('Authorization names a witness outside the issuer witness set')
             schemer = self.vault.hby.db.schema.get(keys=(self.schema_said,))

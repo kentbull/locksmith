@@ -13,11 +13,80 @@ from keri.app import habbing as keri_habbing
 from keri.app import organizing
 from keri.core import coring, messagize
 from keri.core.serdering import SerderKERI
+from keri.peer.exchanging import serializeParsedSubstream
 from keri.peer import exchanging
 
 from locksmith.db.basing import IdentifierMetaInfo
 
 logger = help.ogler.getLogger(__name__)
+
+
+def registry_proposal(vault, said):
+    """Authenticate an exact native TEL/anchor pair without contributing a signature."""
+    wrapper, _ = exchanging.cloneMessage(vault.hby, said)
+    if (wrapper is None or wrapper.pvrsn != kering.Vrsn_2_0
+            or wrapper.route not in ('/multisig/rip', '/multisig/bup') or not vault.exc.complete(said)):
+        raise ValueError('Select an authenticated v2 group registry proposal')
+    children = exchanging.loadParsedNestedSubstreams(vault.hby, said)
+    vault.mux.validate(wrapper, nests=children)
+    tel, anchor = [child.serder for child in children]
+    group = vault.hby.habByPre(wrapper.sad['a']['gid'])
+    if (not isinstance(group, keri_habbing.GroupHab) or not group.accepted or group.mhab is None
+            or group.mhab.pre not in vault.hby.db.signingMembers(pre=group.pre)):
+        raise ValueError('Registry approval requires an accepted local group signing member')
+    if anchor.sn != group.kever.sn + 1 or anchor.sad['p'] != group.kever.serder.said:
+        raise ValueError('Registry anchor does not extend the current group event')
+    return wrapper, children, group
+
+
+def pending_registry_proposals(vault):
+    """Select retained remote proposals still awaiting this member's explicit approval."""
+    proposals = []
+    for _, note in vault.notifier.noter.notes.getTopItemIter():
+        if note.attrs.get('r') not in ('/multisig/rip', '/multisig/bup'):
+            continue
+        try:
+            wrapper, children, group = registry_proposal(vault, note.attrs['d'])
+            approved = any((retained := vault.hby.db.exns.get((diger.qb64,))) is not None
+                           and retained.pre == group.mhab.pre
+                           and keri_grouping.sameRegistryProposal(retained, wrapper)
+                           for diger in vault.hby.db.meids.get((children[1].serder.said,)))
+            if not approved and wrapper.pre != group.mhab.pre:
+                proposals.append(wrapper)
+        except (ValueError, kering.ValidationError):
+            continue
+    return proposals
+
+
+def approve_registry_proposal(vault, said, prior, auths=None):
+    """Revalidate the reviewed parent, then sign and queue only the retained anchor."""
+    wrapper, children, group = registry_proposal(vault, said)
+    if group.kever.serder.said != prior:
+        raise ValueError('Group changed while registry approval was pending; review the current proposal again')
+    anchor = children[1].serder
+    wits = [wit for wit in group.kever.wits if wit not in anchor.sad.get('br', [])]
+    wits.extend(anchor.sad.get('ba', []))
+    if set(auths or {}) - set(wits):
+        raise ValueError('Authorization names a witness outside this anchor witness set')
+    if anchor.ilk in ('rot', 'drt'):
+        own = group.rotate(serder=anchor, smids=group.smids, rmids=group.rmids,
+                           gvrsn=kering.Vrsn_2_0)
+    else:
+        own = messagize(anchor, sigers=group.sign(anchor.raw), gvrsn=kering.Vrsn_2_0)
+        vault.mbx.parser.parse(ims=bytearray(own), local=True)
+    build = keri_grouping.multisigRipExn if children[0].serder.ilk == 'rip' else keri_grouping.multisigBupExn
+    options = {} if children[0].serder.ilk == 'rip' else dict(rgy=vault.rgy)
+    proposal, attachments = build(group, serializeParsedSubstream(children[0]), own,
+                                  usage=wrapper.sad['a'].get('usage'), **options)
+    vault.mbx.parser.parse(ims=bytearray(proposal.raw + attachments), local=True)
+    vault.counselor.start(group, coring.Prefixer(qb64=group.pre), coring.Number(num=anchor.sn),
+                          coring.Diger(qb64=anchor.said), auths=auths)
+    for member in vault.hby.db.signingMembers(pre=group.pre):
+        if member != group.mhab.pre:
+            vault.postman.send(src=group.mhab.pre, dest=member, topic='multisig',
+                               serder=proposal, attachment=attachments, stream=True)
+    vault.signals.emit_doer_event('GroupRegistry', 'contribution_queued', {'said': proposal.said})
+    return proposal
 
 
 def inception_proposal(vault, said):

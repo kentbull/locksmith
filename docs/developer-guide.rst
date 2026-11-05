@@ -181,6 +181,26 @@ held proof use and supplied openings remain independent of absent or damaged
 root custody. Plaintext ``RegistryCustody`` export/import and its app table have
 been removed.
 
+Group registry issuance and consent
+~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+An accepted local group signing member can enable issuance for a schema and
+choose public or per-event blinded registry authentication in **Issue**. Derived
+DH issuance remains a separate integration step. The proposing member first
+submits a RIP anchor; the other members open **Activity**, review **Group registry
+approval**, and explicitly approve that exact anchor. Receipt of a proposal or
+closing its review contributes no signature. Issuance then proposes its BUP and
+requires another explicit approval before the credential is reported issued.
+
+The review displays the registry, TEL event and controller anchor. A blinded BUP
+alone does not disclose the credential or state. The current group parent is
+rechecked at the approval click; a stale review cannot authorize another event.
+Group witness authorization uses the existing code fields in Issue and approval.
+The ordinary elected witnesser may differ from the proposer or DH custodian.
+Member consent waits while the vault is open; closing the vault stops its local
+operation and does not undo already accepted protocol evidence. Reopening does
+not automatically restart an interrupted issuance.
+
 Individual derived issuance now anchors a fresh RIP, retains one signed proofless
 Grant and waits for explicit DH approval before issuing its BUP. The vault owns
 those live operations; ordinary submission and explicit Admit remain separate.

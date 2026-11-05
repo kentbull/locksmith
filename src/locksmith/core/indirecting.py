@@ -61,7 +61,7 @@ class MailboxDirector(doing.DoDoer):
     """
 
     def __init__(self, hby, topics, rgy, kvy, exc, db, auxiliary, ims=None,
-                 rep=None, cues=None, rvy=None, evidence=None, **kwa):
+                 rep=None, cues=None, rvy=None, evidence=None, mux=None, **kwa):
         """
         Initializes the MailboxDirector class, which is responsible for managing mailboxes,
         routing messages, handling replies, and processing incoming data streams. It ensures
@@ -87,6 +87,7 @@ class MailboxDirector(doing.DoDoer):
         self.rgy = rgy
         self.exchanger = exc
         self.auxiliary = auxiliary
+        self.mux = mux
         self.rep = rep
         self.topics = topics
         self.pollers = list()
@@ -286,6 +287,8 @@ class MailboxDirector(doing.DoDoer):
 
         while True:
             self.kvy.processEscrows()
+            if self.mux is not None:
+                self.mux.kvy.processEscrows()  # Retained group contributions may complete an anchor.
             if self.rvy:
                 self.rvy.processEscrowReply()
             self.exchanger.processEscrow()
