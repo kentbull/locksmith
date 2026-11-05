@@ -9,6 +9,7 @@ interface, including the bundled KERI Foundation implementation.
    :caption: Contents
 
    developer-guide
+   local-registry-services
    credential-exchange
    plugin-authoring
    kerifoundation-plugin

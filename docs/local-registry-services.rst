@@ -1,0 +1,99 @@
+Local registry services
+=======================
+
+Run these services after creating and onboarding the participating wallets through
+the normal Local Development provider. Keep ``scripts/local-provider.sh`` running
+in its own terminal. This launcher starts only Registrar and Observer; it does not
+allocate accounts, create wallet identifiers or change wallet state.
+
+Export introductions
+--------------------
+
+In each participating wallet, use the identifier's **Share** action to export its
+actual public introduction. Put the files beside a small configuration file:
+
+.. code-block:: json
+
+   {
+     "publishers": ["issuer.cesr"],
+     "readers": ["issuer.cesr", "holder.cesr", "verifier.cesr"]
+   }
+
+Paths are relative to that JSON file. Publishers may submit registry evidence;
+readers may query Observer. Both arrays must be nonempty. Only explicitly selected
+identifiers receive those roles. The helper verifies signed public KEL support
+with the v2 KERI/ACDC processors and omits endpoint replies from service bootstrap.
+It refuses incomplete or invalid key evidence. Export fresh introductions after
+key changes; stop the registry launcher, update the files/config and restart it.
+Changing an allowlist does not remove previously accepted public evidence.
+
+Start on macOS
+--------------
+
+The direct ``core/python/kf-registrar`` and ``core/python/kf-observer`` checkouts
+must be installed beside Locksmith. Their locked dependencies require Python
+3.14 and libsodium. ``KERI_WORKSPACE`` may select another workspace root.
+
+.. code-block:: bash
+
+   bash scripts/local-registries.sh \
+     "$HOME/.local/share/locksmith-local-registries" \
+     /absolute/path/to/participants.json
+
+The launcher runs ``uv sync --locked --extra dev --python 3.14`` for each service,
+refuses occupied ports and waits at most 15 seconds for startup health. It binds
+Registrar public/admin listeners to loopback ports 19932/19931 and Observer to
+loopback port 19942. Ctrl-C stops only its own children. A child failure also stops
+the other child. Logs, public bootstrap and service credentials remain in the
+selected state directory. Restart with the same directory to reuse the identities.
+
+The encrypted service stores use a stable, directory-derived ``--base`` beneath
+the normal KERI data root; the state directory is not a database-root override.
+Keep ``service-passcode`` with those stores. It and the generated TLS private keys
+are owner-readable only. Do not delete or replace retained private files while
+keeping their corresponding service state. No private key or passcode is printed.
+
+Connect the wallets
+-------------------
+
+In each participating wallet's **Settings → Credential status services**, save:
+
+* Registrar publication URL: ``https://localhost:19932`` for publishers.
+* Observer URL: ``http://127.0.0.1:19942`` for readers.
+
+Registrar uses an isolated, persistent certificate authority and a separate
+CA-signed localhost server certificate with a DNS SAN. The authority certificate
+is ``ca.pem``; it permits certificate signing and carries no server-authentication
+restriction. The server leaf is ``server-cert.pem`` with ``CA:FALSE`` and server
+authentication enabled. Their private keys are ``ca-key.pem`` and
+``server-key.pem``. All four files are retained and reused; a partial set refuses
+startup. Existing single-certificate trial directories require a fresh state
+directory or restoration of a complete matching CA/server set.
+
+The CA lasts 3650 days and the server leaf 365 days. Startup refuses either
+certificate with less than 24 hours remaining; certificates are not renewed
+automatically. Stop these services and restore or reissue valid certificates with
+their matching retained keys before restarting. Older trial leaves issued for
+3650 days must also be reissued with a 365-day lifetime for the macOS Qt client.
+Preserve ``service-passcode`` and the service identities during certificate work;
+if the CA changes, configure its replacement ``ca.pem`` in the wallets.
+
+Trust ``ca.pem`` through the normal application's explicit development CA support
+before HTTPS publication. For the example state directory, launch the normal
+application with:
+
+.. code-block:: bash
+
+   SSL_CERT_FILE="$HOME/.local/share/locksmith-local-registries/ca.pem" \
+     uv run --locked python -m locksmith.main
+
+The launcher does not change system trust or disable certificate/hostname
+verification. Observer uses the same explicit CA for its HTTPS Registrar pulls;
+its wallet-facing listener is loopback HTTP.
+
+Health reports listener availability. Successful publication requires acceptance
+of the exact submitted registry head. Observer independently polls Registrar and
+verifies public KEL/TEL; an Observer query reads its accepted cache and does not
+force an immediate pull or establish globally current credential state. Private
+registry roots remain in the wallets. Blinded event openings are separate from
+this public registry-history transport.
