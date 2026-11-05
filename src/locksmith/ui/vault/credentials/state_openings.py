@@ -1,6 +1,7 @@
 """Explicit event-opening consent for one authenticated live presentation."""
 from PySide6.QtCore import Qt
-from PySide6.QtWidgets import QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from PySide6.QtWidgets import QComboBox, QHBoxLayout, QLabel, QVBoxLayout, QWidget
+from keri.app.habbing import GroupHab
 
 from locksmith.ui.toolkit.widgets import LocksmithButton, LocksmithDialog, LocksmithInvertedButton
 from locksmith.ui.vault.credentials.presentation import identifier_name
@@ -44,6 +45,15 @@ class StateOpeningsDialog(LocksmithDialog):
             label.setTextFormat(Qt.TextFormat.PlainText)
             label.setWordWrap(True)
             layout.addWidget(label)
+        self.proposer_label = QLabel('Proposing group member')
+        self.proposer = QComboBox()
+        if isinstance(hab, GroupHab):
+            for member in hab.db.signingMembers(pre=hab.pre):
+                self.proposer.addItem(identifier_name(self.vault, member), member)
+        layout.addWidget(self.proposer_label)
+        layout.addWidget(self.proposer)
+        self.proposer_label.setVisible(isinstance(hab, GroupHab))
+        self.proposer.setVisible(isinstance(hab, GroupHab))
         buttons = QHBoxLayout()
         close = LocksmithInvertedButton('Close')
         self.cancel = LocksmithInvertedButton('Cancel request')
@@ -85,6 +95,14 @@ class StateOpeningsDialog(LocksmithDialog):
             f"Recipient: {identifier_name(self.vault, status['recipient'])}\n"
             f"Credential: {status['credential']}\nPresentation: {self.grant_said}\n"
             f"Original local deadline: {status['deadline']}")
+        if isinstance(self.hab, GroupHab):
+            self.proposer.setEnabled(not status.get('group'))
+            if status.get('proposer'):
+                self.proposer.setCurrentIndex(self.proposer.findData(status['proposer']))
+            self.summary.setText(self.summary.text() +
+                f'\nLocal signing member: {self.hab.mhab.pre}\n'
+                'This decision authorizes one contribution to the selected proposer’s exact '
+                'request or reply. Ordinary group threshold is required; Admit remains separate.')
         self.state.setText(OPENING_PHASES[status['phase']])
         self.error.setText(status['error'])
         self.request.setVisible('request_openings' in status['actions'])
@@ -101,7 +119,8 @@ class StateOpeningsDialog(LocksmithDialog):
             self.refresh()
             return
         try:
-            self.vault.auxiliary.request_openings(self.hab, self.grant_said)
+            self.vault.auxiliary.request_openings(self.hab, self.grant_said,
+                **({'proposer': self.proposer.currentData()} if isinstance(self.hab, GroupHab) else {}))
         except Exception as error:
             self.error.setText(str(error))
         else:
@@ -115,7 +134,8 @@ class StateOpeningsDialog(LocksmithDialog):
             self.refresh()
             return
         try:
-            self.vault.auxiliary.approve_openings(self.hab, self.grant_said)
+            self.vault.auxiliary.approve_openings(self.hab, self.grant_said,
+                **({'proposer': self.proposer.currentData()} if isinstance(self.hab, GroupHab) else {}))
         except Exception as error:
             self.error.setText(str(error))
         else:

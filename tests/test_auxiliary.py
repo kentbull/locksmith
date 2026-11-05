@@ -613,6 +613,78 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
             assert app.vault.db.accepted.get((credential_said,)) == admission
             assert credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'] == proof
 
+        # Group Unblind starts with delivery, then separate requester and proof-release consent.
+        _deliver_ipex(issuer.vault, registered)
+        recipient_deadline = issuer.hby.db.epsd.get((presentation,)).dts
+        io.request_openings(groups[0], presentation, proposer=members[0].pre)
+        assert not any(destination == hh.pre and topic == 'reply'
+                       for _, destination, _, topic in io.outgoing)
+        deliver_aux(issuer, peer, 'credential')
+        verifier_peer_deadline = peer.hby.db.epsd.get((presentation,)).dts
+        deliver_aux(issuer, peer, 'multisig')
+        assert po.openings.pending[(gid, presentation)]
+        assert (gid, presentation) not in po.operations and not po.outgoing
+        po.request_openings(groups[1], presentation, proposer=members[0].pre)
+        assert not any(destination == hh.pre and topic == 'reply'
+                       for _, destination, _, topic in io.outgoing)
+        deliver_aux(peer, issuer, 'multisig')
+        advance(lambda: any(destination == hh.pre and topic == 'reply'
+                            for _, destination, _, topic in io.outgoing))
+        query = deliver_aux(issuer, holder, 'reply')
+        query_item = Parser(version=kering.Vrsn_2_0).parseOneBare(ims=bytearray(query), processive=False)
+        query_indices = {siger.index for _, sigers in query_item.lsgs for siger in sigers}
+        query_indices.update(siger.index for pre, _, _, sigers in query_item.tsgs
+                             if pre.qb64 == gid for siger in sigers)
+        assert query_indices == {0, 1}
+        assert (hh.pre, presentation) not in ho.operations
+        assert not ho.outgoing and (hph.pre, presentation) not in hpo.operations
+        ho.approve_openings(hh, presentation, proposer=holder_members[0].pre)
+        deliver_aux(holder, holder_peer, 'credential')
+        deliver_aux(holder, holder_peer, 'reply')
+        deliver_aux(holder, holder_peer, 'multisig')
+        assert hpo.openings.pending[(hph.pre, presentation)]
+        assert (hph.pre, presentation) not in hpo.operations and not hpo.outgoing
+        hpo.approve_openings(hph, presentation, proposer=holder_members[0].pre)
+        assert not any(destination == gid and topic == 'reply'
+                       for _, destination, _, topic in ho.outgoing)
+        forwarded = deliver_aux(holder_peer, holder, 'reply')
+        assert Parser(version=kering.Vrsn_2_0).parseOneBare(
+            ims=bytearray(forwarded), processive=False).serder.raw == query_item.serder.raw
+        deliver_aux(holder_peer, holder, 'multisig')
+        advance(lambda: any(destination == gid and topic == 'reply'
+                            for _, destination, _, topic in ho.outgoing))
+        reply = deliver_aux(holder, issuer, 'reply')
+        reply_item = Parser(version=kering.Vrsn_2_0).parseOneBare(ims=bytearray(reply), processive=False)
+        assert {siger.index for pre, _, _, sigers in reply_item.tsgs
+                if pre.qb64 == hh.pre for siger in sigers} == {0, 1}
+        deliver_aux(issuer, peer, 'reply')
+        advance(lambda: all(app.vault.exc.complete(presentation) for app in issuers))
+        for app, cutoff in zip(issuers, (recipient_deadline, verifier_peer_deadline)):
+            assert app.hby.db.exns.get((presentation,)).raw == original_presentation.serder.raw
+            assert app.hby.db.epsd.get((presentation,)).dts == cutoff
+            assert app.vault.auxiliary.status(gid, presentation)['phase'] == 'verified'
+            assert app.vault.db.receipts.get((gid, presentation)) is None
+            assert app.vault.db.accepted.get((credential_said,)) is None
+        assert holder.hby.db.epsd.get((presentation,)).dts == presentation_deadline
+        assert all(root.qb64b not in wire for wire in wires)
+        for app, (admission, proof) in zip(holders, historical):
+            assert app.vault.db.accepted.get((credential_said,)) == admission
+            assert credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'] == proof
+
+        # Verified state proof does not Admit; both verifier members separately accept one exact response.
+        presentation_admit, _ = ipexing.admit(issuer.vault, groups[0], presentation)
+        assert all(app.vault.db.accepted.get((credential_said,)) is None for app in issuers)
+        deliver_member(issuer, peer)
+        proposed_admit = ipexing.group_admit_proposal(peer.vault, groups[1], presentation)
+        assert proposed_admit.raw == presentation_admit.raw
+        response, _ = ipexing.admit(peer.vault, groups[1], presentation, proposal=proposed_admit.said)
+        assert response.raw == presentation_admit.raw
+        deliver_member(peer, issuer)
+        advance(lambda: all(app.vault.db.accepted.get((credential_said,)) is not None for app in issuers))
+        for app in issuers:
+            accepted = app.vault.db.accepted.get((credential_said,))
+            assert accepted.grant == presentation and accepted.admit == presentation_admit.said
+
         # Revocation is another exact BUP and needs a separate peer approval.
         scheduler.exit()
         revoked = credentialing.RevokeCredentialDoer(issuer, credential_said)

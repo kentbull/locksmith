@@ -263,13 +263,13 @@ class AcceptGrantDialog(LocksmithDialog):
         self.group_proposal.setVisible(proposal is not None)
         if proposal is not None:
             self.group_proposal.setPlainText(json.dumps(proposal.sad, indent=2))
-        waiting = (proposal is None and status is not None
-                   and status.get('custodian') != hab.mhab.pre)
+        proposer = status.get('proposer', status.get('custodian')) if status else None
+        waiting = proposal is None and proposer is not None and proposer != hab.mhab.pre
         self.admit_button.setText('Waiting for group proposal' if waiting else
                                  'Approve group acceptance' if proposal else 'Propose group acceptance')
         self.admit_button.setEnabled(not waiting and not self._anchor_error)
         self.delivery_notice.setText(
-            'Acceptance requires the group signature threshold. Registry setup alone does not accept the credential.')
+            'Acceptance requires the group signature threshold. Registry setup and state openings do not accept the credential.')
         self.delivery_notice.show()
 
     def _admit_options(self):

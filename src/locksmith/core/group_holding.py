@@ -347,12 +347,14 @@ def admit_proposal(vault, hab, grant_said):
             raise kering.ValidationError('The terminal Admit differs from local acceptance consent')
         return completed
     entry = vault.auxiliary.holders.entries.get((hab.pre, grant_said))
-    custodian = entry.custodian if entry else election(hab)[1]
+    opening = vault.auxiliary.openings.entries.get((hab.pre, grant_said))
+    proposer = opening.proposer if opening else entry.custodian if entry else None
     proposals = {}
     for _, wrapper in vault.hby.db.exns.getTopItemIter():
         if (wrapper.route != '/multisig/exn' or wrapper.pvrsn != V2
                 or wrapper.sad['a'].get('gid') != hab.pre
-                or (not selected and wrapper.pre != custodian)):
+                or wrapper.pre not in hab.db.signingMembers(pre=hab.pre)
+                or (not selected and proposer is not None and wrapper.pre != proposer)):
             continue
         children = exchanging.loadParsedNestedSubstreams(vault.hby, wrapper.said)
         if len(children) != 1:
@@ -409,9 +411,11 @@ def contribute_admit(vault, hab, grant, message, send, selected):
     body = admit_proposal(vault, hab, grant.said)
     if body is None:
         entry = vault.auxiliary.holders.entries.get((hab.pre, grant.said))
-        custodian = entry.custodian if entry else election(hab)[1]
-        if selected is not None or hab.mhab.pre != custodian:
-            raise kering.ValidationError('Wait for and review the elected member\'s exact Admit proposal')
+        opening = vault.auxiliary.openings.entries.get((hab.pre, grant.said))
+        proposer = opening.proposer if opening else entry.custodian if entry else None
+        if (selected is not None or hab.mhab.pre not in hab.db.signingMembers(pre=hab.pre)
+                or proposer is not None and hab.mhab.pre != proposer):
+            raise kering.ValidationError('Wait for and review the selected member\'s exact Admit proposal')
         body, atc = native_ipex.admit(hab, message, grant, kind=kering.Kinds.json, gvrsn=V2)
         raw = body.raw + atc
     else:
