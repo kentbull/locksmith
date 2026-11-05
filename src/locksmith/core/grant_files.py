@@ -5,7 +5,9 @@ from types import SimpleNamespace
 from keri import kering
 from keri.acdc import chaining, ipexing as native
 from keri.app.habbing import GroupHab
+from keri.app.grouping import multisigExn
 from keri.core import Parser, Prefixer, SealEvent, messagize
+from keri.core.eventing import verifySigs
 from keri.help import helping
 from keri.peer import exchanging
 
@@ -39,8 +41,9 @@ def wire(item):
 def _hab(vault, aid):
     ipexing._require_vault(vault)
     hab = vault.hby.habByPre(aid)
-    if hab is None or isinstance(hab, GroupHab):
-        raise ValueError('Select an individual identifier in this open vault')
+    if hab is None or isinstance(hab, GroupHab) and (not hab.accepted or hab.mhab is None
+            or hab.mhab.kever.fetchLatestContribTo(verfers=hab.kever.verfers) is None):
+        raise ValueError('Select a local identifier with a current signing contribution')
     return hab
 
 
@@ -110,26 +113,29 @@ def _selection(vault, aid, said, source, paths):
 
 def capture(vault, grant, *, aid, said, source, recipient, message='', paths=()):
     """Recompute only the exact selected held view; never recreate missing preparation."""
-    _, _, selected, plan = _selection(vault, aid, said, source, paths)
     item, deadline = retained(vault, grant)
+    _matches(vault, item, aid=aid, said=said, source=source, recipient=recipient,
+             message=message, paths=paths)
+    return item, deadline
+
+
+def _matches(vault, item, *, aid, said, source, recipient, message='', paths=()):
+    _, _, selected, plan = _selection(vault, aid, said, source, paths)
     body = item.serder
     if (body.pvrsn != kering.Vrsn_2_0 or body.ilk != 'xip' or body.route != '/ipex/grant'
             or body.pre != aid or body.sad['ri'] != recipient or body.sad.get('p')
             or body.sad['q'] != dict(dp=plan) or body.sad['a'] != dict(m=message, o=[said])
             or nodes(item) != [exchanging.serializeParsedSubstream(node) for node in selected]):
         raise ValueError('Prepared Grant differs from the selected admission, disclosure or parties')
-    return item, deadline
 
 
 def prepare(vault, *, aid, said, source, recipient, message='', paths=()):
     hab, original, selected, plan = _selection(vault, aid, said, source, paths)
+    if isinstance(hab, GroupHab):
+        raise ValueError('Prepare a group contribution and collect the ordinary signing threshold')
     if recipient not in vault.hby.kevers:
         raise ValueError('Introduce the selected verifier before preparing a Grant')
-    _, _, verdict, records = vault.exc.reverifyGrant(original.said)
-    if (not (verdict.verdict == chaining.Verdicts.valid
-             or verdict.verdict == chaining.Verdicts.unknown and verdict.retryable)
-            or any(record.state != 'issued' for record in records.values())):
-        raise ValueError('Preparation requires issued state or retryable unknown current evidence')
+    _issued_source(vault, original.said)
     streams = [exchanging.serializeParsedSubstream(node) for node in selected]
     grant, atc = native.grant(hab, recipient, message, origin=streams[0],
         artifacts=streams[1:] or None, modifiers=dict(dp=plan), kind=kering.Kinds.json,
@@ -139,6 +145,106 @@ def prepare(vault, *, aid, said, source, recipient, message='', paths=()):
     _, deadline = capture(vault, grant.said, aid=aid, said=said, source=source,
                          recipient=recipient, message=message, paths=paths)
     return grant.said, raw, deadline
+
+
+def _issued_source(vault, source):
+    _, _, verdict, records = vault.exc.reverifyGrant(source)
+    if (not (verdict.verdict == chaining.Verdicts.valid
+             or verdict.verdict == chaining.Verdicts.unknown and verdict.retryable)
+            or any(record.state != 'issued' for record in records.values())):
+        raise ValueError('Preparation requires issued state or retryable unknown current evidence')
+
+
+def inspect_proposal(raw):
+    """Inspect a member envelope without authenticating or dispatching its child."""
+    if not raw or len(raw) > 1048576:
+        raise ValueError('Select one group Grant proposal (at most 1 MiB)')
+    stream = bytearray(raw)
+    packet = Parser(version=kering.Vrsn_2_0).parseOneBare(ims=stream, framed=True, processive=False)
+    if (stream or packet.serder.pvrsn != kering.Vrsn_2_0
+            or packet.serder.route != '/multisig/exn' or len(packet.nests) != 1
+            or any(value for key, value in vars(packet).items()
+                   if key not in ('serder', 'tsgs', 'cigars', 'nests', 'local'))):
+        raise ValueError('Expected one v2 group Grant proposal')
+    inspect(exchanging.serializeParsedSubstream(packet.nests[0]))
+    return packet
+
+
+def _group_result(vault, hab, item):
+    raw = wire(item)
+    _protected(vault, raw)
+    deadline = vault.hby.db.epsd.get((item.serder.said,))
+    if (deadline is None or helping.nowUTC() >= deadline.datetime
+            or vault.hby.db.erpy.get((item.serder.said,)) is not None):
+        raise ValueError('The original group Grant deadline has ended')
+    wrapper, atc = multisigExn(hab, raw, version=kering.Vrsn_2_0)
+    return item.serder.said, raw, bytes(wrapper.raw + atc), deadline.dts
+
+
+def prepare_group(vault, **options):
+    """Explicit first member consent; export an authenticated proposal, not a completed Grant."""
+    hab, original, selected, plan = _selection(vault, options['aid'], options['said'],
+                                             options['source'], options.get('paths', ()))
+    if not isinstance(hab, GroupHab) or options['recipient'] not in vault.hby.kevers:
+        raise ValueError('Select a signing group and introduce the verifier')
+    _issued_source(vault, original.said)
+    streams = [exchanging.serializeParsedSubstream(node) for node in selected]
+    grant, atc = native.grant(hab, options['recipient'], options.get('message', ''),
+        origin=streams[0], artifacts=streams[1:] or None, modifiers=dict(dp=plan),
+        kind=kering.Kinds.json, gvrsn=kering.Vrsn_2_0)
+    return _group_result(vault, hab, inspect(bytes(grant.raw + atc)))
+
+
+def contribute_group(vault, raw, **options):
+    """Sign only the authenticated member proposal matching this member's exact admission."""
+    hab = _hab(vault, options['aid'])
+    if not isinstance(hab, GroupHab):
+        raise ValueError('Select the proposing group')
+    packet = inspect_proposal(raw)
+    item = inspect(exchanging.serializeParsedSubstream(packet.nests[0]))
+    _matches(vault, item, **options)
+    _issued_source(vault, options['source'])
+    vault.mux.validate(packet.serder, nests=packet.nests)
+    valid, cigars, _, invalid, missing = exchanging.verifyAttachments(vault.hby,
+        packet.serder, tsgs=packet.tsgs, cigars=packet.cigars)
+    if (not packet.serder.verify() or invalid or missing
+            or not (any(pre.qb64 == packet.serder.pre for pre, _, _, _ in valid)
+                    or any(cigar.verfer.qb64 == packet.serder.pre for cigar in cigars))):
+        raise ValueError('Proposal lacks authenticated group member authority')
+    _protected(vault, wire(item))
+    deadline = vault.hby.db.epsd.get((item.serder.said,))
+    if (deadline is None or helping.nowUTC() >= deadline.datetime
+            or vault.hby.db.erpy.get((item.serder.said,)) is not None):
+        raise ValueError('The original group Grant deadline has ended')
+    addition = inspect(hab.endorse(item.serder, framed=False, gvrsn=kering.Vrsn_2_0))
+    item.tsgs.extend(addition.tsgs)
+    _combine(vault, item, addition)
+    return _group_result(vault, hab, item)
+
+
+def export_prepared(vault, grant, **options):
+    """Export only after KERIpy sender verification reaches its ordinary threshold."""
+    item, deadline = capture(vault, grant, **options)
+    return wire(item), deadline
+
+
+def _combine(vault, item, addition):
+    """KERIpy signature verification and threshold, confined to one establishment."""
+    pre, number, diger, _ = addition.tsgs[0]
+    signatures, others = {}, []
+    for signer, sn, dig, sigers in item.tsgs:
+        if signer.qb64 != pre.qb64:
+            others.append((signer, sn, dig, sigers))
+        else:
+            if sn.sn != number.sn or dig.qb64 != diger.qb64:
+                raise ValueError('Contributions name different group establishment events')
+            signatures.update((siger.qb64, siger) for siger in sigers)
+    tholder, verfers = vault.hby.db.resolveVerifiers(pre=pre.qb64, sn=number.sn, dig=diger.qb64)
+    verified, indices = verifySigs(item.serder.raw, list(signatures.values()), verfers)
+    if len(verified) != len(signatures):
+        raise ValueError('Invalid group signature contribution')
+    item.tsgs = [*others, (pre, number, diger, verified)]
+    return tholder.satisfy(indices)
 
 
 @contextmanager
@@ -158,7 +264,7 @@ def _endorsing(vault, hab, item):
         handler.endorsement = previous
 
 
-def endorse(vault, raw, *, issuer, grant, sender, recipient):
+def endorse(vault, raw, *, issuer, grant, sender, recipient, contributions=()):
     """Explicit issuer consent signs the same body and preserves all selected proofs."""
     hab, item = _hab(vault, issuer), inspect(raw)
     body = item.serder
@@ -169,14 +275,40 @@ def endorse(vault, raw, *, issuer, grant, sender, recipient):
         saved, _ = retained(vault, grant)
         if saved.serder.raw != body.raw or nodes(saved) != nodes(item):
             raise ValueError('Native retention differs from the selected Grant')
+        if contributions and not isinstance(hab, GroupHab):
+            raise ValueError('Member contributions require a group issuer')
+        original = _factors(item)
+        for raw_contribution in contributions:
+            candidate = inspect(raw_contribution)
+            if (candidate.serder.raw != body.raw or nodes(candidate) != nodes(item)
+                    or not original.issubset(_factors(candidate))
+                    or any(factor[:2] != ('tsg', issuer) for factor in _factors(candidate) - original)):
+                raise ValueError('Contribution changes the exact Grant, proof or issuer scope')
+            item.tsgs.extend(tsg for tsg in candidate.tsgs if tsg[0].qb64 == issuer)
         addition = inspect(hab.endorse(body, framed=False, gvrsn=kering.Vrsn_2_0))
         item.tsgs.extend(addition.tsgs)
         item.cigars.extend(addition.cigars)
+        complete = _combine(vault, item, addition) if isinstance(hab, GroupHab) else True
         final = wire(item)
-        _protected(vault, final)
-        saved, _ = retained(vault, grant)
-        _context(vault, saved)
+        if complete:
+            _protected(vault, final)
+            saved, _ = retained(vault, grant)
+            _context(vault, saved)
     return final
+
+
+def endorsement_complete(vault, raw):
+    """A partial exported issuer signature is never a completed presentation context."""
+    item = inspect(raw)
+    valid, _, _, invalid, missing = exchanging.verifyAttachments(vault.hby,
+        item.serder, tsgs=item.tsgs, cigars=item.cigars, sourceSeals=item.ssts)
+    if invalid or missing or not valid:
+        return False
+    try:
+        _context(vault, item)
+    except ValueError:
+        return False
+    return True
 
 
 def resume(vault, raw, *, grant, aid, said, source, recipient, message='', paths=()):
@@ -187,6 +319,12 @@ def resume(vault, raw, *, grant, aid, said, source, recipient, message='', paths
     if (candidate.serder.raw != original.serder.raw or nodes(candidate) != nodes(original)
             or not _factors(original).issubset(_factors(candidate))):
         raise ValueError('Resume permits authentication additions to the exact prepared Grant only')
+    # Grant intake may discard optional invalid evidence. File registration must
+    # preserve and authenticate every supplied factor, including issuer contributions.
+    _, _, _, invalid, missing = exchanging.verifyAttachments(vault.hby,
+        candidate.serder, tsgs=candidate.tsgs, cigars=candidate.cigars, sourceSeals=candidate.ssts)
+    if invalid or missing:
+        raise ValueError('Complete every supplied signature threshold before registering this Grant')
     kramer = vault.kvy.kramer
     if (kramer is None or not kramer.enabled
             or any(kramer.denial(original.serder).startswith(value) for value in kramer.denials)):

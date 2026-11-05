@@ -454,7 +454,7 @@ def test_separate_discloser_prepares_issuer_endorses_and_resumes_exact_files(ipe
     original = grant_files.inspect(path.read_bytes())
     grant = original.serder.said
     _, deadline = grant_files.retained(discloser.vault, grant)
-    assert 'Original native deadline' in prepare.status.text()
+    assert 'Original deadline' in prepare.status.text()
     assert discloser.hby.db.kramTMSC.get((dh.pre, grant, grant)) is None
     assert not discloser.vault.exc.complete(grant)
     prepare.close()

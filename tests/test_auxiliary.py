@@ -8,7 +8,7 @@ from keri import kering
 from keri.acdc import Registrar, acdcmap, grant
 from keri.core import Parser, SealSource, SerderKERI, messagize, receipt
 
-from locksmith.core import credentialing, evidence, grouping, ipexing, root_copying
+from locksmith.core import credentialing, evidence, grant_files, grouping, ipexing, root_copying
 from test_credentialing import _load_schema
 from test_keri_v2_compat import ipex_vaults as ipex_vaults, _deliver_ipex
 
@@ -563,6 +563,53 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         assert all(app.vault.rgy.store.seqEvent(rip.said, 2).raw == refresh_tel.raw for app in issuers)
         for app, (admission, proof) in zip(holders, historical):
             _deliver_ipex(app.vault, evidence.clone(issuer.vault, rip.said))
+            assert app.vault.db.accepted.get((credential_said,)) == admission
+            assert credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'] == proof
+
+        # Sign the same group presentation, then explicitly collect separate issuer endorsement.
+        options = dict(aid=hh.pre, said=credential_said, source=grant_said,
+                       recipient=gid, message='Exact group presentation')
+        presentation, partial, proposal, presentation_deadline = grant_files.prepare_group(holder.vault, **options)
+        original_presentation = grant_files.inspect(partial)
+        with pytest.raises((ValueError, kering.KeriError)):
+            grant_files.export_prepared(holder.vault, presentation, **options)
+        contributed, _, second_proposal, _ = grant_files.contribute_group(holder_peer.vault, proposal, **options)
+        assert contributed == presentation
+        grant_files.contribute_group(holder.vault, second_proposal, **options)
+        complete, exported_deadline = grant_files.export_prepared(holder.vault, presentation, **options)
+        assert exported_deadline == presentation_deadline
+        complete_sender = grant_files.inspect(complete)
+        assert complete_sender.serder.raw == original_presentation.serder.raw
+        assert grant_files.nodes(complete_sender) == grant_files.nodes(original_presentation)
+        assert {siger.index for pre, _, _, sigers in complete_sender.tsgs
+                if pre.qb64 == hh.pre for siger in sigers} == {0, 1}
+        preparation_path = tmp_path / 'group-presentation.cesr'
+        preparation_path.write_bytes(complete)
+        endorsement = dict(issuer=gid, grant=presentation, sender=hh.pre, recipient=gid)
+        first_issuer = grant_files.endorse(issuer.vault, preparation_path.read_bytes(), **endorsement)
+        assert not grant_files.endorsement_complete(issuer.vault, first_issuer)
+        with pytest.raises((ValueError, kering.KeriError)):
+            grant_files.resume(holder.vault, first_issuer, grant=presentation, **options)
+        final_file = grant_files.endorse(peer.vault, preparation_path.read_bytes(),
+            contributions=(first_issuer,), **endorsement)
+        assert grant_files.endorsement_complete(peer.vault, final_file)
+        final_item = grant_files.inspect(final_file)
+        assert final_item.serder.raw == original_presentation.serder.raw
+        assert grant_files.nodes(final_item) == grant_files.nodes(original_presentation)
+        assert {siger.index for pre, _, _, sigers in final_item.tsgs
+                if pre.qb64 == gid for siger in sigers} == {0, 1}
+        endorsed_path = tmp_path / 'group-presentation-endorsed.cesr'
+        endorsed_path.write_bytes(final_file)
+        registered, registered_deadline = grant_files.resume(holder.vault, endorsed_path.read_bytes(),
+            grant=presentation, **options)
+        assert registered_deadline == presentation_deadline
+        assert grant_files.inspect(registered).serder.raw == original_presentation.serder.raw
+        cache = holder.hby.db.kramTMSC.get((hh.pre, presentation, presentation))
+        assert cache.rdt and cache.mdt == cache.xdt == original_presentation.serder.stamp
+        assert holder.hby.db.erpy.get((presentation,)) is None
+        assert (hh.pre, presentation) not in ho.operations
+        assert issuer.hby.db.exns.get((presentation,)) is None
+        for app, (admission, proof) in zip(holders, historical):
             assert app.vault.db.accepted.get((credential_said,)) == admission
             assert credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'] == proof
 

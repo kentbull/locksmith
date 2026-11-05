@@ -337,12 +337,32 @@ authorizes delivery, state-opening responses or Admit. Newer accepted registry
 evidence may leave the selected held proof retryably unknown; preparation never
 refreshes that proof or hydrates it from another admission.
 
+For a group discloser, preparation exports a v2 member-authenticated
+``/multisig/exn`` proposal. Each signer selects the same exact local admission,
+disclosure and verifier, chooses **Contribute to group proposal**, inspects the
+file and explicitly signs its unchanged Grant and proofs. Exported proposals
+carry the accumulated contributions. **Export prepared group Grant** requires
+the ordinary sender signature threshold; a partial proposal cannot substitute
+for a completed prepared Grant. No new live handler or operation ledger is used.
+
 The independent issuer chooses **Endorse presentation file…** in Activity,
 inspects the claimed discloser/verifier and every disclosed node, then explicitly
 endorses and exports the same Grant. Every selected registry-backed node must
-belong to that local individual issuer. Inspection authenticates nothing; native
+belong to that local issuer. A group issuer's first approval exports a partial
+signature contribution. Other issuer members inspect the original prepared Grant
+and add the contribution files using **Inspect issuer contribution…**, then
+explicitly sign and export. Only complete ordinary issuer threshold authorization
+is reported as endorsed. Contributions cannot change the body, nested proofs or
+original authentication, or combine signatures across establishment events.
+Inspection authenticates nothing; KERIpy
 verification is required before exporting added issuer authentication. The
 temporary selected-file allowance does not authorize third-party mailbox Grants.
+KERIpy determines when issuer endorsement is required: an original issuee can
+present its held node without an extra issuer signature, whereas a separate
+discloser needs the issuer's authorization. This dialog also supports explicitly
+requested additional endorsement. Resume verifies every supplied authentication
+factor before intake, so a partial issuer contribution cannot be silently
+discarded as optional evidence.
 
 Back in the discloser's dialog, choose **Resume prepared presentation**, select
 the existing local preparation and its original admission/options, inspect the
