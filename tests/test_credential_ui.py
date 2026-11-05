@@ -10,7 +10,7 @@ from PySide6.QtWidgets import QCheckBox, QFileDialog, QLabel, QWidget
 from hio.base import doing
 from keri import kering
 from keri.acdc import Registrar, Regery, acdcmap, ipexing as acdc_v2_ipexing
-from keri.app import habbing, notifying, organizing
+from keri.app import grouping, habbing, notifying, organizing
 from keri.core import Noncer, messagize, parsing, scheming, SerderACDC, SerderKERI
 from keri.peer import exchanging
 
@@ -125,6 +125,8 @@ def wallet(qapp, mailbox_routes):
             signals = DoerSignalBridge()
             exc = exchanging.Exchanger(hby=hby, handlers=[])
             hby.kvy.exc = exc
+            # Match the real vault: core multisig routes exist before Auxiliary composes them.
+            grouping.loadHandlers(exc=exc, mux=grouping.Multiplexor(hby=hby, notifier=notifier, rgy=rgy))
             for verb in ('apply', 'offer', 'agree', 'grant', 'admit', 'spurn'):
                 exc.addHandler(ipexing.IpexHandler(f'/ipex/{verb}', hby, notifier, rgy, signals=signals))
             queued = []
