@@ -100,7 +100,10 @@ terminal from the Locksmith repository:
 
 The launcher starts four witnesses, one watcher, Registrar and Observer, then
 kf-boot with those backends configured. Python is the default backend. To use
-TypeScript services from the local ``core/typescript/keri-ts`` checkout:
+TypeScript services from the local ``core/typescript/keri-ts`` checkout, first run
+``deno task setup`` there once to prepare its LMDB dependency. The launcher uses
+that installed dependency on subsequent restarts:
+
 
 .. code-block:: bash
 
@@ -138,6 +141,13 @@ and public CA certificates in the vault configuration. Normal registry requests
 use that account for service access and retain the original issuer or group
 signatures in the evidence. Reopening retains these settings; no global TLS
 trust change or manual wallet enrollment is needed.
+
+After rotating the provider account's signing keys, open **Local Development**
+and choose **Refresh credential service access**. This sends the account's
+current public KEL and renews the existing service permissions. It creates no
+new identity, witness allocation or rotation. Success clears prior registry
+readiness so the next request uses the renewed access; failure leaves the saved
+settings available for retry.
 
 Ctrl-C in the service terminal stops only the processes it launched and preserves
 their state for the next run.

@@ -189,21 +189,25 @@ class RegistryEvidenceDoer(doing.DoDoer):
         self._launch_cursor = None
         super().__init__(doers=[doing.doify(self.sync_do)], **kwa)
 
-    def _configure(self):
-        """Cancel old workers and clear acquisition telemetry when service configuration changes."""
+    def reset(self):
+        """Cancel work and discard readiness after explicit service access renewal."""
         config = (self.vault.hby.cf.get() or {}).get('registries', {})
-        endpoints = config.get('registrar'), config.get('observer')
+        self._service_config = deepcopy(config)
+        self.remove(list(self._active.values()))
+        self._active.clear()
+        self._fetched.clear()
+        self._published.clear()
+        self._retry.clear()
+        self._failures.clear()
+        self.errors.clear()
+        self._launch_cursor = None
+        self.registrar_url, self.observer_url = config.get('registrar'), config.get('observer')
+
+    def _configure(self):
+        """Cancel old workers and clear readiness when service configuration changes."""
+        config = (self.vault.hby.cf.get() or {}).get('registries', {})
         if config != self._service_config:
-            self._service_config = deepcopy(config)
-            self.remove(list(self._active.values()))
-            self._active.clear()
-            self._fetched.clear()
-            self._published.clear()
-            self._retry.clear()
-            self._failures.clear()
-            self.errors.clear()
-            self._launch_cursor = None
-            self.registrar_url, self.observer_url = endpoints
+            self.reset()
 
     def ensure(self, regk, hab):
         """Queue a registry check and return whether its observer evidence is verified."""

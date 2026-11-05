@@ -99,9 +99,9 @@ def tufa_identity(state, service, passcode, ts_repo):
 
 def bootstrap(state, config=None, *, backend='python', ts_repo=None):
     """Retain encrypted service identities; write only public bootstrap outputs."""
-    if backend == 'typescript' and config is not None:
-        raise ValueError('Explicit static wallet role files require the Python backend; TypeScript uses provider enrollment')
     roles, public = introductions(config)
+    if backend == 'typescript' and roles['publishers']:
+        raise ValueError('TypeScript publishers require provider enrollment; configure only static readers here')
     state = Path(state).resolve()
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
     marker = state / 'backend'
