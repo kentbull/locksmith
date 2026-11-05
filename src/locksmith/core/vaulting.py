@@ -359,7 +359,8 @@ class NotificationToastDoer(doing.Doer):
             return f"Key state update recieved for {signer_name} moving to sequence number {sn} at {dig}"
 
         # Check if this is an IPEX notification
-        if route.startswith('/exn/ipex'):
+        if (route.rsplit('/', 1)[0] in ('/exn/ipex', '/xip/ipex')
+                and route.rsplit('/', 1)[-1] in ('apply', 'offer', 'agree', 'grant', 'admit', 'spurn')):
             # Try to get IPEX-specific details
             attrs = note.attrs
             said = attrs.get('d', '')
