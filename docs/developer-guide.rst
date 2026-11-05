@@ -87,8 +87,8 @@ allocation through the account API remains unfinished.
 
 The local provider expects kf-boot at ``http://127.0.0.1:19723``. Its explicit
 ``KFSurfaceConfig`` selects ``/onboarding`` and ``/account``; discovery reads
-``/bootstrap/config``. To change this development endpoint, edit the local
-plugin's configuration rather than the Foundation provider's defaults.
+``/bootstrap/config``. Set ``LOCAL_PROVIDER_URL`` to select another local provider root URL;
+this leaves the Foundation provider settings unchanged.
 
 With ``witness-hk`` and ``watcher-hk`` checked out beside Locksmith under
 ``core/python`` and ``kf-boot`` under ``infra``, start the host services in one
@@ -98,13 +98,25 @@ terminal from the Locksmith repository:
 
    bash scripts/local-provider.sh
 
-The launcher installs each service's locked dependencies, writes its KERI JSON
-endpoint configuration, and starts four witnesses, one watcher service, and
-kf-boot. It refuses occupied ports. Set ``KERI_WORKSPACE`` if these repositories
-live under a different KERI workspace root. An optional first argument selects
-the service state directory; the default is
-``~/.local/share/locksmith-local-provider``. The launcher prints log locations
-and the isolated base used by service index databases in the normal KERI root.
+The launcher starts four witnesses, one watcher, Registrar and Observer, then
+kf-boot with those backends configured. Python is the default backend. To use
+TypeScript services from the local ``core/typescript/keri-ts`` checkout:
+
+.. code-block:: bash
+
+   LOCAL_PROVIDER_BACKEND=typescript bash scripts/local-provider.sh \
+     "$HOME/.local/share/locksmith-local-provider-ts"
+
+Use a separate state directory for each backend choice. Python dependencies use
+their locked installs; TypeScript services use the normal Tufa commands through
+Deno. Service identities and TLS certificates are retained across restarts.
+The launcher refuses occupied ports. Set ``KERI_WORKSPACE`` if repositories live
+under another KERI workspace root. The optional first argument selects service
+state; the default is ``~/.local/share/locksmith-local-provider``.
+
+To run a separate stack, set ``LOCAL_PROVIDER_PORT_OFFSET`` on the launcher and
+``LOCAL_PROVIDER_URL`` on Locksmith. For example, offset ``1000`` uses
+provider URL ``http://127.0.0.1:20723``. All service listeners move by that offset.
 
 kf-boot reads ``KF_BOOT_*`` environment settings and supplies JSON bootstrap
 discovery. Its existing ``Provisioner`` allocates resources through the witness
@@ -119,8 +131,16 @@ In another terminal, launch Locksmith normally:
 
 Create and open a fresh passcode-protected vault, select **Local Development**,
 connect to the boot service, choose a new account alias and the **3-of-4** witness
-profile, then review and start onboarding. Ctrl-C in the service terminal stops
-only the processes it launched and preserves their state for the next run.
+profile, then review and start onboarding. The Local Development plugin also
+activates Registrar publication and Observer query access for the permanent
+account. It verifies the provider reply before saving the service URLs, identities
+and public CA certificates in the vault configuration. Normal registry requests
+use that account for service access and retain the original issuer or group
+signatures in the evidence. Reopening retains these settings; no global TLS
+trust change or manual wallet enrollment is needed.
+
+Ctrl-C in the service terminal stops only the processes it launched and preserves
+their state for the next run.
 Keep the services running when reopening an onboarded wallet. When deleting a
 vault, the first request may queue remote cleanup; retry after cleanup finishes.
 The vault is retained until kf-boot confirms account deletion.

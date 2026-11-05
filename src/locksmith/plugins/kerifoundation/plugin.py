@@ -474,6 +474,7 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
             app=self._app, db=db, boot_client=boot_client,
             auth_namespace=self._page_key("onboarding"),
             auth_alias_prefix=f"{self.page_prefix}-onboarding",
+            activate_services=getattr(self, "activate_account_services", None),
         )
 
         def progress(**kwa):

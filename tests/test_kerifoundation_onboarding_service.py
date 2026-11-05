@@ -1395,109 +1395,34 @@ def test_rotate_account_to_allocated_witnesses_rotates_and_receipts(monkeypatch,
         service._db.close()
 
 
-def test_parse_cesr_http_reply_rejects_non_reply_messages(monkeypatch):
-    class FakeParser:
-        def __init__(self, *args, **kwa):
-            pass
+def test_parse_cesr_http_reply_rejects_non_reply_messages():
+    from keri.app import habbing
+    from requests import Response
 
-        def parse(self, ims):
-            return None
-
-    app = SimpleNamespace(
-        vault=SimpleNamespace(
-            hby=SimpleNamespace(
-                kvy=SimpleNamespace(processEscrows=lambda: None),
-                rvy=object(),
-                exc=object(),
-                kevers={"BOOT_SERVER_AID": object()},
-            )
-        )
-    )
-
-    fake_serder = SimpleNamespace(
-        pre="BOOT_SERVER_AID",
-        ked={
-            "t": "exn",
-            "r": "/account/witnesses",
-            "a": {"witnesses": []},
-        },
-        said="SAID_1",
-    )
-    response = SimpleNamespace(content=b"{}", headers={})
-
-    monkeypatch.setattr(
-        "locksmith.plugins.kerifoundation.onboarding.service.parsing.Parser",
-        FakeParser,
-    )
-    monkeypatch.setattr(
-        "locksmith.plugins.kerifoundation.onboarding.service.message_version",
-        lambda ims: kering.Vrsn_1_0,
-    )
-    monkeypatch.setattr(
-        "locksmith.plugins.kerifoundation.onboarding.service.split_cesr_stream",
-        lambda ims: [fake_serder],
-    )
-
-    with pytest.raises(KFBootError, match="expected rpy"):
-        parse_cesr_http_reply(
-            app,
-            response,
-            expected_kinds=("rpy",),
-            expected_route="/account/witnesses",
-        )
+    with habbing.openHby(name='boot-wrong-kind', temp=True, version=kering.Vrsn_2_0) as hby:
+        hab = hby.makeHab(name='service')
+        response = Response()
+        response._content = bytes(hab.msgOwnEvent(sn=0))
+        with pytest.raises(KFBootError, match='expected rpy'):
+            parse_cesr_http_reply(SimpleNamespace(vault=SimpleNamespace(hby=hby)), response,
+                                 expected_kinds=('rpy',))
 
 
-def test_parse_cesr_http_reply_rejects_sender_mismatch(monkeypatch):
-    class FakeParser:
-        def __init__(self, *args, **kwa):
-            pass
+def test_parse_cesr_http_reply_rejects_sender_mismatch():
+    from keri.app import habbing
+    from keri.core import exchange
+    from requests import Response
 
-        def parse(self, ims):
-            return None
-
-    app = SimpleNamespace(
-        vault=SimpleNamespace(
-            hby=SimpleNamespace(
-                kvy=SimpleNamespace(processEscrows=lambda: None),
-                rvy=object(),
-                exc=object(),
-                kevers={"BOOT_SERVER_AID": object(), "OTHER_BOOT_AID": object()},
-            )
-        )
-    )
-
-    fake_serder = SimpleNamespace(
-        pre="OTHER_BOOT_AID",
-        ked={
-            "t": "rpy",
-            "r": "/account/witnesses",
-            "a": {"witnesses": []},
-        },
-        said="SAID_2",
-    )
-    response = SimpleNamespace(content=b"{}", headers={})
-
-    monkeypatch.setattr(
-        "locksmith.plugins.kerifoundation.onboarding.service.parsing.Parser",
-        FakeParser,
-    )
-    monkeypatch.setattr(
-        "locksmith.plugins.kerifoundation.onboarding.service.message_version",
-        lambda ims: kering.Vrsn_1_0,
-    )
-    monkeypatch.setattr(
-        "locksmith.plugins.kerifoundation.onboarding.service.split_cesr_stream",
-        lambda ims: [fake_serder],
-    )
-
-    with pytest.raises(KFBootError, match="did not match expected boot service"):
-        parse_cesr_http_reply(
-            app,
-            response,
-            expected_kinds=("rpy",),
-            expected_route="/account/witnesses",
-            expected_sender="BOOT_SERVER_AID",
-        )
+    with habbing.openHby(name='boot-wrong-sender', temp=True, version=kering.Vrsn_2_0) as hby:
+        expected = hby.makeHab(name='expected')
+        other = hby.makeHab(name='other')
+        event = exchange(route='/account/witnesses', attributes={}, sender=other.pre,
+                         version=kering.Vrsn_2_0, pvrsn=kering.Vrsn_2_0, gvrsn=kering.Vrsn_2_0, kind=kering.Kinds.json)
+        response = Response()
+        response._content = bytes(other.endorse(event, last=False, gvrsn=kering.Vrsn_2_0))
+        with pytest.raises(KFBootError, match='did not match expected boot service'):
+            parse_cesr_http_reply(SimpleNamespace(vault=SimpleNamespace(hby=hby)), response,
+                                 expected_kinds=('exn',), expected_sender=expected.pre)
 
 
 def test_boot_client_syncs_canonical_account_keystate(monkeypatch):

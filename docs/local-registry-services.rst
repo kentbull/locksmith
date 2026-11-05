@@ -1,10 +1,18 @@
 Local registry services
 =======================
 
-Run these services after creating and onboarding the participating wallets through
-the normal Local Development provider. Keep ``scripts/local-provider.sh`` running
-in its own terminal. This launcher starts only Registrar and Observer; it does not
-allocate accounts, create wallet identifiers or change wallet state.
+Normal Local Development onboarding uses ``scripts/local-provider.sh``, which
+starts Registrar and Observer before kf-boot and activates wallet access through
+the provider. Select ``LOCAL_PROVIDER_BACKEND=python`` or ``typescript`` on that
+launcher. The wallet verifies and saves signed service settings, including the
+public CA, during onboarding. See :doc:`developer-guide` for that complete path.
+
+The standalone ``scripts/local-registries.sh STATE_DIR [CONFIG_JSON]`` command is
+for independently operated services. With no configuration file it starts with
+no wallet roles, ready for provider enrollment. With the Python backend, an explicit file grants the selected operator-managed
+publisher and reader roles described below. The TypeScript launcher requires
+provider enrollment and refuses an explicit participant file. Do not run
+it on ports already owned by the complete provider launcher.
 
 Export introductions
 --------------------
@@ -20,7 +28,7 @@ actual public introduction. Put the files beside a small configuration file:
    }
 
 Paths are relative to that JSON file. Publishers may submit registry evidence;
-readers may query Observer. Both arrays must be nonempty. Only explicitly selected
+readers may query Observer. Both arrays are required; either may be empty. Only explicitly selected
 identifiers receive those roles. The helper verifies signed public KEL support
 with the v2 KERI/ACDC processors and omits endpoint replies from service bootstrap.
 It refuses incomplete or invalid key evidence. Export fresh introductions after

@@ -134,7 +134,14 @@ class SettingsPage(QWidget):
                 self.registry_notice.setText('Use HTTPS, or HTTP with a local loopback address.')
                 return
         config = vault.hby.cf.get()
-        config['registries'] = values
+        current = config.get('registries', {})
+        capabilities = dict(current.get('capabilities', {}))
+        for kind, url in values.items():
+            if url != current.get(kind, ''):
+                capabilities.pop(kind, None)
+        config['registries'] = {**current, **values}
+        if 'capabilities' in current:
+            config['registries']['capabilities'] = capabilities
         vault.hby.cf.put(config)
         self.registry_notice.setText('Saved. Status checks use these services.')
 
