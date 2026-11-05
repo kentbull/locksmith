@@ -8,7 +8,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 import pytest
 from hio.base import doing
 from keri import kering
-from keri.app import habbing, organizing
+from keri.app import habbing, organizing, oobiing
 from keri.core import eventing
 
 from locksmith.core import remoting
@@ -636,3 +636,51 @@ def test_identifier_export_repairs_delivery_routes(tmp_path, monkeypatch, transf
         import_contact()
         assert target.db.ends.get(keys=keys).allowed is True
         ipexing._require_route(sender, hab.pre, reply=False)
+
+
+def test_resolve_oobi_retries_failed_url_for_known_identifier():
+    from http.server import BaseHTTPRequestHandler, HTTPServer
+    from keri.db import basing
+    from keri.help import helping
+
+    with habbing.openHby(name="retry-source", temp=True) as source, habbing.openHby(name="retry-target", temp=True) as target:
+        hab = source.makeHab(name="source")
+        target.psr.parse(ims=hab.replay())
+        assert hab.pre in target.kevers
+        requests = []
+        wire = bytes(hab.replay()) + bytes(hab.makeLocScheme(url="http://127.0.0.1:9999"))
+
+        class Introduction(BaseHTTPRequestHandler):
+            def do_GET(self):
+                requests.append(self.path)
+                self.send_response(200)
+                self.send_header("Content-Type", "application/json+cesr")
+                self.send_header("Oobi-Aid", hab.pre)
+                self.end_headers()
+                self.wfile.write(wire)
+
+            def log_message(self, *_):
+                pass
+
+        server = HTTPServer(("127.0.0.1", 0), Introduction)
+        thread = threading.Thread(target=server.serve_forever, daemon=True)
+        thread.start()
+        try:
+            url = f"http://127.0.0.1:{server.server_port}/oobi/{hab.pre}/controller"
+            target.db.roobi.pin(keys=(url,), val=basing.OobiRecord(date=helping.nowIso8601(), state=oobiing.Result.failed))
+            app = SimpleNamespace(vault=SimpleNamespace(hby=target, org=organizing.Organizer(hby=target)))
+            doer = remoting.ResolveOobiDoer(app=app, pre=hab.pre, oobi=url, alias="source")
+            resolver = oobiing.Oobiery(hby=target)
+            doing.Doist(tock=.03125, real=True, limit=2.0).do(doers=[doer, *resolver.doers])
+            assert requests == [f"/oobi/{hab.pre}/controller"]
+            assert doer.resolved
+            assert target.db.roobi.get(keys=(url,)).state == oobiing.Result.resolved
+            assert target.db.locs.get(keys=(hab.pre, "http")).url == "http://127.0.0.1:9999"
+            cached = remoting.ResolveOobiDoer(app=app, pre=hab.pre, oobi=url, alias="source")
+            doing.Doist(tock=.03125, real=False, limit=.1).do(doers=[cached])
+            assert cached.resolved
+            assert len(requests) == 1
+        finally:
+            server.shutdown()
+            server.server_close()
+            thread.join()
