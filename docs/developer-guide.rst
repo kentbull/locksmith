@@ -201,6 +201,18 @@ Member consent waits while the vault is open; closing the vault stops its local
 operation and does not undo already accepted protocol evidence. Reopening does
 not automatically restart an interrupted issuance.
 
+Group state updates
+~~~~~~~~~~~~~~~~~~~
+
+For a locally issued group credential, **Refresh state commitment** and
+**Revoke credential** propose an exact BUP and group KEL anchor. Other members
+approve that anchor through Activity's existing registry controls. Completion
+requires accepted registry evidence and the ordinary group/witness thresholds.
+Derived updates use the already retained group root; no fresh DH or root
+generation occurs. A retry reuses the saved TEL and anchor, and an already
+accepted exact update requires no new anchor. Earlier admissions retain their
+original credential proofs.
+
 Group derived issuance
 ~~~~~~~~~~~~~~~~~~~~~~
 

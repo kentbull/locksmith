@@ -306,7 +306,7 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
                 app.vault.counselor.processEscrows()
                 app.vault.rgy.processEscrows()
                 app.vault.auxiliary.process()
-            failures = [data for _, event, data in events if event == 'credential_issuance_failed']
+            failures = [data for _, event, data in events if event.endswith('_failed')]
             assert not failures, failures
         assert until(), events
 
@@ -518,6 +518,75 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         assert peer.vault.db.issued.get((credential_said,)) is None
         assert peer.vault.db.accepted.get((credential_said,)) is None
         for app, (admission, proof) in zip(holders, historical):
+            assert app.vault.db.accepted.get((credential_said,)) == admission
+            assert credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'] == proof
+
+        # Refresh stages one update, then an interrupted worker resumes the same TEL and anchor.
+        scheduler.exit()
+        refreshed = credentialing.RefreshCredentialDoer(issuer, credential_said, expected_update=bup.said)
+        scheduler = doing.Doist(doers=[refreshed], tock=.03125)
+        scheduler.enter()
+        advance(lambda: bool(issuer.vault.postman.evts))
+        deliver_member(issuer, peer)
+        proposed = grouping.pending_registry_proposals(peer.vault)[-1]
+        _, pending, _ = grouping.registry_proposal(peer.vault, proposed.said)
+        refresh_tel, refresh_anchor = [child.serder for child in pending]
+        assert refresh_tel.sad['p'] == bup.said and refresh_tel.sn == 2
+        retained_update = issuer.vault.db.issued.get((credential_said,))
+        retained_signatures = [siger.qb64 for siger in issuer.hby.db.sigs.get((gid, refresh_anchor.said))]
+        assert retained_update.update == refresh_tel.said
+        assert all(app.vault.rgy.store.seqEvent(rip.said, 2) is None for app in issuers)
+        assert not any(event == 'credential_refreshed' for _, event, _ in events)
+        scheduler.exit()
+        resumed = credentialing.RefreshCredentialDoer(issuer, credential_said,
+            expected_update=refresh_tel.said, resume=True)
+        scheduler = doing.Doist(doers=[resumed], tock=.03125)
+        scheduler.enter()
+        advance(lambda: bool(issuer.vault.postman.evts))
+        retry = issuer.vault.postman.evts[0]
+        repeated = Parser(version=kering.Vrsn_2_0).parseOneBare(
+            ims=bytearray(retry['serder'].raw + retry['attachment']), processive=False)
+        assert [child.serder.raw for child in repeated.nests] == [refresh_tel.raw, refresh_anchor.raw]
+        assert issuer.vault.db.issued.get((credential_said,)) == retained_update
+        assert [siger.qb64 for siger in issuer.hby.db.sigs.get((gid, refresh_anchor.said))] == retained_signatures
+        seal = dict(i=rip.said, s=refresh_tel.sad['n'], d=refresh_tel.said)
+        assert [event.said for _, event in issuer.hby.db.evts.getTopItemIter(keys=(gid,))
+                if seal in event.seals] == [refresh_anchor.said]
+        assert not any(event == 'credential_refreshed' for _, event, _ in events)
+        deliver_member(issuer, peer)
+        proposed = [proposal for proposal in grouping.pending_registry_proposals(peer.vault)
+                    if proposal.sad['a']['tel'] == refresh_tel.said][-1]
+        grouping.approve_registry_proposal(peer.vault, proposed.said, groups[1].kever.serder.said)
+        deliver_member(peer, issuer)
+        advance(lambda: resumed.done)
+        assert any(event == 'credential_refreshed' for _, event, _ in events)
+        assert all(app.vault.rgy.store.seqEvent(rip.said, 2).raw == refresh_tel.raw for app in issuers)
+        for app, (admission, proof) in zip(holders, historical):
+            _deliver_ipex(app.vault, evidence.clone(issuer.vault, rip.said))
+            assert app.vault.db.accepted.get((credential_said,)) == admission
+            assert credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'] == proof
+
+        # Revocation is another exact BUP and needs a separate peer approval.
+        scheduler.exit()
+        revoked = credentialing.RevokeCredentialDoer(issuer, credential_said)
+        scheduler = doing.Doist(doers=[revoked], tock=.03125)
+        scheduler.enter()
+        advance(lambda: bool(issuer.vault.postman.evts))
+        deliver_member(issuer, peer)
+        proposed = grouping.pending_registry_proposals(peer.vault)[-1]
+        _, pending, _ = grouping.registry_proposal(peer.vault, proposed.said)
+        revoke_tel = pending[0].serder
+        assert revoke_tel.sad['p'] == refresh_tel.said and revoke_tel.sn == 3
+        assert all(app.vault.rgy.store.seqEvent(rip.said, 3) is None for app in issuers)
+        assert not any(event == 'credential_revoked' for _, event, _ in events)
+        grouping.approve_registry_proposal(peer.vault, proposed.said, groups[1].kever.serder.said)
+        deliver_member(peer, issuer)
+        advance(lambda: revoked.done)
+        assert any(event == 'credential_revoked' for _, event, _ in events)
+        assert credentialing.credential(issuer.vault, credential_said)['status']['et'] == 'revoked'
+        assert all(app.vault.rgy.store.seqEvent(rip.said, 3).raw == revoke_tel.raw for app in issuers)
+        for app, (admission, proof) in zip(holders, historical):
+            _deliver_ipex(app.vault, evidence.clone(issuer.vault, rip.said))
             assert app.vault.db.accepted.get((credential_said,)) == admission
             assert credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'] == proof
     finally:

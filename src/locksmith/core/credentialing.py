@@ -412,20 +412,51 @@ class CredentialUpdateDoer(doing.DoDoer):
             raise kering.ValidationError('Registry anchor is still pending')
 
     def group_anchor(self, registry, event, auths):
-        """Propose one exact TEL anchor; ordinary group approval owns completion."""
+        """Propose or resume one exact TEL/anchor; ordinary group approval owns completion."""
         hab = registry.hab
-        seal = dict(i=registry.regk, s=event.sad['n'], d=event.said)
-        kwa = {}
-        if hab.kever.estOnly:
-            verfers, digers = self.vault.hby.extractMerfersMigers(hab.smids, hab.rmids)
-            kwa = dict(verfers=verfers, digers=digers)
-        author = hab.rotate if hab.kever.estOnly else hab.interact
-        signed = author(data=[seal], version=kering.Vrsn_2_0, gvrsn=kering.Vrsn_2_0, **kwa)
-        anchor = SerderKERI(raw=signed)
-        tel = messagize(event, bonds=[SealSource(s=anchor.snh, d=anchor.said)], gvrsn=kering.Vrsn_2_0)
-        build = grouping.multisigRipExn if event.ilk == 'rip' else grouping.multisigBupExn
-        options = {} if event.ilk == 'rip' else dict(rgy=self.vault.rgy)
-        proposal, attachments = build(hab, tel, signed, **options)
+        accepted = self.vault.rgy.store.seqEvent(registry.regk, event.sn)
+        if accepted is not None:
+            if accepted.raw != event.raw:
+                raise kering.ValidationError('The registry ordinal already contains another event')
+            regeventing.vetAnchor(accepted, db=self.vault.hby.db, issuer=hab.pre)
+            return
+        saved = {}
+        for _, wrapper in self.vault.hby.db.exns.getTopItemIter():
+            if (wrapper.route != f'/multisig/{event.ilk}' or wrapper.pvrsn != kering.Vrsn_2_0
+                    or wrapper.pre != hab.mhab.pre or wrapper.sad['a'].get('gid') != hab.pre
+                    or wrapper.sad['a'].get('tel') != event.said):
+                continue
+            proposal, _ = exchanging.cloneMessage(self.vault.hby, wrapper.said)
+            children = exchanging.loadParsedNestedSubstreams(self.vault.hby, wrapper.said)
+            self.vault.mux.validate(proposal, nests=children)
+            if children[0].serder.raw != event.raw:
+                raise kering.ValidationError('The saved proposal differs from the selected registry event')
+            anchor = children[1].serder
+            saved[anchor.said] = (proposal, anchor)
+        if len(saved) > 1:
+            raise kering.ValidationError('Conflicting saved anchors exist for this registry event')
+        if saved:
+            proposal, anchor = next(iter(saved.values()))
+            existing = hab.db.kels.getLast(keys=hab.pre, on=anchor.sn)
+            if (existing is not None and existing != anchor.said
+                    or existing is None and (anchor.sn != hab.kever.sn + 1
+                                             or anchor.sad['p'] != hab.kever.serder.said)):
+                raise kering.ValidationError('The saved registry anchor conflicts with the current group history')
+            wire = exchanging.serializeMessage(self.vault.hby, proposal.said)
+            attachments = wire[proposal.size:]
+        else:
+            seal = dict(i=registry.regk, s=event.sad['n'], d=event.said)
+            kwa = {}
+            if hab.kever.estOnly:
+                verfers, digers = self.vault.hby.extractMerfersMigers(hab.smids, hab.rmids)
+                kwa = dict(verfers=verfers, digers=digers)
+            author = hab.rotate if hab.kever.estOnly else hab.interact
+            signed = author(data=[seal], version=kering.Vrsn_2_0, gvrsn=kering.Vrsn_2_0, **kwa)
+            anchor = SerderKERI(raw=signed)
+            tel = messagize(event, bonds=[SealSource(s=anchor.snh, d=anchor.said)], gvrsn=kering.Vrsn_2_0)
+            build = grouping.multisigRipExn if event.ilk == 'rip' else grouping.multisigBupExn
+            options = {} if event.ilk == 'rip' else dict(rgy=self.vault.rgy)
+            proposal, attachments = build(hab, tel, signed, **options)
         self.vault.mbx.parser.parse(ims=bytearray(proposal.raw + attachments), local=True)
         prefixer, number, diger = Prefixer(qb64=hab.pre), Number(num=anchor.sn), Diger(qb64=anchor.said)
         self.vault.counselor.start(hab, prefixer, number, diger, auths=auths)
@@ -664,8 +695,10 @@ def refresh_context(vault, said):
     acdc = SerderACDC(raw=record.raw.encode())
     hab = vault.hby.habByPre(acdc.israid)
     registry = vault.rgy.regs.get(acdc.regid)
-    if acdc.said != said or hab is None or isinstance(hab, GroupHab) or registry is None:
-        raise ValueError('Refresh requires an individual local issuer and registry')
+    if (acdc.said != said or hab is None or not hab.accepted or registry is None
+            or isinstance(hab, GroupHab) and (hab.mhab is None or
+                hab.mhab.kever.fetchLatestContribTo(verfers=hab.kever.verfers) is None)):
+        raise ValueError('Refresh requires an accepted local issuer signer and managed registry')
     update = vault.rgy.store.event(record.update)
     opening = disclosing.opening(record.blinder)
     if (update is None or update.ilk != 'bup' or update.sad['rd'] != acdc.regid
@@ -715,6 +748,8 @@ class RefreshCredentialDoer(CredentialUpdateDoer):
                 raise kering.ValidationError('The selected state commitment changed; review it again')
             auths = {wit: f'{code}#{helping.nowIso8601()}'
                      for wit, code in (entry.split(':', 1) for entry in self.codes)}
+            if set(auths) - set(context['hab'].kever.wits):
+                raise ValueError('Authorization names a witness outside the issuer witness set')
             if not self.resume:
                 if context['resume']:
                     raise kering.ValidationError('Resume the saved state update before creating another')
@@ -783,11 +818,16 @@ class RevokeCredentialDoer(CredentialUpdateDoer):
                 raise ValueError('This credential was not issued by this wallet')
             acdc = SerderACDC(raw=record.raw.encode())
             hab = self.vault.hby.habByPre(acdc.israid)
-            if hab is None or isinstance(hab, GroupHab):
-                raise ValueError('Revocation requires the individual local issuer')
+            if (hab is None or not hab.accepted or isinstance(hab, GroupHab) and
+                    (hab.mhab is None or hab.mhab.kever.fetchLatestContribTo(verfers=hab.kever.verfers) is None)):
+                raise ValueError('Revocation requires an accepted local issuer signer')
             registry = self.vault.rgy.regs.get(acdc.regid)
             if registry is None:
                 raise ValueError('This credential has no local revocable registry')
+            auths = {wit: f'{code}#{helping.nowIso8601()}'
+                     for wit, code in (entry.split(':', 1) for entry in self.codes)}
+            if set(auths) - set(hab.kever.wits):
+                raise ValueError('Authorization names a witness outside the issuer witness set')
             blinder = disclosing.opening(record.blinder) if record.blinder else None
             revoked = blinder is not None and blinder.state == 'revoked'
             if revoked:
@@ -805,10 +845,6 @@ class RevokeCredentialDoer(CredentialUpdateDoer):
                 record.stream = stream.decode()
                 # Keep the new private proof before any asynchronous receipt work.
                 self.vault.db.issued.pin(keys=(acdc.said,), val=record)
-            auths = {}
-            for entry in self.codes:
-                wit, code = entry.split(':', 1)
-                auths[wit] = f'{code}#{helping.nowIso8601()}'
             receiptor = LocksmithReceiptor(hby=self.vault.hby)
             self.extend([receiptor])
             yield from self.anchor(registry, update, receiptor, auths)

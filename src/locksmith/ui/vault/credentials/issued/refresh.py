@@ -1,6 +1,7 @@
 """Explicit issuer consent to refresh or resume one registry commitment."""
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QHBoxLayout, QLabel
+from keri.app.habbing import GroupHab
 
 from locksmith.core import credentialing
 from locksmith.ui.toolkit.widgets import LocksmithDialog, LocksmithButton, LocksmithInvertedButton
@@ -15,6 +16,7 @@ class RefreshCredentialDialog(LocksmithDialog):
         self.app, self.vault, self.credential_said = app, app.vault, credential_said
         self._closed, self._refresh_id = False, None
         self._resume, self._expected_update = False, ''
+        self._group = False
         content, error = QWidget(), ''
         layout = QVBoxLayout(content)
         notice = QLabel(f'Refresh {credential_schema}? Creates a new commitment to its current issued state. '
@@ -32,6 +34,10 @@ class RefreshCredentialDialog(LocksmithDialog):
             self.bound_event.setVisible(context['record'].registry_mode != 'public')
             self.bound_event.setEnabled(not self._resume)
             hab = context['hab']
+            self._group = isinstance(hab, GroupHab)
+            if self._group:
+                notice.setText(notice.text() + ' Other members approve the exact group registry anchor '
+                    'in Activity before the update completes. Retrying preserves that proposal.')
             if hab.kever.wits:
                 self.auth_panel = WitnessAuthenticationPanel(app, hab, list(hab.kever.wits))
                 layout.addWidget(self.auth_panel)
@@ -70,7 +76,7 @@ class RefreshCredentialDialog(LocksmithDialog):
             bound_event=self.bound_event.text().strip() or None)
         self._refresh_id = worker.refresh_id
         self.refresh_button.setEnabled(False)
-        self.refresh_button.setText('Updating state commitment…')
+        self.refresh_button.setText('Waiting for group approval…' if self._group else 'Updating state commitment…')
         self.vault.extend([worker])
 
     def _on_event(self, name, event, data):
