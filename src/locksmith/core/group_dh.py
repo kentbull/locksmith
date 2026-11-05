@@ -83,9 +83,6 @@ class GroupIssuers:
                 or any(value for name, value in vars(node).items() if name not in ('serder', 'local'))
                 or set(grant.sad['a']) != {'m', 'o'} or grant.sad['a']['o'] != [body.said]):
             raise kering.ValidationError('Grant requires this group issuer and exact proofless credential')
-        recipient = self.vault.hby.habByPre(grant.sad['ri'])
-        if isinstance(recipient, GroupHab):
-            raise kering.ValidationError('Group holder agreement requires its separate approval adapter')
         key = (hab.pre, grant.said)
         if key in self.proposals:
             proposal = self.proposals[key]

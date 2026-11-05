@@ -256,27 +256,37 @@ def test_issuance_worker_finishes_dh_and_cancellation_drops_live_authority(ipex_
 
 
 def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ipex_vaults):
-    """Two real issuer members approve one Grant/query; only the elected member derives."""
-    issuer, peer, holder = [ipex_vaults(name, bran='0123456789abcdefghijk')
-                            for name in ('group-dh-lead', 'group-dh-peer', 'group-dh-holder')]
+    """Independent issuer and holder groups approve setup, then separately accept."""
+    issuer, peer, holder, holder_peer = [ipex_vaults(name, bran='0123456789abcdefghijk')
+        for name in ('group-dh-lead', 'group-dh-peer', 'group-dh-holder', 'group-dh-holder-peer')]
     issuers = (issuer, peer)
-    members = [app.hby.makeHab(f'member-{index}') for index, app in enumerate(issuers)]
-    hh = holder.hby.makeHab('holder', icount=2, isith='2', ncount=2, nsith='2')
-    for app in issuers:
-        for member in members:
-            _deliver_ipex(app.vault, member.replay(gvrsn=kering.Vrsn_2_0))
-        _deliver_ipex(app.vault, hh.replay(gvrsn=kering.Vrsn_2_0))
-    groups = [app.hby.makeGroupHab(group='issuer', mhab=member, smids=[m.pre for m in members],
-                                   isith='2', nsith='2', version=kering.Vrsn_2_0)
-              for app, member in zip(issuers, members)]
-    partials = [group.msgOwnInception(allowPartiallySigned=True, gvrsn=kering.Vrsn_2_0) for group in groups]
-    for app in issuers:
-        for raw in partials:
-            app.vault.mbx.parser.parse(ims=bytearray(raw), local=True)
-        app.hby.kvy.processEscrows()
-        assert app.hby.habByName('issuer').kever.tholder.num == 2
+    holders = (holder, holder_peer)
+    apps = (*issuers, *holders)
+
+    def make_group(parties, alias):
+        members = [app.hby.makeHab(f'{alias}-member-{index}') for index, app in enumerate(parties)]
+        for app in apps:
+            for member in members:
+                _deliver_ipex(app.vault, member.replay(gvrsn=kering.Vrsn_2_0))
+        groups = [app.hby.makeGroupHab(group=alias, mhab=member, smids=[m.pre for m in members],
+                                       isith='2', nsith='2', version=kering.Vrsn_2_0)
+                  for app, member in zip(parties, members)]
+        partials = [group.msgOwnInception(allowPartiallySigned=True, gvrsn=kering.Vrsn_2_0) for group in groups]
+        for app in parties:
+            for raw in partials:
+                app.vault.mbx.parser.parse(ims=bytearray(raw), local=True)
+            app.hby.kvy.processEscrows()
+            assert app.hby.habByName(alias).kever.tholder.num == 2
+        for app in apps:
+            if app not in parties:
+                _deliver_ipex(app.vault, groups[0].replay(gvrsn=kering.Vrsn_2_0))
+        return members, groups
+
+    members, groups = make_group(issuers, 'issuer')
+    holder_members, holder_groups = make_group(holders, 'holder')
+    hh, hph = holder_groups
     schema = _load_schema(issuer, groups[0])
-    for app in (peer, holder):
+    for app in (peer, *holders):
         app.hby.db.schema.pin((schema.said,), schema)
     events = []
     issuer.vault.signals.doer_event.connect(lambda *args: events.append(args))
@@ -284,14 +294,14 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         {'LEI': '254900OPPU84GM83MG36'}, registry_mode='derived')
     scheduler = doing.Doist(doers=[worker], tock=.03125)
     scheduler.enter()
-    io, po, ho = [app.vault.auxiliary for app in (issuer, peer, holder)]
+    io, po, ho, hpo = [app.vault.auxiliary for app in apps]
 
     def advance(until):
         for _ in range(100):
             if until():
                 return
             scheduler.recur()
-            for app in (issuer, peer, holder):
+            for app in apps:
                 app.vault.mux.kvy.processEscrows()
                 app.vault.counselor.processEscrows()
                 app.vault.rgy.processEscrows()
@@ -326,8 +336,9 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         deliver_member(peer, issuer)
         advance(lambda: bool(io.operations))
         assert groups[0].witnesser(sn=children[1].serder.sn, dig=children[1].serder.said)
-        _deliver_ipex(holder.vault, groups[0].replay(gvrsn=kering.Vrsn_2_0))
-        _deliver_ipex(holder.vault, evidence.clone(issuer.vault, rip.said))
+        for app in holders:
+            _deliver_ipex(app.vault, groups[0].replay(gvrsn=kering.Vrsn_2_0))
+            _deliver_ipex(app.vault, evidence.clone(issuer.vault, rip.said))
         operation, = io.operations.values()
         message = operation.grant
         gid, grant_said = groups[0].pre, message.said
@@ -361,7 +372,26 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         advance(lambda: any(topic == 'reply' for _, _, _, topic in io.outgoing))
         deliver_aux(issuer, holder, 'reply')
         assert ho.status(hh.pre, grant_said)['phase'] == 'approval_required'
-        ho.approve_dh(hh, grant_said)
+        ho.approve_dh(hh, grant_said, proposal=grant_said)
+        assert not any(destination == gid and topic == 'reply'
+                       for _, destination, _, topic in ho.outgoing)
+        deliver_aux(holder, holder_peer, 'credential')
+        peer_deadline = holder_peer.hby.db.epsd.get((grant_said,)).dts
+        deliver_aux(holder, holder_peer, 'reply')
+        deliver_aux(holder, holder_peer, 'multisig')
+        hpo.process()
+        selected = hpo.status(hph.pre, grant_said)
+        assert selected['role'] == 'holder' and selected['actions'] == ('approve_dh',)
+        assert selected['custodian'] == holder_members[0].pre
+        assert not hpo.outgoing
+        assert all(app.vault.db.receipts.get((hh.pre, grant_said)) is None for app in holders)
+        # One setup decision per holder automatically contributes the exact custodian reply.
+        hpo.approve_dh(hph, grant_said, proposal=grant_said)
+        assert not any(destination == gid and topic == 'reply'
+                       for _, destination, _, topic in ho.outgoing)
+        deliver_aux(holder_peer, holder, 'multisig')
+        advance(lambda: any(destination == gid and topic == 'reply'
+                            for _, destination, _, topic in ho.outgoing))
         deliver_aux(holder, issuer, 'reply')
 
         # Successful DH retains custody only at the elected issuer and holder; BUP remains unaccepted.
@@ -369,6 +399,7 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         root = issuer.hby.mgr.getRegistryRoot(gid, rip.said)
         assert root is not None and root.qb64 == holder.hby.mgr.getRegistryRoot(hh.pre, rip.said).qb64
         assert peer.hby.mgr.getRegistryRoot(gid, rip.said) is None
+        assert holder_peer.hby.mgr.getRegistryRoot(hph.pre, rip.said) is None
         assert all(root.qb64b not in wire for wire in wires)
         assert not issuer.vault.exc.complete(grant_said) and not holder.vault.exc.complete(grant_said)
         assert not worker.done and not any(event == 'credential_issued' for _, event, _ in events)
@@ -380,6 +411,7 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         assert all(app.vault.rgy.store.seqEvent(rip.said, 1) is None for app in issuers)
         assert operation.grant.raw == original and io.status(gid, grant_said)['deadline'] == deadline
         assert holder.hby.db.epsd.get((grant_said,)).dts == holder_deadline
+        assert holder_peer.hby.db.epsd.get((grant_said,)).dts == peer_deadline
         grouping.approve_registry_proposal(peer.vault, bup_proposal.said, groups[1].kever.serder.said)
         deliver_member(peer, issuer)
         advance(lambda: worker.done)
@@ -387,14 +419,36 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         assert io.status(gid, grant_said)['phase'] == 'verified'
         assert all(app.vault.rgy.store.seqEvent(rip.said, 1).raw == bup.raw for app in issuers)
         deliver_aux(issuer, holder, 'credential')
-        _deliver_ipex(holder.vault, evidence.clone(issuer.vault, rip.said))
+        for app in holders:
+            _deliver_ipex(app.vault, evidence.clone(issuer.vault, rip.said))
         ho.process()
         assert ho.status(hh.pre, grant_said)['phase'] == 'verified'
-        assert holder.hby.db.exns.get((grant_said,)).raw == original
-        assert holder.hby.db.epsd.get((grant_said,)).dts == holder_deadline
+        assert not holder_peer.vault.exc.complete(grant_said)
+        # Public proof verifies the nonlead's exact Grant without copying either registry root.
+        deliver_aux(holder, holder_peer, 'multisig')
+        hpo.process()
+        assert hpo.status(hph.pre, grant_said)['phase'] == 'verified'
+        for app, cutoff in zip(holders, (holder_deadline, peer_deadline)):
+            assert app.hby.db.exns.get((grant_said,)).raw == original
+            assert app.hby.db.epsd.get((grant_said,)).dts == cutoff
+            assert app.vault.db.accepted.get((message.sad['a']['o'][0],)) is None
+            assert app.vault.db.receipts.get((hh.pre, grant_said)) is None
         assert peer.hby.mgr.getRegistryRoot(gid, rip.said) is None
-        assert holder.vault.db.accepted.get((message.sad['a']['o'][0],)) is None
-        ipexing.admit(holder.vault, hh, grant_said)
-        assert holder.vault.db.accepted.get((message.sad['a']['o'][0],)).grant == grant_said
+        assert holder_peer.hby.mgr.getRegistryRoot(hph.pre, rip.said) is None
+        assert all(root.qb64b not in wire for wire in wires)
+        # Acceptance is a later group decision; one signature adds neither holder's inventory.
+        admitted, _ = ipexing.admit(holder.vault, hh, grant_said)
+        assert holder.vault.db.receipts.get((hh.pre, grant_said)).status == 'preparing'
+        assert all(app.vault.db.accepted.get((message.sad['a']['o'][0],)) is None for app in holders)
+        deliver_member(holder, holder_peer)
+        proposed = ipexing.group_admit_proposal(holder_peer.vault, hph, grant_said)
+        assert proposed.raw == admitted.raw
+        contributed, _ = ipexing.admit(holder_peer.vault, hph, grant_said, proposal=proposed.said)
+        assert contributed.raw == admitted.raw
+        deliver_member(holder_peer, holder)
+        advance(lambda: all(app.vault.db.accepted.get((message.sad['a']['o'][0],)) is not None for app in holders))
+        for app in holders:
+            accepted = app.vault.db.accepted.get((message.sad['a']['o'][0],))
+            assert accepted.grant == grant_said and accepted.admit == admitted.said
     finally:
         scheduler.exit()

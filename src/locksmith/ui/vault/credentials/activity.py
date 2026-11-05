@@ -562,6 +562,9 @@ class CredentialActivityPage(BaseListPage):
         local = tip.pre == row['sender' if row['_key'][1] == 0 else 'recipient']
         record = row['submissions'].get(tip.said)
         if row['_interrupted']:
+            if any(receipt.status == 'preparing' and receipt.admit
+                   and not self.vault.exc.complete(receipt.admit) for _, receipt in row['receipts']):
+                return 'Waiting for group approval before accepting.'
             if any(receipt.status == 'preparing' for _, receipt in row['receipts']):
                 return 'Waiting for witness receipts before accepting.'
             return 'Acceptance needs to be resumed.'

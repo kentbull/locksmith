@@ -11,6 +11,7 @@ from hio.core.http import httping
 from keri import help, kering
 from keri.acdc import acdcmap, ipexing, chaining, regeventing
 from keri.app import agenting, forwarding
+from keri.app.habbing import GroupHab
 from keri.core.kraming import AuthTypes
 from keri.core import Compactor, Prefixer, Saider, SealSource, SerderACDC, SerderKERI, messagize, parsing
 from keri.help import helping
@@ -856,6 +857,14 @@ def _finish_receipt(vault, pre, grant_said, receipt, restore=False):
     grant = vault.hby.db.exns.get((grant_said,))
     reply = vault.hby.db.erpy.get((grant_said,))
     exn = vault.hby.db.exns.get((reply.qb64,)) if reply else None
+    hab = vault.hby.habByPre(pre)
+    if exn is None and isinstance(hab, GroupHab) and receipt.admit:
+        if grant is None or grant.route != '/ipex/grant' or grant.sad['ri'] != pre:
+            raise kering.ValidationError('Group acceptance has no verified addressed Grant')
+        if error := expiry_error(vault, grant):
+            raise kering.ValidationError(error)
+        from locksmith.core.group_holding import pending_admit
+        return pending_admit(vault, hab, grant_said, receipt)
     if (grant is None or grant.route != '/ipex/grant' or grant.sad['ri'] != pre
             or exn is None or exn.route != '/ipex/admit' or exn.pre != pre
             or exn.sad['ri'] != grant.pre or exn.sad.get('p', '') != grant_said
@@ -869,7 +878,7 @@ def _finish_receipt(vault, pre, grant_said, receipt, restore=False):
     # cannot create a new disclosure or substitute a later Grant's selected view.
     exchanging.verify(vault.hby, exn)
     receipt.admit = exn.said
-    if receipt.send:
+    if receipt.send and (not isinstance(hab, GroupHab) or vault.exc.lead(hab, exn.said)):
         vault.db.outbox.put((exn.said,), IpexSubmission())
     if receipt.status != 'accepted' and _pending_anchors(vault, exn):
         receipt.status, receipt.error = 'preparing', ''
@@ -886,7 +895,14 @@ def _finish_receipt(vault, pre, grant_said, receipt, restore=False):
     return exn, stream[exn.size:]
 
 
-def admit(vault, hab, grant_said, message='', *, send=False):
+def group_admit_proposal(vault, hab, grant_said):
+    """Read the exact retained group acknowledgment without creating consent."""
+    _require_vault(vault, hab)
+    from locksmith.core.group_holding import admit_proposal
+    return admit_proposal(vault, hab, grant_said)
+
+
+def admit(vault, hab, grant_said, message='', *, send=False, proposal=None):
     """Record consent, retain one admit and optionally authorize its delivery."""
     _require_vault(vault, hab)
     grant = vault.hby.db.exns.get((grant_said,))
@@ -894,6 +910,9 @@ def admit(vault, hab, grant_said, message='', *, send=False):
         raise kering.ValidationError('Grant is not addressed to the selected identifier')
     if send:
         _require_route(hab, grant.pre, reply=False)
+    if isinstance(hab, GroupHab):
+        from locksmith.core.group_holding import contribute_admit
+        return contribute_admit(vault, hab, grant, message, send, proposal)
     reply = vault.hby.db.erpy.get((grant_said,))
     if reply:
         saved = vault.hby.db.exns.get((reply.qb64,))
@@ -963,8 +982,13 @@ class IpexOutboxDoer(doing.DoDoer):
                     yield self.tock
             with closing(self.vault.db.receipts.getTopItemIter()) as receipts:
                 while batch := list(islice(receipts, self.ScanBatch)):
-                    pending.extend(receipt.admit for _, receipt in batch
-                                   if receipt.status == 'preparing' and receipt.admit)
+                    for keys, receipt in batch:
+                        if receipt.status != 'preparing' or not receipt.admit:
+                            continue
+                        if (isinstance(self.vault.hby.habByPre(keys[0]), GroupHab)
+                                and self.vault.hby.db.exns.get((receipt.admit,)) is None):
+                            continue  # The live holder owner reconciles retained partials.
+                        pending.append(receipt.admit)
                     yield self.tock
             for said in dict.fromkeys(pending):
                 if getattr(self.vault, 'closed', False):
@@ -1022,6 +1046,8 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
             self.hab = self.vault.hby.habByPre(self.serder.pre)
             if self.hab is None:
                 raise kering.ValidationError('Saved submission has no local sender')
+            if isinstance(self.hab, GroupHab) and not self.vault.exc.lead(self.hab, self.said):
+                return
             _require_delivery_time(self.vault, self.serder)
             if self.serder.route == '/ipex/grant' and self.serder.sad['a'].get('o'):
                 _validate_outgoing_grant(self.vault, self.hab, self.serder)
@@ -1064,8 +1090,9 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
             self.vault.db.outbox.pin((self.said,), record)
             stream = exchanging.serializeMessage(self.vault.hby, self.said)
             self.vault.signals.emit_doer_event('Ipex', 'sending', {'said': self.said})
-            poster = forwarding.StreamPoster(hby=self.vault.hby, hab=self.hab,
-                                              recp=self.serder.sad['ri'], topic='credential')
+            sender = self.hab.mhab if isinstance(self.hab, GroupHab) else self.hab
+            poster = forwarding.StreamPoster(hby=self.vault.hby, hab=sender,
+                recp=self.serder.sad['ri'], topic='credential', version=kering.Vrsn_2_0)
             prefixes = [self.hab.pre]
             registry_issuers = {}
             if self.serder.route == '/ipex/grant':
