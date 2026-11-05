@@ -684,9 +684,11 @@ def ipex_mailbox(monkeypatch):
                 item, = parsing.Parser(version=kering.Vrsn_2_0).parse(
                     ims=bytearray(message), processive=False)
                 carried.append(item.serder)
+                if item.serder.ilk in ('rip', 'bup'):
+                    assert item.sscs and not item.bsqs and not item.bsss
                 _deliver_ipex(receiver.vault, message)
             assert carried[-1].raw == exn.raw
-            assert all(item.ilk in ('icp', 'rot', 'ixn', 'dip', 'drt')
+            assert all(item.ilk in ('icp', 'rot', 'ixn', 'dip', 'drt', 'rip', 'bup')
                        for item in carried[:-1])
             return carried
 
@@ -733,20 +735,12 @@ def test_ipex_sessions_five_messages_retry_reopen_and_prune(
     grant = send(issuer, holder, ih, ipexing.grant(
         ih, hh.pre, 'Grant', proofed, agree=agree, ax=[anchored]))
     assert holder.hby.kevers[ih.pre].sn == ih.kever.sn
-    assert _ipex_status(holder.vault, grant.said) == 'pending_verification'
-    assert holder.hby.db.exns.get((grant.said,)) is None
-    assert holder.vault.notifier.getNoteCnt() == 1  # offer only
+    assert _ipex_status(holder.vault, grant.said) == 'protocol_verified'
+    assert holder.hby.db.exns.get((grant.said,)).raw == grant.raw
+    assert holder.vault.rgy.store.seqEvent(reg.regk, 0).said == rip.said
+    assert holder.vault.rgy.store.seqEvent(reg.regk, 1).said == issued.said
     _retry_ipex(holder.vault)
-    assert _ipex_status(holder.vault, grant.said) == 'pending_verification'
-    # With the service worker intentionally absent, proof cues remain available
-    # for its consumer instead of being discarded by the mailbox loop.
-    assert {'kin': 'proof', 'said': grant.said} in holder.vault.exc.cues
     assert not holder.vault.kramer.cues
-
-    # Prepared component evidence deliberately arrives after the grant.
-    holder.vault.rgy.store.accept(reg.regk, 0, rip)
-    holder.vault.rgy.store.accept(reg.regk, 1, issued)
-    _retry_ipex(holder.vault)
     assert _ipex_status(holder.vault, grant.said) == 'protocol_verified'
     assert holder.vault.notifier.getNoteCnt() == 2
     hh.rotate()
@@ -1093,12 +1087,6 @@ def test_acdc_v2_ipex_submission_carries_foreign_issuer_kel(ipex_vaults, ipex_ma
     first, atc = ipexing.grant(ih, hh.pre, 'Issue', proofed)
     stream = prepare(issuer.vault, ih, first, atc)
     ipex_mailbox(issuer, holder, ih, first, stream)
-    assert _ipex_status(holder.vault, first.said) == 'pending_verification'
-    # The holder already obtained the credential's registry evidence. The
-    # verifier must still learn the KEL through the production sending path.
-    holder.vault.rgy.store.accept(reg.regk, 0, rip)
-    holder.vault.rgy.store.accept(reg.regk, 1, issued)
-    _retry_ipex(holder.vault)
     assert holder.vault.exc.complete(first.said)
 
     grant, atc = ipexing.grant(hh, vh.pre, 'Present', proofed)
@@ -1110,11 +1098,14 @@ def test_acdc_v2_ipex_submission_carries_foreign_issuer_kel(ipex_vaults, ipex_ma
     if delegated:
         expected.extend([(ih.kever.delpre, 0), (ih.kever.delpre, 1)])
     expected.extend([(ih.pre, 0), (ih.pre, 1), (ih.pre, 2)])
-    assert [(event.pre, event.sn) for event in carried[:-1]] == expected
+    assert [(event.pre, event.sn) for event in carried[:-1]
+            if isinstance(event, SerderKERI)] == expected
+    assert [event.said for event in carried[:-1] if event.ilk in ('rip', 'bup')] == [rip.said, issued.said]
     assert verifier.hby.kevers[ih.pre].sn == ih.kever.sn
     assert verifier.hby.kevers[hh.pre].sn == hh.kever.sn
-    assert _ipex_status(verifier.vault, grant.said) == 'pending_verification'
-    assert list(verifier.vault.rgy.baser.evts.getTopItemIter()) == []
+    assert _ipex_status(verifier.vault, grant.said) == 'protocol_verified'
+    assert verifier.vault.rgy.store.seqEvent(reg.regk, 0).said == rip.said
+    assert verifier.vault.rgy.store.seqEvent(reg.regk, 1).said == issued.said
     assert list(verifier.vault.db.accepted.getTopItemIter()) == []
 
     verifier.close_vault()

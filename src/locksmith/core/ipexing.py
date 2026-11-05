@@ -9,14 +9,14 @@ from itertools import islice
 from hio.base import doing
 from hio.core.http import httping
 from keri import help, kering
-from keri.acdc import acdcmap, ipexing, chaining
+from keri.acdc import acdcmap, ipexing, chaining, regeventing
 from keri.app import agenting, forwarding
 from keri.core.kraming import AuthTypes
-from keri.core import Compactor, Prefixer, Saider, SerderACDC, SerderKERI, parsing
+from keri.core import Compactor, Prefixer, Saider, SealSource, SerderACDC, SerderKERI, messagize, parsing
 from keri.help import helping
 from keri.peer import exchanging
 
-from locksmith.core import credentialing, disclosing
+from locksmith.core import credentialing, disclosing, registries
 from locksmith.core.indirecting import receiving_endpoints
 from locksmith.core.receipting import LocksmithReceiptor
 from locksmith.db.basing import AcceptedCredential, GrantReceipt, IpexSubmission
@@ -1067,9 +1067,16 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
             poster = forwarding.StreamPoster(hby=self.vault.hby, hab=self.hab,
                                               recp=self.serder.sad['ri'], topic='credential')
             prefixes = [self.hab.pre]
+            registry_issuers = {}
             if self.serder.route == '/ipex/grant':
                 for nest in exchanging.loadParsedNestedSubstreams(self.vault.hby, self.serder.said):
                     prefixes.append(nest.serder.israid)
+                    for regid in registries.required(nest.serder.sad):
+                        rip = self.vault.rgy.store.seqEvent(regid, 0)
+                        if rip is None:
+                            raise credentialing.RegistryEvidencePending('Registry inception awaits accepted evidence')
+                        registry_issuers[regid] = rip.israid
+                        prefixes.append(rip.israid)
                     issuee = nest.serder.iseaid
                     # Issuer authentication does not require the subject's KEL.
                     if (issuee is not None and issuee != self.serder.sad['ri']
@@ -1083,6 +1090,14 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
                 for msg in self.vault.hby.db.clonePreIter(pre=pre, gvrsn=kering.Vrsn_2_0):
                     event = SerderKERI(raw=msg)
                     poster.send(serder=event, attachment=msg[event.size:])
+            # Public TEL support carries accepted events and anchors only. The
+            # exact Grant below retains its separately selected state openings.
+            for regid, issuer in registry_issuers.items():
+                for raw in self.vault.rgy.store.cloneTelIter(regid):
+                    event = SerderACDC(raw=raw)
+                    sn, said = regeventing.vetAnchor(event, db=self.vault.hby.db, issuer=issuer)
+                    public = messagize(event, bonds=[SealSource(s=f'{sn:x}', d=said)], gvrsn=kering.Vrsn_2_0)
+                    poster.send(serder=event, attachment=public[event.size:], gvrsn=kering.Vrsn_2_0)
             poster.send(serder=self.serder, attachment=stream[self.serder.size:])
             doers = poster.deliver()
             if not doers:
