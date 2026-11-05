@@ -97,13 +97,16 @@ class RegistrySetupDialog(LocksmithDialog):
         self.summary = QLabel()
         self.state = QLabel()
         self.error = QLabel()
-        purpose = QLabel('Approving establishes shared registry state-opening keys with the issuer named above, '
-                         'allowing this wallet to derive future state openings. '
-                         'After verification, review and add the credential separately.')
-        for label in (self.summary, self.state, purpose, self.error):
+        self.purpose = QLabel()
+        for label in (self.summary, self.state, self.purpose, self.error):
             label.setTextFormat(Qt.TextFormat.PlainText)
             label.setWordWrap(True)
             layout.addWidget(label)
+        self.details = QTextEdit()
+        self.details.setReadOnly(True)
+        self.details.hide()
+        layout.addWidget(self.details)
+        self._reviewed_proposal = None
         buttons = QHBoxLayout()
         close = LocksmithInvertedButton('Close')
         self.cancel = LocksmithInvertedButton('Cancel request')
@@ -141,6 +144,29 @@ class RegistrySetupDialog(LocksmithDialog):
             f"From {identifier_name(self.vault, status['sender'])}\n"
             f"To {identifier_name(self.vault, status['recipient'])}\n"
             f"Credential: {status['credential']}\nGrant: {self.grant_said}")
+        self._reviewed_proposal = status.get('proposal')
+        self.details.setVisible(bool(status.get('group')))
+        if status.get('group'):
+            stage = status['stage']
+            self.summary.setText(self.summary.text()
+                + f"\nMember: {identifier_name(self.vault, status['member'])}"
+                + f"\nDH custodian: {identifier_name(self.vault, status['custodian'])}"
+                + f"\nCoordinator event: {status['coordinator'][1]}")
+            self.details.setPlainText(json.dumps(status['detail'], indent=2))
+            self.approve.setText('Approve exact Grant' if stage == 'grant' else 'Approve exact DH query')
+            self.purpose.setText(
+                'Approve this member’s signature on the displayed Grant and credential.'
+                if stage == 'grant' else
+                'Approve this member’s signature on the displayed public DH query.')
+            self.purpose.setText(self.purpose.text()
+                + ' Only the elected custodian establishes and retains this group’s derivation root. '
+                  'Contributing a signature does not copy the root to this member. '
+                  'Credential admission remains a separate decision.')
+        else:
+            self.approve.setText('Approve registry setup')
+            self.purpose.setText('Approving establishes shared registry state-opening keys with the issuer named above, '
+                'allowing this wallet to derive future state openings. '
+                'After verification, review and add the credential separately.')
         self.state.setText(SETUP_PHASES[status['phase']])
         self.error.setText(status['error'])
         self.approve.setVisible('approve_dh' in status['actions'])
@@ -154,7 +180,10 @@ class RegistrySetupDialog(LocksmithDialog):
             self.refresh()
             return
         try:
-            self.vault.auxiliary.approve_dh(self.hab, self.grant_said)
+            if status.get('group') and status.get('proposal') != self._reviewed_proposal:
+                raise ValueError('The proposal changed. Reopen this review before approving it.')
+            options = {'proposal': self._reviewed_proposal} if status.get('group') else {}
+            self.vault.auxiliary.approve_dh(self.hab, self.grant_said, **options)
         except Exception as error:
             self.error.setText(str(error))
         else:

@@ -833,10 +833,6 @@ class IssueCredentialDialog(LocksmithDialog):
         permits_registry = 'rd' in properties or schemer.sed.get('additionalProperties', True)
         issuer = self.vault.hby.habByPre(self.vault.db.issuers.get(keys=(schema_said,)))
         group = isinstance(issuer, GroupHab)
-        publication = self.state_options.mode.combo_box
-        publication.model().item(publication.findData('derived')).setEnabled(not group)
-        if group and publication.currentData() == 'derived':
-            publication.setCurrentIndex(publication.findData('blinded'))
         modes = self.authentication_dropdown.combo_box
         for index in range(modes.count()):
             mode = modes.itemData(index)

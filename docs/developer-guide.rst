@@ -185,9 +185,9 @@ Group registry issuance and consent
 ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
 An accepted local group signing member can enable issuance for a schema and
-choose public or per-event blinded registry authentication in **Issue**. Derived
-DH issuance remains a separate integration step. The proposing member first
-submits a RIP anchor; the other members open **Activity**, review **Group registry
+choose public, per-event blinded or derived registry authentication in **Issue**.
+For derived issuance, the currently elected custodian must initiate the operation.
+The proposing member first submits a RIP anchor; the other members open **Activity**, review **Group registry
 approval**, and explicitly approve that exact anchor. Receipt of a proposal or
 closing its review contributes no signature. Issuance then proposes its BUP and
 requires another explicit approval before the credential is reported issued.
@@ -200,6 +200,24 @@ The ordinary elected witnesser may differ from the proposer or DH custodian.
 Member consent waits while the vault is open; closing the vault stops its local
 operation and does not undo already accepted protocol evidence. Reopening does
 not automatically restart an interrupted issuance.
+
+Group derived issuance
+~~~~~~~~~~~~~~~~~~~~~~
+
+After the group RIP is accepted, derived issuance proposes the exact credential
+Grant to the issuer members. In **Activity → Registry setup**, each contributing
+member reviews and approves the displayed Grant, then separately reviews and
+approves the custodian's public DH query. Both steps require the ordinary group
+signature threshold. Receiving a proposal or closing a review signs nothing.
+The dialog identifies the member, frozen coordinator event and elected custodian.
+
+Only the elected custodian establishes and retains the issuer group's derivation
+root. Other members contribute signatures; this does not copy the root to their
+stores. The individual holder separately approves registry setup. Issuance then
+proposes its BUP through the registry-approval controls described above. The
+original Grant and deadline remain unchanged; an expired exchange cannot be
+revived. The holder's **Review credential / Accept Grant** decision remains
+separate from DH and issuer-group approval.
 
 Individual derived issuance now anchors a fresh RIP, retains one signed proofless
 Grant and waits for explicit DH approval before issuing its BUP. The vault owns
