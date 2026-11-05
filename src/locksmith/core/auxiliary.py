@@ -7,6 +7,7 @@ from collections import deque
 from copy import deepcopy
 from dataclasses import dataclass
 from datetime import timedelta
+import time
 
 from hio.base import doing
 from keri import kering
@@ -38,6 +39,8 @@ class _Operation:
     release_approved: bool = True
     submitted: bool = False
     group: object = None
+    query: tuple | None = None
+    query_retry_at: float = 0.0
 
 
 @dataclass
@@ -263,7 +266,9 @@ class Auxiliary(doing.DoDoer):
         operation = _Operation(hab, grant, xid, owner, wire)
         self.operations[key] = operation
         self.outgoing.append((key, grant.sad['ri'], wire, 'credential'))
-        self.outgoing.append((key, grant.sad['ri'], owner.start(grant.said), 'reply'))
+        operation.query = (key, grant.sad['ri'], bytes(owner.start(grant.said)), 'reply')
+        operation.query_retry_at = time.monotonic() + 1.0
+        self.outgoing.append(operation.query)
         self.vault.signals.emit_doer_event('Auxiliary', 'changed', dict(aid=hab.pre, grant=grant.said))
         return self.status(*key)
 
@@ -545,8 +550,25 @@ class Auxiliary(doing.DoDoer):
                 except kering.KeriError as error:
                     self._terminate(operation, 'refused', str(error))
                     raise
-            self.outgoing.append(((operation.hab.pre, operation.grant.said),
-                                  cue['dest'], cue['msg'], 'reply'))
+            item = ((operation.hab.pre, operation.grant.said), cue['dest'], bytes(cue['msg']), 'reply')
+            if cue['kin'] == 'query' and operation.kind == 'dh':
+                operation.query = item
+                operation.query_retry_at = time.monotonic() + 1.0
+            self.outgoing.append(item)
+
+    def _retry_dh_query(self, operation):
+        """Resend the exact approved query without renewing its keys or lifetime."""
+        item = operation.query
+        if item is None or operation.protocol.complete(operation.xid):
+            return
+        if time.monotonic() < operation.query_retry_at:
+            return
+        delivery = self._delivery
+        inflight = (delivery is not None and not delivery.done
+                    and (delivery.key, delivery.destination, delivery.wire, delivery.topic) == item)
+        if item not in self.outgoing and not inflight:
+            self.outgoing.append(item)
+            operation.query_retry_at = time.monotonic() + 1.0
 
     def process(self):
         """Retry approved operations from existing evidence, without another intake."""
@@ -614,6 +636,7 @@ class Auxiliary(doing.DoDoer):
                     self._terminate(operation, 'refused', str(error))
                 continue
             try:
+                self._retry_dh_query(operation)
                 self._retry_queries(operation)
                 if operation.phase in self.Terminal or not operation.protocol.complete(operation.xid):
                     continue
@@ -727,6 +750,8 @@ class _Delivery(doing.DoDoer):
             if (operation.phase in self.owner.Terminal and not publication or original is None or deadline is None
                     or deadline.dts != original.dts or helping.nowUTC() >= deadline.datetime):
                 raise kering.ValidationError('The original live presentation deadline or approval has ended')
+            if operation.kind == 'dh':
+                operation.protocol.complete(operation.xid)  # Recheck the DH protocol owner before egress.
             if operation.kind == 'unblind':
                 if operation.release_approved:
                     operation.protocol.complete(operation.xid)  # Native live scope/head checks also run when False.
@@ -735,6 +760,10 @@ class _Delivery(doing.DoDoer):
                     if context is None or context[0].raw != operation.grant.raw:
                         raise kering.ValidationError('The exact approved presentation is no longer live')
         try:
+            if (operation.kind == 'dh'
+                    and operation.query == (self.key, self.destination, self.wire, self.topic)
+                    and operation.protocol.complete(operation.xid)):
+                return
             check()
             ipexing._require_route(hab, self.destination)
             parsed = Parser(version=kering.Vrsn_2_0).parseOne(

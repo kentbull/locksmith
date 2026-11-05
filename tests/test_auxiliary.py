@@ -8,7 +8,7 @@ from keri import kering
 from keri.acdc import Registrar, acdcmap, grant
 from keri.core import Parser, SealSource, SerderKERI, messagize, receipt
 
-from locksmith.core import credentialing, evidence, grant_files, grouping, ipexing, root_copying
+from locksmith.core import auxiliary, credentialing, evidence, grant_files, grouping, ipexing, root_copying
 from test_credentialing import _load_schema
 from test_keri_v2_compat import ipex_vaults as ipex_vaults, _deliver_ipex
 
@@ -60,8 +60,18 @@ def test_live_dh_preserves_early_query_then_accepts_the_same_grant(ipex_vaults):
     _, _, wire, _ = io.outgoing.popleft()
     _deliver_ipex(holder.vault, wire)
     deadline = holder.hby.db.epsd.get((message.said,)).dts
-    _, _, query, _ = io.outgoing.popleft()
-    _deliver_ipex(holder.vault, query)
+    key, destination, query, topic = io.outgoing.popleft()
+    operation = io.operations[key]
+    # The first delivery could not reach the listener; retry the exact approved query.
+    operation.query_retry_at = 0
+    io.process()
+    assert list(io.outgoing) == [(key, destination, query, topic)]
+    io.process()
+    assert len(io.outgoing) == 1
+    _, _, retried, _ = io.outgoing.popleft()
+    assert retried == query
+    assert issuer.hby.db.epsd.get((message.said,)).dts == deadline
+    _deliver_ipex(holder.vault, retried)
     assert ho.status(hh.pre, message.said)['phase'] == 'approval_required'
     assert holder.hby.mgr.getRegistryRoot(hh.pre, registry.regk) is None
     assert len(ho._queries) == 1
@@ -73,8 +83,18 @@ def test_live_dh_preserves_early_query_then_accepts_the_same_grant(ipex_vaults):
     ho.approve_dh(hh, message.said)
     assert holder.hby.db.epsd.get((message.said,)).dts == deadline
     _, _, reply, _ = ho.outgoing.popleft()
+    io.outgoing.append(operation.query)
     _deliver_ipex(issuer.vault, reply)
     assert io.agreement_ready(ih.pre, message.said)
+    # A queued query becomes obsolete when the real reply completes agreement.
+    queued_key, queued_dest, queued_wire, queued_topic = io.outgoing.popleft()
+    delivery = auxiliary._Delivery(io, queued_key, queued_dest, queued_wire, queued_topic)
+    before = operation.phase, operation.error
+    doing.Doist(tock=.03125, real=False, limit=.1).do(doers=[delivery])
+    assert delivery.done and (operation.phase, operation.error) == before
+    operation.query_retry_at = 0
+    io.process()
+    assert not io.outgoing
     root = issuer.hby.mgr.getRegistryRoot(ih.pre, registry.regk)
     assert root.qb64 == holder.hby.mgr.getRegistryRoot(hh.pre, registry.regk).qb64
     assert root.qb64b not in query and root.qb64b not in reply
