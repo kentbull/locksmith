@@ -4,11 +4,39 @@ locksmith.core.tasking module
 
 Module for running hio Doers with Qt integration
 """
+from time import monotonic
+
 from PySide6.QtCore import QTimer
 from hio.base import tyming, doing
 from keri import help
 
 logger = help.ogler.getLogger(__name__)
+
+
+class QtDoist(doing.Doist):
+    """Let elapsed monotonic time own real scheduling; retain HIO cadence."""
+
+    def enter(self, doers=None, *, temp=None):
+        if not hasattr(self, '_clock_start'):
+            # Anchor once; extending the running scheduler must not reset elapsed time.
+            self._clock_start, self._tyme_start = monotonic(), self.tyme
+        return super().enter(doers=doers, temp=temp)
+
+    def _synchronize(self):
+        self.tyme = max(self.tyme, self._tyme_start + monotonic() - self._clock_start)
+
+    def recur(self, deeds=None):
+        if self.real:
+            self._synchronize()
+        return super().recur(deeds=deeds)
+
+    def tick(self, tock=None):
+        if not self.real:
+            return super().tick(tock=tock)
+        # HIO recur calls tick after scheduling; do not add a second time source.
+        self._synchronize()
+        return self.tyme
+
 
 class QtTask:
     def __init__(self, doist, timer, limit=None, tyme=None):
@@ -117,7 +145,7 @@ def run_qt_task(doers, expire=0.0, tock=0.03125):
         QtTask: The running QtTask instance
     """
     logger.info(f'Running QtTask with {len(doers)} doers')
-    doist = doing.Doist(doers=doers, limit=expire, tock=tock, real=True)
+    doist = QtDoist(doers=doers, limit=expire, tock=tock, real=True)
 
     timer = QTimer()
     qtask = QtTask(doist=doist, timer=timer, limit=expire)

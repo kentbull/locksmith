@@ -28,7 +28,7 @@ from locksmith.core.configing import ENABLE_TURRET_BROWSER_PLUGIN
 from locksmith.core.grouping import CounselingCompletionDoer
 from locksmith.core.receipting import LocksmithReceiptor
 from locksmith.core.signals import DoerSignalBridge
-from locksmith.core.tasking import QtTask
+from locksmith.core.tasking import QtDoist, QtTask
 from locksmith.core.turretting import TurretDoer
 from locksmith.db.basing import LocksmithBaser, BrowserPluginSettings
 
@@ -433,7 +433,7 @@ def run_vault_controller(app, hby, rgy, expire=0.0):
     doers = [vault]
 
     tock = 0.03125  # ~31.25ms tick rate
-    doist = doing.Doist(doers=doers, limit=expire, tock=tock, real=True)
+    doist = QtDoist(doers=doers, limit=expire, tock=tock, real=True)
 
     timer = QTimer()
     qtask = QtTask(doist=doist, timer=timer, limit=expire)
