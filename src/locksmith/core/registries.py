@@ -90,7 +90,7 @@ class RegistrySyncDoer(doing.DoDoer):
             if target.scheme() != 'https' or not certificates:
                 raise ValueError('Provider capability requires a valid HTTPS CA certificate')
             tls = request.sslConfiguration()
-            tls.setCaCertificates(tls.caCertificates() + certificates)
+            tls.setCaCertificates(certificates)
             request.setSslConfiguration(tls)
         request.setHeader(QNetworkRequest.KnownHeaders.ContentTypeHeader, content_type)
         # A signed request must not be redirected to another endpoint.

@@ -468,3 +468,27 @@ def test_observer_headers_are_telemetry_not_state_authority(wallets):
                     'observer-registry-head': Diger(ser=b'false tip').qb64})
     head = evidence.receive(receiver, registry.regk, stream, headers)
     assert head.said == sender.rgy.store.headEvent(registry.regk).said
+
+
+def test_provider_ca_replaces_request_trust(wallets, qapp, tmp_path):
+    import subprocess
+    from PySide6.QtNetwork import QNetworkAccessManager, QSslCertificate
+    sender, _ = wallets
+    hab = sender.hby.makeHab(name='account')
+    ca = tmp_path / 'ca.pem'
+    subprocess.run(['openssl', 'req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-days', '1',
+        '-subj', '/CN=Registry test CA', '-keyout', str(tmp_path / 'key.pem'), '-out', str(ca)],
+        check=True, capture_output=True)
+    url = 'https://127.0.0.1:1/'
+    sender.hby.cf.put({'registries': {'account': hab.pre, 'observer': url, 'capabilities': {
+        'observer': {'aid': hab.pre, 'url': url, 'roles': ['reader'], 'ca_pem': ca.read_text()}}}})
+    worker = registries.RegistrySyncDoer(sender, hab, 'unused', observer_url=url)
+    worker.manager = QNetworkAccessManager()
+    request = worker._request(url, b'query', 'application/cesr')
+    try:
+        next(request)
+        reply = request.gi_frame.f_locals['reply']
+        assert reply.request().sslConfiguration().caCertificates() == QSslCertificate.fromData(ca.read_bytes())
+    finally:
+        request.close()
+        worker.manager.deleteLater()
