@@ -102,14 +102,14 @@ class GroupOpenings:
         if len(grants) != 1:
             raise kering.ValidationError('Opening proposal has no exact live group presentation')
         grant = next(iter(grants.values()))
-        deadline = hab.db.epsd.get((grant.said,))
-        if deadline is None or helping.nowUTC() >= deadline.datetime:
+        deadline = self.vault.exc.exchangeDeadline(grant)
+        if deadline is None or helping.nowUTC() >= deadline:
             raise kering.ValidationError('The original Grant deadline has elapsed')
         return hab, grant, child
 
     def check(self, entry):
-        deadline = entry.hab.db.epsd.get((entry.grant.said,))
-        if (deadline is None or deadline.dts != entry.deadline or helping.nowUTC() >= deadline.datetime
+        deadline = self.vault.exc.exchangeDeadline(entry.grant)
+        if (deadline is None or helping.toIso8601(deadline) != entry.deadline or helping.nowUTC() >= deadline
                 or entry.proposer not in entry.hab.db.signingMembers(pre=entry.hab.pre)):
             raise kering.ValidationError('The original group opening scope has ended')
         operation = self.owner.operations[(entry.hab.pre, entry.grant.said)]
@@ -135,12 +135,12 @@ class GroupOpenings:
             raise kering.ValidationError('This group opening consent has already started or ended')
         if hab.pre != (grant.sad['ri'] if requester else grant.pre):
             raise kering.ValidationError('Wrong group role for this opening consent')
-        deadline = hab.db.epsd.get((grant.said,))
-        if deadline is None or helping.nowUTC() >= deadline.datetime:
+        deadline = self.vault.exc.exchangeDeadline(grant)
+        if deadline is None or helping.nowUTC() >= deadline:
             raise kering.ValidationError('The original Grant deadline has elapsed')
         protocol = self.owner._owner(hab, 'unblind')
         xid = protocol.approve(grant.said)
-        entry = _Opening(hab, grant, proposer, deadline.dts)
+        entry = _Opening(hab, grant, proposer, helping.toIso8601(deadline))
         operation = existing or _Operation(hab, grant, xid, protocol, kind='unblind')
         operation.group, operation.release_approved = entry, True
         self.entries[key] = entry

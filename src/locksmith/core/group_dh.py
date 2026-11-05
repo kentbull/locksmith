@@ -125,16 +125,16 @@ class GroupIssuers:
 
     def snapshot(self, proposal, operation=None):
         grant, hab = proposal.grant, proposal.hab
-        deadline = self.vault.hby.db.epsd.get((grant.said,))
+        deadline = self.vault.exc.exchangeDeadline(grant)
         phase = operation.phase if operation else ('interrupted' if proposal.interrupted else 'approval_required')
         stage = 'query' if proposal.approved and proposal.query is not None else 'grant'
         selected = proposal.query.serder if stage == 'query' else grant
         if phase not in self.owner.Terminal:
             phase = 'waiting' if proposal.approved else 'approval_required'
-            if deadline is None or helping.nowUTC() >= deadline.datetime:
+            if deadline is None or helping.nowUTC() >= deadline:
                 phase = 'expired'
         return dict(aid=hab.pre, grant=grant.said, xid=grant.said, kind='dh', phase=phase,
-            deadline=deadline.dts if deadline else '', active=operation is not None,
+            deadline=helping.toIso8601(deadline) if deadline else '', active=operation is not None,
             submitted=operation.submitted if operation else False,
             error=operation.error if operation else '',
             actions=('approve_dh',) if phase == 'approval_required' else (),

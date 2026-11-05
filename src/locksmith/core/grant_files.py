@@ -56,15 +56,15 @@ def _protected(vault, raw):
 def retained(vault, said):
     ipexing._require_vault(vault)
     message = vault.hby.db.exns.get((said,)) or vault.hby.db.epse.get((said,))
-    deadline = vault.hby.db.epsd.get((said,))
+    deadline = vault.exc.exchangeDeadline(message) if message is not None else None
     if (message is None or deadline is None or vault.hby.db.erpy.get((said,)) is not None
-            or helping.nowUTC() >= deadline.datetime):
+            or helping.nowUTC() >= deadline):
         raise ValueError('Prepared Grant is unavailable, terminated or past its original native deadline')
     tsgs, cigars = exchanging.verify(vault.hby, message)
     seals = [(Prefixer(qb64=keys[1]), number, diger)
              for keys, (number, diger) in vault.hby.db.ests.getTopItemIter(keys=(said, ''))]
     return SimpleNamespace(serder=message, tsgs=tsgs, cigars=cigars, ssts=seals,
-        nests=exchanging.loadParsedNestedSubstreams(vault.hby, said)), deadline.dts
+        nests=exchanging.loadParsedNestedSubstreams(vault.hby, said)), helping.toIso8601(deadline)
 
 
 def _context(vault, item):
@@ -173,12 +173,12 @@ def inspect_proposal(raw):
 def _group_result(vault, hab, item):
     raw = wire(item)
     _protected(vault, raw)
-    deadline = vault.hby.db.epsd.get((item.serder.said,))
-    if (deadline is None or helping.nowUTC() >= deadline.datetime
+    deadline = vault.exc.exchangeDeadline(item.serder)
+    if (deadline is None or helping.nowUTC() >= deadline
             or vault.hby.db.erpy.get((item.serder.said,)) is not None):
         raise ValueError('The original group Grant deadline has ended')
     wrapper, atc = multisigExn(hab, raw, version=kering.Vrsn_2_0)
-    return item.serder.said, raw, bytes(wrapper.raw + atc), deadline.dts
+    return item.serder.said, raw, bytes(wrapper.raw + atc), helping.toIso8601(deadline)
 
 
 def prepare_group(vault, **options):
@@ -212,8 +212,8 @@ def contribute_group(vault, raw, **options):
                     or any(cigar.verfer.qb64 == packet.serder.pre for cigar in cigars))):
         raise ValueError('Proposal lacks authenticated group member authority')
     _protected(vault, wire(item))
-    deadline = vault.hby.db.epsd.get((item.serder.said,))
-    if (deadline is None or helping.nowUTC() >= deadline.datetime
+    deadline = vault.exc.exchangeDeadline(item.serder)
+    if (deadline is None or helping.nowUTC() >= deadline
             or vault.hby.db.erpy.get((item.serder.said,)) is not None):
         raise ValueError('The original group Grant deadline has ended')
     addition = inspect(hab.endorse(item.serder, framed=False, gvrsn=kering.Vrsn_2_0))

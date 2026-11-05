@@ -149,9 +149,9 @@ class Auxiliary(doing.DoDoer):
             actions = ('approve_openings',) if kind == 'unblind' else ('approve_dh',)
         elif phase == 'request_required':
             actions = ('request_openings',)
-        deadline = self.vault.hby.db.epsd.get((message.said,))
+        deadline = self.vault.exc.exchangeDeadline(message)
         return dict(aid=hab.pre, grant=message.said, xid=xid, kind=kind, phase=phase,
-                    deadline=deadline.dts if deadline else '',
+                    deadline=helping.toIso8601(deadline) if deadline else '',
                     active=operation is not None, submitted=operation.submitted if operation else False,
                     error=operation.error if operation else '', actions=actions,
                     credential=message.sad['a']['o'][0], sender=message.pre,
@@ -442,8 +442,8 @@ class Auxiliary(doing.DoDoer):
         if (query is None or operation.hab.pre != responder
                 or operation.phase in self.Terminal or not operation.release_approved):
             return
-        deadline = self.vault.hby.db.epsd.get((operation.grant.said,))
-        if deadline is None or helping.nowUTC() >= min(deadline.datetime, query.expires):
+        deadline = self.vault.exc.exchangeDeadline(operation.grant)
+        if deadline is None or helping.nowUTC() >= min(deadline, query.expires):
             self._queries.pop(key, None)
             self._terminate(operation, 'expired', 'The original request deadline has elapsed')
             return
@@ -585,8 +585,8 @@ class Auxiliary(doing.DoDoer):
         for operation in self.operations.values():
             if operation.phase in self.Terminal:
                 continue
-            deadline = self.vault.hby.db.epsd.get((operation.grant.said,))
-            if deadline is None or helping.nowUTC() >= deadline.datetime:
+            deadline = self.vault.exc.exchangeDeadline(operation.grant)
+            if deadline is None or helping.nowUTC() >= deadline:
                 self._terminate(operation, 'expired', 'The original Grant deadline has elapsed')
                 continue
             if operation.kind == 'unblind' and operation.hab.pre == operation.grant.pre:
@@ -738,17 +738,17 @@ class _Delivery(doing.DoDoer):
         delivery = None
         operation = self.owner.operations[self.key]
         vault, hab = self.owner.vault, operation.hab
-        original = vault.hby.db.epsd.get((operation.grant.said,))
+        original = vault.exc.exchangeDeadline(operation.grant)
 
         def check():
             ipexing._require_vault(vault, hab)
-            deadline = vault.hby.db.epsd.get((operation.grant.said,))
+            deadline = vault.exc.exchangeDeadline(operation.grant)
             publication = (operation.group is not None and operation.phase == 'verified'
                            and (self.wire == operation.group.publication
                                 or operation.kind == 'unblind' and self.topic == 'reply'
                                 and self.destination in hab.db.signingMembers(pre=hab.pre)))
             if (operation.phase in self.owner.Terminal and not publication or original is None or deadline is None
-                    or deadline.dts != original.dts or helping.nowUTC() >= deadline.datetime):
+                    or deadline != original or helping.nowUTC() >= deadline):
                 raise kering.ValidationError('The original live presentation deadline or approval has ended')
             if operation.kind == 'dh':
                 operation.protocol.complete(operation.xid)  # Recheck the DH protocol owner before egress.
