@@ -206,9 +206,11 @@ Group derived issuance
 
 After the group RIP is accepted, derived issuance proposes the exact credential
 Grant to the issuer members. In **Activity → Registry setup**, each contributing
-member reviews and approves the displayed Grant, then separately reviews and
-approves the custodian's public DH query. Both steps require the ordinary group
-signature threshold. Receiving a proposal or closing a review signs nothing.
+member reviews the displayed Grant and approves its associated registry setup.
+That one decision authorizes the member's Grant signature and contribution to
+the custodian-authenticated DH query within the same scope and original deadline.
+Both messages still require the ordinary group signature threshold. Receiving a
+proposal without setup consent or closing an unapproved review signs nothing.
 The dialog identifies the member, frozen coordinator event and elected custodian.
 
 Only the elected custodian establishes and retains the issuer group's derivation
