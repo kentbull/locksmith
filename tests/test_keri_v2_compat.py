@@ -1359,6 +1359,9 @@ def test_vault_uses_one_app_owned_kram_policy(ipex_vaults):
     assert app.vault.kramer.enabled
     assert app.hby.db.kramCTYP.get('~').sl == 300000
     config = app.hby.cf.get()
+    # Operator policy is authoritative; reopening never rewrites a broad denial.
+    config['kram']['denials'].append([[2, 0], 'qry', ''])
+    app.hby.cf.put(config)
     app.close_vault()
     reopened = ipex_vaults('kram-policy')
     assert reopened.hby.cf.get()['kram'] == config['kram']

@@ -59,24 +59,13 @@ class Vault(doing.DoDoer):
         self.hby.free = False
         self.rgy = rgy
         config = hby.cf.get()
-        policy = config.setdefault('kram', {
+        config.setdefault('kram', {
             'enabled': True,
             'caches': {'~': (10000, 300000, 3600000, 86400000, 300000, 3600000, 86400000)},
             'denials': ([[[2, 0], 'qry', route] for route in ('logs', 'ksn', 'mbx', 'tels', 'tsn')]
                         + [[[2, 0], 'rpy', route] for route in ('/ksn/', '/watcher/')]
                         + [[[2, 0], 'exn', '/multisig'], [[2, 0], 'exn', '/challenge']]),
         })
-        # Preserve operator policy while replacing the old blanket exemptions.
-        denials = policy.setdefault('denials', [])
-        for ilk, routes in (('qry', ('logs', 'ksn', 'mbx', 'tels', 'tsn')),
-                            ('rpy', ('/ksn/', '/watcher/'))):
-            broad = [[2, 0], ilk, '']
-            if broad in denials:
-                denials.remove(broad)
-                for route in routes:
-                    entry = [[2, 0], ilk, route]
-                    if entry not in denials:
-                        denials.append(entry)
         hby.cf.put(config)
         self.kram_cues = decking.Deck()
         self.kramer = kraming.Kramer(db=hby.db, cf=hby.cf, cues=self.kram_cues)
