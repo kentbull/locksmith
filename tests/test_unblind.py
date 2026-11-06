@@ -2,14 +2,15 @@
 from datetime import timedelta
 
 import pytest
+from hio.base import doing
 from keri import kering
 from keri.acdc import regeventing
 from keri.core import Parser, SealSource, SerderACDC, messagize
 from keri.help import helping
 from keri.peer import exchanging
 
-from locksmith.core import credentialing, evidence, ipexing
-from test_auxiliary import pending_issuance
+from locksmith.core import auxiliary, credentialing, evidence, ipexing
+from test_auxiliary import pending_issuance, sent
 from test_keri_v2_compat import ipex_vaults as ipex_vaults, _deliver_ipex
 
 
@@ -21,7 +22,7 @@ def live_presentation(open_vault, *, blinded=False, accepted=False, state='issue
     _, _, wire, _ = io.outgoing.popleft()
     _deliver_ipex(holder.vault, wire)
     ho.approve_dh(hh, issuance.said)
-    _, _, query, _ = io.outgoing.popleft()
+    query = sent(io.outgoing.popleft())
     _deliver_ipex(holder.vault, query)
     _, _, reply, _ = ho.outgoing.popleft()
     _deliver_ipex(issuer.vault, reply)
@@ -76,11 +77,47 @@ def live_presentation(open_vault, *, blinded=False, accepted=False, state='issue
     return holder, verifier, hh, vh, acdc, registry, issuance, retained, message, event, opening
 
 
+def test_unblind_query_is_signed_when_sent_and_replaced_until_the_grant_deadline(ipex_vaults, monkeypatch):
+    holder, verifier, hh, vh, _, registry, _, _, message, event, _ = live_presentation(ipex_vaults)
+    ho, vo = holder.vault.auxiliary, verifier.vault.auxiliary
+    vo.request_openings(vh, message.said)
+    item = vo.outgoing.popleft()
+    operation = vo.operations[item[0]]
+    assert callable(item[2])
+    clock = [helping.nowUTC()]
+    monkeypatch.setattr(helping, 'nowUTC', lambda: clock[0])
+    first = sent(item)
+    clock[0] += timedelta(seconds=22)
+    vo.outgoing.append(item)
+    # The real delivery owner signs as its slot starts; no transport is configured here.
+    delivery = auxiliary._Delivery(vo, *vo.outgoing.popleft())
+    doing.Doist(tock=.03125, real=False, limit=.2).do(doers=[delivery])
+    assert delivery.done and operation.phase == 'waiting' and isinstance(delivery.wire, bytes)
+    parsed = [Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(wire), processive=False)
+              for wire in (first, delivery.wire)]
+    assert parsed[0].serder.said != parsed[1].serder.said
+    assert parsed[0].serder.ked['q'] == parsed[1].serder.ked['q']
+    assert [nest.serder.said for nest in parsed[1].nests] == [event.said]
+    assert (helping.fromIso8601(parsed[1].serder.ked['dt'])
+            - helping.fromIso8601(parsed[0].serder.ked['dt'])) >= timedelta(seconds=22)
+    # An unauthenticated, failed query is requeued and signed again.
+    operation.query_retry_at = 0
+    vo.process()
+    assert list(vo.outgoing) == [item]
+    _deliver_ipex(holder.vault, sent(vo.outgoing.popleft()))
+    assert len(ho._queries) == 1
+    clock[0] = verifier.vault.exc.exchangeDeadline(message) + timedelta(seconds=1)
+    operation.query_retry_at = 0
+    vo.process()
+    assert operation.phase == 'expired' and operation.error == 'The original Grant deadline has elapsed'
+    assert not vo.outgoing
+
+
 def test_live_unblind_waits_for_presenter_consent_and_repairs_same_grant(ipex_vaults):
     holder, verifier, hh, vh, acdc, registry, issuance, retained, message, event, opening = live_presentation(ipex_vaults)
     ho, vo = holder.vault.auxiliary, verifier.vault.auxiliary
     vo.request_openings(vh, message.said)
-    _, _, query, _ = vo.outgoing.popleft()
+    query = sent(vo.outgoing.popleft())
     request = Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(query), processive=False)
     assert [nest.serder.said for nest in request.nests] == [event.said]
     _deliver_ipex(holder.vault, query)
@@ -125,7 +162,7 @@ def test_missing_exact_opening_waits_without_renewing_request(ipex_vaults):
     holder, verifier, hh, vh, _, registry, _, _, message, event, opening = live_presentation(ipex_vaults, blinded=True)
     ho, vo = holder.vault.auxiliary, verifier.vault.auxiliary
     vo.request_openings(vh, message.said)
-    _, _, query, _ = vo.outgoing.popleft()
+    query = sent(vo.outgoing.popleft())
     _deliver_ipex(holder.vault, query)
     cutoff = next(iter(ho._queries.values())).expires
     ho.approve_openings(hh, message.said)
@@ -148,7 +185,7 @@ def test_cancelled_request_and_expired_presenter_consent_do_not_resume(ipex_vaul
     holder, verifier, hh, vh, _, _, _, _, message, _, _ = live_presentation(ipex_vaults)
     ho, vo = holder.vault.auxiliary, verifier.vault.auxiliary
     vo.request_openings(vh, message.said)
-    _, _, query, _ = vo.outgoing.popleft()
+    query = sent(vo.outgoing.popleft())
     _deliver_ipex(holder.vault, query)
     cutoff = next(iter(ho._queries.values())).expires
     vo.abandon(vh.pre, message.said)
@@ -173,7 +210,7 @@ def test_accepted_live_grant_rechecks_after_newer_witnessed_head(ipex_vaults):
     previous = exchanging.serializeParsedSubstream(exchanging.loadParsedNestedSubstreams(verifier.hby, message.said)[0])
     assert next(row for row in vo.pending(vh) if row['grant'] == message.said)['phase'] == 'request_required'
     vo.request_openings(vh, message.said)
-    _, _, query, _ = vo.outgoing.popleft()
+    query = sent(vo.outgoing.popleft())
     _deliver_ipex(holder.vault, query)
     ho.approve_openings(hh, message.said)
     _, _, reply, _ = ho.outgoing.popleft()
@@ -270,6 +307,6 @@ def test_presenter_status_shows_no_approval_before_a_request(ipex_vaults):
     assert ho.status(hh.pre, message.said) is None
     assert not any(row['grant'] == message.said for row in ho.pending(hh))
     vo.request_openings(vh, message.said)
-    _, _, query, _ = vo.outgoing.popleft()
+    query = sent(vo.outgoing.popleft())
     _deliver_ipex(holder.vault, query)
     assert ho.status(hh.pre, message.said)['actions'] == ('approve_openings',)
