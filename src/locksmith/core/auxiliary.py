@@ -822,7 +822,9 @@ class _Delivery(doing.DoDoer):
             if (operation.phase in self.owner.Terminal and not publication or original is None or deadline is None
                     or deadline != original or helping.nowUTC() >= deadline):
                 raise kering.ValidationError('The original live presentation deadline or approval has ended')
-            if operation.kind == 'dh':
+            if operation.kind == 'dh' and not publication:
+                # A verified publication follows the accepted Grant; the core owner then
+                # reports the live operation as finished, which is not a refusal to publish.
                 operation.protocol.complete(operation.xid)  # Recheck the DH protocol owner before egress.
             if operation.kind == 'unblind':
                 if operation.release_approved:

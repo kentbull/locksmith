@@ -497,6 +497,19 @@ def test_issuance_worker_finishes_dh_and_cancellation_drops_live_authority(ipex_
         assert published.ilk == 'bup' and published.said == issuer.vault.rgy.store.headEvent(regk).said
         io.process()
         assert not [item for item in io.outgoing if item[3] == 'credential']
+        # The real delivery owner must let the verified publication reach egress, although
+        # the accepted Grant is no longer a pending DH operation in the core owner.
+        egress = []
+
+        def route(hab, recipient, reply=True):
+            egress.append(recipient)
+            raise kering.ConfigurationError('test stops at egress')
+        original_route, ipexing._require_route = ipexing._require_route, route
+        try:
+            doing.Doist(tock=.03125, real=False, limit=.2).do(doers=[auxiliary._Delivery(io, *publication)])
+        finally:
+            ipexing._require_route = original_route
+        assert egress == [hh.pre]
         assert ho.status(hh.pre, grant_said)['phase'] != 'verified'
         _deliver_ipex(holder.vault, ih.replay(gvrsn=kering.Vrsn_2_0) + wire)
         ho.process()
