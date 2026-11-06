@@ -528,8 +528,14 @@ def test_declared_authentication_cannot_fall_back_to_valid_signature(ipex_vaults
     record.stream = stream.decode()
     app.vault.db.issued.pin((said,), record)
     assert credentialing.credential(app.vault, said)['status']['et'] == 'unknown'
-    with pytest.raises(kering.ValidationError, match='issuer authentication'):
-        ipexing.grant(app.vault, issuer, said, holder.pre)
+    if authentication == 'registry':
+        # Registry refusal names its own remedy; the valid signature is never consulted.
+        with pytest.raises(kering.ValidationError, match='current verified issued state') as refused:
+            ipexing.grant(app.vault, issuer, said, holder.pre)
+        assert isinstance(refused.value.__cause__, kering.UnverifiedBlindError)
+    else:
+        with pytest.raises(kering.ValidationError, match='issuer authentication'):
+            ipexing.grant(app.vault, issuer, said, holder.pre)
 
 
 def test_retained_graph_rechecks_linked_issuer_evidence(ipex_vaults):
