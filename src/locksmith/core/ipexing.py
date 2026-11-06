@@ -626,11 +626,10 @@ def expiry_error(vault, exn):
         exn = vault.hby.db.exns.get((exn.sad.get('p', ''),))
         if exn is None:
             return None
-    # Vault uses one policy for all IPEX routes. The saved opener remains
-    # available after KRAM has pruned its transaction cache.
-    policy = vault.hby.db.kramCTYP.get('~')
-    age = (helping.nowUTC() - helping.fromIso8601(exn.stamp)).total_seconds() * 1000
-    if age <= policy.xl:
+    # Core owns the opener's exchange window (xdt + xl); it remains available
+    # after KRAM has pruned the transaction cache.
+    deadline = vault.exc.chainDeadline(exn)
+    if deadline is None or helping.nowUTC() <= deadline:
         return None
     if exn.route == '/ipex/apply':
         if exn.pre in vault.hby.prefixes:

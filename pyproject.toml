@@ -31,7 +31,7 @@ dependencies = [
     "PySide6==6.10.3",
     "qasync>=0.28.0",
     "hio @ git+https://github.com/kentbull/hio.git@5483e3cc16b7b9b44a30d3e26dac067c1569c0f5",
-    "keri @ git+https://github.com/kentbull/keripy.git@e34bf7358c38f62293bd58a0f059f7b7a35f9c2b",
+    "keri @ git+https://github.com/kentbull/keripy.git@5100b153ba79f2257c859169a51000196a933d8a",
     "qtawesome>=1.4.0",
     "mnemonic==0.21",
     "multicommand==1.0.0",

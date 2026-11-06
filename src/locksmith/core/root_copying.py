@@ -4,7 +4,7 @@ from dataclasses import dataclass
 from keri import kering
 from keri.acdc.salting import RegistrySalt
 from keri.app.grouping import multisigRpyExn
-from keri.app.habbing import GroupHab, _groupWitnesserSelection
+from keri.app.habbing import GroupHab, groupElection
 from keri.core import Blinder, BlindState, BoundState, Cipher, MtrDex, Parser, SerderKERI, messagize
 from keri.peer import exchanging
 
@@ -144,7 +144,7 @@ class RootCopies:
         hab = self._group(aid)
         if not isinstance(coordinator, tuple) or len(coordinator) != 2:
             raise ValueError('Select the exact accepted coordinator (sequence, SAID)')
-        selection = _groupWitnesserSelection(hab, sn=coordinator[0], dig=coordinator[1])
+        selection = groupElection(hab, sn=coordinator[0], dig=coordinator[1])
         if selection is None:
             raise kering.ValidationError('Coordinator lacks accepted group threshold evidence')
         frame = Parser(version=kering.Vrsn_2_0).parseOneBare(

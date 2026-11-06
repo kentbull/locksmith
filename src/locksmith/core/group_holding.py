@@ -194,7 +194,7 @@ class GroupHolders:
             child = exchanging.loadParsedNestedSubstreams(self.vault.hby, said)[0]
             self.reply_scope(wrapper, [child])
             # The core owner requires the authenticated peer query before contribution.
-            if operation.protocol._operations[operation.xid]['peer'] is None:
+            if not operation.protocol.peerQueried(operation.xid):
                 continue
             raw = exchanging.serializeParsedSubstream(child)
             if not entry.reply_signed:
