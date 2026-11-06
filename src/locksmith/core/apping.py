@@ -107,34 +107,37 @@ class LocksmithApplication:
         if self.qtask is not None:
             logger.info(f"Closing vault: {self.name}")
 
-            # Notify plugins before teardown
-            if self.vault is not None:
-                self.vault.closed = True
-                self.plugin_manager.on_vault_closed(self.vault)
+            try:
+                # Notify plugins before teardown
+                if self.vault is not None:
+                    self.vault.closed = True
+                    self.plugin_manager.on_vault_closed(self.vault)
+                    # Root-import consent belongs to the session, not the scheduler.
+                    self.vault.root_copies.close()
 
-            # Request shutdown
-            self.qtask.shutdown()
+                self.qtask.shutdown()
+                self.qtask.cleanup()
+            except Exception:
+                # A failing doer exit must not leave the stores open or the vault referenced.
+                logger.exception("Vault teardown failed; closing its stores anyway")
+            finally:
+                # Close dependent stores before the Habery.
+                if self.vault is not None:
+                    self.vault.db.close()
+                    self.vault.rep.mbx.close()
+                    self.vault.notifier.noter.close()
+                if self.rgy is not None:
+                    self.rgy.close()
+                if self.hby is not None:
+                    self.hby.close()
 
-            # Cleanup
-            self.qtask.cleanup()
-
-            # Close dependent stores before the Habery.
-            if self.vault is not None:
-                self.vault.db.close()
-                self.vault.rep.mbx.close()
-                self.vault.notifier.noter.close()
-            if self.rgy is not None:
-                self.rgy.close()
-            if self.hby is not None:
-                self.hby.close()
-
-            # Clear references
-            self.qtask = None
-            self.vault = None
-            self.hby = None
-            self.rgy = None
-            self.hab = None
-            self.name = None
+                # Clear references
+                self.qtask = None
+                self.vault = None
+                self.hby = None
+                self.rgy = None
+                self.hab = None
+                self.name = None
 
             logger.info("Vault closed")
 
@@ -171,10 +174,16 @@ class LocksmithApplication:
 
         # First, shutdown the QtTask to stop all doers
         self.vault.closed = True
+        self.vault.root_copies.close()
         if self.qtask is not None:
-            self.qtask.shutdown()
-            self.qtask.cleanup()
-            self.qtask = None
+            try:
+                self.qtask.shutdown()
+                self.qtask.cleanup()
+            except Exception:
+                # Deletion still closes and clears every store below.
+                logger.exception(f"Vault teardown failed while deleting '{vault_name}'")
+            finally:
+                self.qtask = None
 
         self.plugin_manager.on_vault_closed(self.vault, clear=True)
 

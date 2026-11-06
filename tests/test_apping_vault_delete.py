@@ -46,6 +46,7 @@ def _make_app(plugin_manager, calls=None):
     calls = calls if calls is not None else []
     vault = SimpleNamespace(
         db=FakeCloser("vault.db", calls),
+        root_copies=FakeCloser("vault.root_copies", calls),
         rep=SimpleNamespace(mbx=FakeCloser("vault.rep.mbx", calls)),
         notifier=SimpleNamespace(noter=FakeCloser("vault.notifier.noter", calls)),
         hby=SimpleNamespace(name="test-vault"),
@@ -77,8 +78,8 @@ def test_delete_vault_prepares_plugins_before_local_clear():
 
     assert success is True
     assert timeline[0] == ("prepare", original_vault)
-    assert timeline[1:3] == [("qtask.shutdown",), ("qtask.cleanup",)]
-    assert timeline[3] == ("plugin_close", original_vault, True)
+    assert timeline[1:4] == [("vault.root_copies", False), ("qtask.shutdown",), ("qtask.cleanup",)]
+    assert timeline[4] == ("plugin_close", original_vault, True)
     assert ("vault.db", True) in timeline
     assert ("vault.rep.mbx", True) in timeline
     assert ("vault.notifier.noter", True) in timeline
