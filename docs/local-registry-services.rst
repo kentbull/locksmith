@@ -4,14 +4,17 @@ Local registry services
 Normal Local Development onboarding uses ``scripts/local-provider.sh``, which
 starts Registrar and Observer before kf-boot and activates wallet access through
 the provider. Select ``LOCAL_PROVIDER_BACKEND=python`` or ``typescript`` on that
-launcher. The wallet verifies and saves signed service settings, including the
+launcher, or select Registrar and Observer separately with
+``LOCAL_PROVIDER_REGISTRAR_BACKEND`` and ``LOCAL_PROVIDER_OBSERVER_BACKEND``. The wallet verifies and saves signed service settings, including the
 public CA, during onboarding. See :doc:`developer-guide` for that complete path.
 
 The standalone ``scripts/local-registries.sh STATE_DIR [CONFIG_JSON]`` command is
 for independently operated services. With no configuration file it starts with
-no wallet roles, ready for provider enrollment. An explicit file grants operator-managed readers on either backend. Python also
-supports static publishers; TypeScript publishers use provider enrollment, so
-its ``publishers`` array must be empty. Do not run
+no wallet roles, ready for provider enrollment. An explicit file grants operator-managed readers on either backend. A Python
+Registrar also supports static publishers; a TypeScript Registrar uses provider
+enrollment for publishers, so its ``publishers`` array must be empty. The state
+directory records ``registrar=… observer=…`` in its ``topology`` file and refuses
+a different selection or retained state without that file. Do not run
 it on ports already owned by the complete provider launcher.
 
 Export introductions
@@ -61,7 +64,8 @@ must be installed beside Locksmith. Their locked dependencies require Python
      "$HOME/.local/share/locksmith-local-registries" \
      /absolute/path/to/participants.json
 
-The launcher runs ``uv sync --locked --extra dev --python 3.14`` for each service,
+The launcher runs ``uv sync --locked --extra dev --python 3.14`` for kf-registrar,
+which hosts the bootstrap helper, and for kf-observer when its Python service is selected. It
 refuses occupied ports and waits at most 15 seconds for startup health. It binds
 both services to loopback: Registrar public HTTPS on port 19932 and private HTTP
 administration on port 19931; Observer public HTTPS on port 19942 and private HTTP

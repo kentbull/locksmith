@@ -97,20 +97,25 @@ def tufa_identity(state, service, passcode, ts_repo):
     return aid, command('export', '--alias', service).encode()
 
 
-def bootstrap(state, config=None, *, backend='python', ts_repo=None):
+def bootstrap(state, config=None, *, registrar_backend='python', observer_backend='python', ts_repo=None):
     """Retain encrypted service identities; write only public bootstrap outputs."""
+    backends = {'registrar': registrar_backend, 'observer': observer_backend}
     roles, public = introductions(config)
-    if backend == 'typescript' and roles['publishers']:
+    if registrar_backend == 'typescript' and roles['publishers']:
         raise ValueError('TypeScript publishers require provider enrollment; configure only static readers here')
+    if 'typescript' in backends.values() and ts_repo is None:
+        raise ValueError('TypeScript services require their explicit repository path')
     state = Path(state).resolve()
     state.mkdir(mode=0o700, parents=True, exist_ok=True)
-    marker = state / 'backend'
+    # Service state is bound to one registry topology; older state is never migrated.
+    topology = ' '.join(f'{service}={backend}' for service, backend in backends.items())
+    marker = state / 'topology'
     if marker.exists():
-        if marker.read_text().strip() != backend:
-            raise ValueError('Backend differs from retained service state; use a separate state directory')
-    elif backend != 'python' and (state / 'service-passcode').exists():
-        raise ValueError('Existing Python service state cannot be reused for TypeScript')
-    marker.write_text(backend + '\n')
+        if marker.read_text().strip() != topology:
+            raise ValueError('Topology differs from retained service state; use a separate state directory')
+    elif (state / 'backend').exists() or (state / 'service-passcode').exists():
+        raise ValueError('Retained service state has no topology marker; use a separate state directory')
+    marker.write_text(topology + '\n')
     base = 'locksmith-local-registries/' + hashlib.sha256(str(state).encode()).hexdigest()[:16]
     secret = state / 'service-passcode'
     if not secret.exists():
@@ -122,9 +127,7 @@ def bootstrap(state, config=None, *, backend='python', ts_repo=None):
     if len(passcode) != 21 or '-' in passcode:
         raise ValueError('Invalid retained local service passcode; preserve existing identities')
     for service in ('registrar', 'observer'):
-        if backend == 'typescript':
-            if ts_repo is None:
-                raise ValueError('TypeScript backend requires its explicit repository path')
+        if backends[service] == 'typescript':
             aid, kel = tufa_identity(state, service, passcode, ts_repo)
         else:
             hby = Habery(name=f'localdev-{service}', base=f'{base}/{service}',
@@ -147,7 +150,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('state')
     parser.add_argument('config', nargs='?')
-    parser.add_argument('--backend', choices=('python', 'typescript'), default='python')
+    parser.add_argument('--registrar-backend', choices=('python', 'typescript'), default='python')
+    parser.add_argument('--observer-backend', choices=('python', 'typescript'), default='python')
     parser.add_argument('--ts-repo', type=Path)
     args = parser.parse_args()
     os.umask(0o077)
@@ -155,7 +159,8 @@ if __name__ == '__main__':
         raise KeyboardInterrupt
     signal.signal(signal.SIGTERM, stop)
     try:
-        bootstrap(args.state, args.config, backend=args.backend, ts_repo=args.ts_repo)
+        bootstrap(args.state, args.config, registrar_backend=args.registrar_backend,
+                  observer_backend=args.observer_backend, ts_repo=args.ts_repo)
     except KeyboardInterrupt:
         raise SystemExit(130) from None
     except (OSError, ValueError, KeriError, subprocess.SubprocessError) as error:
