@@ -722,8 +722,8 @@ class Auxiliary(doing.DoDoer):
         self.outgoing = deque(item for item in self.outgoing if item[0] != key)
         self._queries = {item: value for item, value in self._queries.items() if item[2] != operation.xid}
         if self._delivery is not None and self._delivery.key == key:
-            self.remove([self._delivery])
-            self._delivery = None
+            delivery, self._delivery = self._delivery, None
+            self.remove([delivery])
 
     def abandon(self, aid, grant_said):
         operation = self.operations[(aid, grant_said)]
@@ -747,12 +747,15 @@ class Auxiliary(doing.DoDoer):
         self.presenters.clear()
         self.outgoing.clear()
         if self._delivery is not None:
-            self.remove([self._delivery])
-            self._delivery = None
+            delivery, self._delivery = self._delivery, None
+            self.remove([delivery])
 
-    def exit(self, **kwa):
-        self.close()
-        super().exit(**kwa)
+    def exit(self, deeds=None):
+        # HIO's remove() exits only the removed child deeds through this method;
+        # closing all live state belongs to this owner's own full exit.
+        if deeds is None:
+            self.close()
+        super().exit(deeds=deeds)
 
     def run(self, tymth=None, tock=0.0, **kwa):
         self.wind(tymth)

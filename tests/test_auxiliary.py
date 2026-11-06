@@ -203,6 +203,36 @@ def test_refused_dh_query_is_replaced_with_a_fresh_one_until_the_grant_deadline(
         item[2]()
 
 
+def test_cancelling_or_closing_during_a_live_delivery_removes_it_once(ipex_vaults):
+    """HIO's remove() exits the removed deeds through the owner's exit(); that must not close it."""
+    issuer, holder, ih, hh, _, _, _, message, atc, _ = pending_issuance(ipex_vaults)
+    io = issuer.vault.auxiliary
+    io.begin_dh(ih, message, atc)
+    doist = doing.Doist(tock=.03125, real=False, limit=.1)
+    io.wind(doist.tymen())
+
+    def start():
+        delivery = auxiliary._Delivery(io, *io.outgoing.popleft())
+        io._delivery = delivery
+        io.extend([delivery])
+        assert delivery in io.doers
+        return delivery
+
+    delivery = start()
+    io.abandon(ih.pre, message.said)
+    assert io._delivery is None and delivery not in io.doers
+    assert io.status(ih.pre, message.said)['phase'] == 'cancelled'
+
+    message2, atc2 = grant(ih, hh.pre, 'Second live agreement', origin=acdcmap(
+        israid=ih.pre, iseaid=hh.pre, regid=next(iter(issuer.vault.rgy.regs)),
+        attribute=dict(d='', i=hh.pre, role='holder')), kind=kering.Kinds.json)
+    io.begin_dh(ih, message2, atc2)
+    delivery = start()
+    io.close()
+    assert io._delivery is None and delivery not in io.doers
+    assert io.status(ih.pre, message2.said)['phase'] == 'interrupted'
+
+
 def test_partial_query_signatures_do_not_authorize_agreement(ipex_vaults):
     issuer, holder, ih, hh, _, registry, _, message, atc, _ = pending_issuance(ipex_vaults)
     io, ho = issuer.vault.auxiliary, holder.vault.auxiliary
