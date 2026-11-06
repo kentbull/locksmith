@@ -1,9 +1,10 @@
-"""Registry-root copies: send to members' mailboxes, or approve received copies."""
+"""Registry-root copies: send to members' mailboxes; list received copies still escrowed."""
 from pathlib import Path
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QFileDialog, QHBoxLayout, QLabel, QVBoxLayout, QWidget
 from keri import kering
+from keri.help import helping
 from keri.app.habbing import GroupHab
 
 from locksmith.core import credentialing
@@ -98,13 +99,17 @@ class RootSendDialog(LocksmithDialog):
 
 
 class RootCopiesSection(QWidget):
-    """Activity cards for received copies; nothing is retained without an explicit click."""
+    """Read-only Activity list of received copies still waiting for local state.
+
+    Received roots are retained automatically; nothing here approves or
+    dismisses a copy. Escrowed copies are retried until their deadline.
+    """
 
     def __init__(self, page):
         super().__init__()
         self.page = page
-        self.buttons, self.dismiss_buttons = {}, {}
         self.error = ''
+        self.message = ''
         self.box = QVBoxLayout(self)
         self.box.setContentsMargins(0, 0, 0, 0)
         self.items = []
@@ -116,66 +121,47 @@ class RootCopiesSection(QWidget):
     def show_copies(self, items):
         while self.box.count():
             self.box.takeAt(0).widget().deleteLater()
-        self.buttons.clear()
-        self.dismiss_buttons.clear()
         self.items = items
-        self.setVisible(bool(items or self.error))
-        if not items and not self.error:
+        self.setVisible(bool(items or self.error or self.message))
+        for text, color in ((self.error, colors.DANGER), (self.message, None)):
+            if text:
+                label = QLabel(text)
+                label.setTextFormat(Qt.TextFormat.PlainText)
+                label.setWordWrap(True)
+                if color:
+                    label.setStyleSheet(f'color: {color};')
+                self.box.addWidget(label)
+        if not items:
             return
-        self.box.addWidget(QLabel('Registry root copies'))
-        if self.error:
-            error = QLabel(self.error)
-            error.setTextFormat(Qt.TextFormat.PlainText)
-            error.setWordWrap(True)
-            error.setStyleSheet(f'color: {colors.DANGER};')
-            self.box.addWidget(error)
+        self.box.addWidget(QLabel('Registry root copies waiting for local state'))
         name = self.page._name
         for item in items:
-            card = QWidget()
-            row = QHBoxLayout(card)
-            state = (f'Waiting for local state: {item.deferred}' if item.deferred else
-                     item.error or 'Review and approve')
-            text = QLabel(f'{name(item.sender)} → {name(item.gid)} · registry {item.registry[:12]}… · {state}')
+            try:
+                deadline = helping.fromIso8601(item.deadline).astimezone().strftime('%b %d, %Y %H:%M')
+            except (ValueError, TypeError):
+                deadline = item.deadline
+            text = QLabel(f'{name(item.sender)} → {name(item.gid)} · registry {item.registry[:12]}… · '
+                          f'waiting for {item.waiting} · retried until {deadline}')
             text.setTextFormat(Qt.TextFormat.PlainText)
             text.setWordWrap(True)
             text.setToolTip(f'Copy {item.said}\nRecipient {item.recipient}\nRegistry {item.registry}')
-            row.addWidget(text)
-            approve = LocksmithInvertedButton('Approve root')
-            approve.clicked.connect(lambda checked=False, said=item.said: self.approve(said))
-            dismiss = LocksmithInvertedButton('Dismiss')
-            dismiss.clicked.connect(lambda checked=False, said=item.said: self.dismiss(said))
-            row.addWidget(approve)
-            row.addWidget(dismiss)
-            self.buttons[item.said] = approve
-            self.dismiss_buttons[item.said] = dismiss
-            self.box.addWidget(card)
-
-    def approve(self, said):
-        """Verify and retain this one copy's root; deferred or unverified copies stay pending."""
-        self.error = ''
-        try:
-            if self.page.app.vault is not self.vault or self.vault is None or self.vault.closed:
-                raise ValueError('This vault is closed')
-            self.vault.roots.approve(said)
-        except (ValueError, kering.KeriError) as error:
-            self.error = str(error)
-        self.page.refresh()
-
-    def dismiss(self, said):
-        self.error = ''
-        try:
-            self.vault.roots.dismiss(said)
-        except (ValueError, kering.KeriError) as error:
-            self.error = str(error)
-        self.page.refresh()
+            self.box.addWidget(text)
 
     def import_file(self, path):
-        """File fallback: copies enter through the vault's ordinary intake and wait here."""
-        self.error = ''
+        """File fallback: copies enter through the vault's ordinary intake and are accepted there."""
+        self.error = self.message = ''
         try:
             if Path(path).stat().st_size > 65536:
                 raise ValueError('Registry root copy file exceeds 64 KiB')
-            self.vault.roots.ingest(Path(path).read_bytes())
+            outcome = self.vault.roots.ingest(Path(path).read_bytes())
+            parts = []
+            if outcome['retained']:
+                parts.append('Registry root received')
+            if waiting := len(outcome['waiting']):
+                parts.append(f'{waiting} cop{"y" if waiting == 1 else "ies"} waiting for local state')
+            self.message = '; '.join(parts)
+            if outcome['refused']:
+                self.error = 'Registry root copy not retained: ' + '; '.join(sorted(set(outcome['refused'].values())))
         except (OSError, ValueError, kering.KeriError) as error:
             self.error = str(error)
         self.page.refresh()

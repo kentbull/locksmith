@@ -1,11 +1,15 @@
 """Registry-root replication to group members over KERIpy's ESSR ``/registry/root``.
 
-Core ``salting.RegistryRoot`` owns the wire, authorization, pending storage and
-verified retention. This adapter is a member of the Auxiliary operation table:
-it answers the Dhke ``replicate`` cue and accepted group rotations by queueing
-the copies this member owes, sends them from the run loop through the vault's
-mailbox ``postman``, and approves received copies only on explicit request.
+Core ``salting.RegistryRoot`` owns the wire, authorization, escrow and
+verified retention. Received copies are accepted automatically: core retains a
+copy that verifies on arrival and escrows the rest in ``Baser.rrpe``, which the
+vault's ``Exchanger.processEscrow`` retries. This adapter is a member of the
+Auxiliary operation table: it answers the Dhke ``replicate`` cue and accepted
+group rotations by queueing the copies this member owes, sends them from the
+run loop through the vault's mailbox ``postman``, and retries escrowed copies
+with openings held in local credential proofs.
 """
+import time
 from dataclasses import dataclass
 
 from keri import help, kering
@@ -18,6 +22,7 @@ from locksmith.core import credentialing, ipexing
 logger = help.ogler.getLogger(__name__)
 
 Limit = 65536
+OpeningRetry = 60.0  # seconds between held-opening retries of one escrowed copy
 
 
 def held_openings(vault, said, grant):
@@ -61,25 +66,25 @@ def inspect(raw):
 
 @dataclass(frozen=True)
 class Copy:
-    """One stored copy addressed to a local member, as the Activity view shows it."""
+    """One escrowed copy addressed to a local member, waiting for local state."""
     said: str
     sender: str
     recipient: str
     gid: str
     registry: str
     dt: str
-    deferred: str = ''
-    error: str = ''
+    deadline: str
+    waiting: str = ''
 
 
 class RootReplicas:
-    """Queue, send and approve registry-root copies for one vault.
+    """Queue and send registry-root copies for one vault; retry received ones.
 
     Owed copies persist in the vault database until core ``prepare`` either
     succeeds or refuses them, so a copy whose registry update is not yet
     accepted here (the custodian derives the root before the BUP exists)
-    waits across restarts. Nothing is retained from a received copy until
-    ``approve``.
+    waits across restarts. Received copies need no approval: core retains
+    each verifiable root on arrival or from its escrow.
     """
 
     def __init__(self, owner):
@@ -88,6 +93,7 @@ class RootReplicas:
         self.core = RegistryRoot(self.vault.hby, self.vault.rgy, self.vault.notifier)
         self.vault.exc.addHandler(self.core)
         self._rotations = set()  # (gid, rotation) already examined in this session.
+        self._retried = {}  # escrowed copy SAID -> monotonic time of its last held-opening retry
         self.closed = False
 
     # owed copies
@@ -158,6 +164,7 @@ class RootReplicas:
                 logger.info('Registry root catch-up for %s rotation %s skipped: %s', hab.pre, est.d, error)
         for gid, registry, recipient, td in self.owed():
             self._flush(gid, registry, recipient, td)
+        self.retry()
 
     def _flush(self, gid, registry, recipient, td):
         hab = self.vault.hby.habs.get(gid)
@@ -212,63 +219,80 @@ class RootReplicas:
     # receiving
 
     def ingest(self, raw):
-        """Parse a file of copies through the ordinary vault intake; return the stored SAIDs."""
+        """Parse a file of copies through the ordinary vault intake and report each outcome.
+
+        Core retains each verifiable root during the parse and escrows the
+        rest. Returns ``dict(retained=[...], waiting=[...], refused={said: reason})``.
+        """
         ipexing._require_vault(self.vault)
         saids = inspect(raw)
         self.vault.mbx.parser.parse(ims=bytearray(raw), version=kering.Vrsn_2_0)
         stored = [said for said in saids if self.vault.hby.db.exns.get(keys=(said,)) is not None]
         if not stored:
             raise kering.ValidationError('No registry root copy in this file is addressed to this vault')
-        return stored
-
-    def _noted(self):
-        return {note.attrs.get('d') for _, note in self.vault.notifier.noter.notes.getTopItemIter()
-                if note.attrs.get('r') == RegistryRoot.Note}
+        for said in stored:
+            self._retried.pop(said, None)
+        self.retry()
+        outcome = dict(retained=[], waiting=[], refused={})
+        for said in stored:
+            if self.vault.hby.db.rrpe.get(keys=(said,)) is not None:
+                outcome['waiting'].append(said)
+                continue
+            try:  # Not escrowed: either retained now or already, or refused.
+                self.core.receive(said)
+                outcome['retained'].append(said)
+            except (kering.KeriError, ValueError) as error:
+                outcome['refused'][said] = str(error)
+        return outcome
 
     def pending(self):
-        """Copies awaiting explicit approval, with the local state each still needs."""
+        """Escrowed copies still waiting for local state, with what each still needs."""
         ipexing._require_vault(self.vault)
-        noted, items = self._noted(), []
+        items = []
         for item in self.core.pending():
-            if item['said'] not in noted:
-                continue  # Dismissed.
-            deferred = ''
+            waiting = 'opening evidence'
             try:
                 if item['gid'] != item['recipient'] and not isinstance(
                         self.vault.hby.habs.get(item['gid']), GroupHab):
                     raise RootDeferred('the holder group is not yet local')
                 self.core.authorize(item['sender'], item['recipient'], item['gid'], item['registry'])
             except RootDeferred as error:
-                deferred = str(error)
-            except (kering.KeriError, ValueError) as error:
-                item.setdefault('error', str(error))
+                waiting = str(error)
+            except (kering.KeriError, ValueError):
+                pass  # The next escrow attempt refuses and drops this copy.
             items.append(Copy(item['said'], item['sender'], item['recipient'], item['gid'],
-                              item['registry'], item['dt'] or '', deferred, item.get('error', '')))
+                              item['registry'], item['dt'] or '', item['deadline'], waiting))
         return items
 
-    def approve(self, said):
-        """Explicitly approve one stored copy: core verifies, then retains the root.
+    def retry(self):
+        """Retry escrowed copies with openings held in local credential proofs.
 
-        A held opening for an accepted update of the copy's registry is used
-        when the sender's hint cannot reproduce the commitment. RootDeferred
-        and RootUnverified leave the copy pending.
+        Core verifies a copy against the sender's ``td`` hint or a registry
+        store opening. A copy sent without either can still verify against an
+        opening this vault holds in an issued or accepted credential's proof.
+        Each copy is retried at most once per ``OpeningRetry`` seconds.
         """
-        ipexing._require_vault(self.vault)
-        try:
-            return self.core.receive(said)
-        except RootDeferred:
-            raise
-        except RootUnverified as error:
-            unverified = error
-        copy = next((item for item in self.core.pending() if item['said'] == said), None)
-        for event, opening in self._openings(copy['registry'] if copy else None):
-            try:
-                return self.core.receive(said, event=event, opening=opening)
-            except RootDeferred:
-                raise
-            except RootUnverified:
+        if self.closed or self.vault.closed:
+            return
+        now = time.monotonic()
+        for item in self.core.pending():
+            said = item['said']
+            if now - self._retried.get(said, -OpeningRetry) < OpeningRetry:
                 continue
-        raise unverified
+            self._retried[said] = now
+            for event, opening in self._openings(item['registry']):
+                try:
+                    self.core.receive(said, event=event, opening=opening)
+                except RootDeferred:
+                    break  # Local state is missing; the escrow loop retries.
+                except RootUnverified:
+                    continue
+                except (kering.KeriError, ValueError) as error:
+                    logger.info('Registry root copy %s not retained: %s', said, error)
+                    break
+                break
+        escrowed = {said for (said,), _ in self.vault.hby.db.rrpe.getTopItemIter()}
+        self._retried = {said: at for said, at in self._retried.items() if said in escrowed}
 
     def _openings(self, registry):
         if registry is None:
@@ -284,10 +308,6 @@ class RootReplicas:
                 except (kering.KeriError, ValueError, KeyError, StopIteration):
                     continue
         return found
-
-    def dismiss(self, said):
-        """Hide one copy from Activity; the exchange store keeps it."""
-        return self.core.dismiss(said)
 
     def close(self):
         """Stop sending for this session; owed copies stay in the vault database."""
