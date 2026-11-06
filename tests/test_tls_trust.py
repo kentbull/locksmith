@@ -1,6 +1,7 @@
 """Explicit local CA trust keeps Qt's real TLS peer checks enabled."""
 
 import ssl
+import sys
 from datetime import datetime, timedelta, timezone
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from threading import Thread
@@ -16,6 +17,22 @@ from PySide6.QtNetwork import (
 )
 
 from locksmith.main import configure_tls_trust
+
+# The hosted macos-15 runner's Secure Transport backend refuses these handshakes
+# without reporting per-certificate sslErrors (kentbull/locksmith Actions run
+# 42259014800, job test (macos-15)); a local macOS 27 host reports them. The
+# refusal itself stays mandatory everywhere; only the error detail is optional
+# on macOS.
+SSL_ERRORS_OPTIONAL = sys.platform == 'darwin'
+
+
+def assert_refused(error, errors, expected=None):
+    assert error == QNetworkReply.NetworkError.SslHandshakeFailedError
+    if SSL_ERRORS_OPTIONAL and not errors:
+        return
+    assert errors
+    if expected is not None:
+        assert expected in errors
 
 
 def test_explicit_tls_ca_keeps_peer_and_hostname_checks(qapp, tmp_path):
@@ -84,9 +101,7 @@ def test_explicit_tls_ca_keeps_peer_and_hostname_checks(qapp, tmp_path):
 
     try:
         # The same live endpoint refuses its untrusted certificate before configuration.
-        error, _, errors = get('localhost')
-        assert error == QNetworkReply.NetworkError.SslHandshakeFailedError
-        assert errors
+        assert_refused(*get('localhost')[::2])
 
         configure_tls_trust(cafile)
         configured = QSslConfiguration.defaultConfiguration()
@@ -95,9 +110,7 @@ def test_explicit_tls_ca_keeps_peer_and_hostname_checks(qapp, tmp_path):
         assert get('localhost') == (QNetworkReply.NetworkError.NoError, b'trusted localhost', [])
 
         # Trusting the signer must not authenticate an unlisted host name.
-        error, _, errors = get('127.0.0.1')
-        assert error == QNetworkReply.NetworkError.SslHandshakeFailedError
-        assert QSslError.SslError.HostNameMismatch in errors
+        assert_refused(*get('127.0.0.1')[::2], QSslError.SslError.HostNameMismatch)
     finally:
         QSslConfiguration.setDefaultConfiguration(original)
         server.shutdown()
