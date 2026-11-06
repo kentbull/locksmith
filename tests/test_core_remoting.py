@@ -40,7 +40,7 @@ class _FakeOrg:
 
 
 @pytest.mark.parametrize("signature", ["valid", "unsigned", "corrupt"])
-def test_import_native_identifier_requires_verified_key_state(tmp_path, signature):
+def test_import_core_identifier_requires_verified_key_state(tmp_path, signature):
     with (
         habbing.openHby(name="import-source", temp=True) as source,
         habbing.openHby(name="import-target", temp=True) as target,

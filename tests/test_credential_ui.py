@@ -158,7 +158,7 @@ def schema(require_issuee=True, *, composed=False):
     return scheming.Schemer(sed={
         '$id': '', '$schema': 'https://json-schema.org/draft/2020-12/schema',
         'version': '1.0.0',
-        'title': 'Native Credential', 'type': 'object', 'properties': fields,
+        'title': 'V2 Credential', 'type': 'object', 'properties': fields,
         'required': required, 'additionalProperties': False,
     })
 
@@ -720,12 +720,12 @@ def test_grant_notification_and_file_acceptance_use_verified_acdc_v2_ipex_eviden
     app = wallet('accept-ui')
     issuer, holder = app.hby.makeHab(name='issuer'), app.hby.makeHab(name='holder')
     acdc, _, schemer = issue(app, issuer, holder.pre)
-    grant, atc = ipexing.grant(app.vault, issuer, acdc.said, holder.pre, 'Native grant')
+    grant, atc = ipexing.grant(app.vault, issuer, acdc.said, holder.pre, 'V2 grant')
     ipexing.prepare(app.vault, issuer, grant, atc)
     parent = QWidget()
     parent.app = app
     notifications = NotificationsListPage(parent=parent)
-    kind, message = notifications._format_ipex_message(grant, grant.route, 'Native grant')
+    kind, message = notifications._format_ipex_message(grant, grant.route, 'V2 grant')
     assert kind == 'GRANT'
     assert schemer.sed['title'] in message
     assert 'View Activity' in notifications._get_row_actions({'Type': kind})[0]
@@ -1171,7 +1171,7 @@ def test_wallet_tables_distinguish_issuee_and_grant_recipient(wallet, monkeypatc
     assert any('Credential subject: subject\nReceived by holder' in label.text()
                for label in review.findChildren(QLabel))
     accepted = app.vault.db.accepted.get(keys=(unaddressed.said,))
-    deletion = DeleteReceivedCredentialDialog(schema_name='Native Credential', said=unaddressed.said,
+    deletion = DeleteReceivedCredentialDialog(schema_name='V2 Credential', said=unaddressed.said,
                                              icon_path='', app=app, parent=parent)
     deletion._delete_credential()
     assert app.vault.db.accepted.get(keys=(unaddressed.said,)) is None
@@ -1962,7 +1962,7 @@ def test_notifications_do_not_replay_history_and_exchange_read_keeps_decision(wa
                                        ('Agree', agree, 'holder', '/exn/ipex/agree')]:
         notifier.add({'r': route, 'd': said})
         doer.recur(3)
-        assert events[-1][2]['message'] == f'{stage} from {sender}: Native Credential'
+        assert events[-1][2]['message'] == f'{stage} from {sender}: V2 Credential'
         notifications._load_notifications()
         rid = next(rid for (_, rid), note in notifier.noter.notes.getTopItemIter()
                    if note.attrs == {'r': route, 'd': said})

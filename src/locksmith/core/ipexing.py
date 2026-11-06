@@ -54,7 +54,7 @@ class UnsupportedDisclosurePlan(kering.ValidationError):
 
 
 def _validate_plan(plan):
-    """Require the native one-DAG outer wire value without rewriting history."""
+    """Require the v2 one-DAG outer wire value without rewriting history."""
     if (not isinstance(plan, list) or len(plan) != 1
             or not ipexing._validDisclosurePath(plan[0])):
         raise UnsupportedDisclosurePlan('Expected one DAG in q.dp')
@@ -177,7 +177,7 @@ def _edge_nodes(sad):
 
 
 def _reachable(hab, pre):
-    """Use native authorized endpoints and StreamPoster's role preference."""
+    """Use core authorized endpoints and StreamPoster's role preference."""
     ends = hab.endsFor(pre)
     role = next((role for role in (kering.Roles.controller, kering.Roles.agent, kering.Roles.mailbox)
                  if role in ends), kering.Roles.witness)
@@ -205,7 +205,7 @@ def _require_vault(vault, hab=None):
 
 
 def _require_graph_result(result):
-    """Interpret the native verdict explicitly; a verdict tuple is always truthy."""
+    """Interpret the core verdict explicitly; a verdict tuple is always truthy."""
     if result is not None and result.verdict == chaining.Verdicts.valid:
         return
     if result is not None and result.verdict == chaining.Verdicts.unknown and result.retryable:
@@ -228,7 +228,7 @@ def _require_issued(handler, nests, records):
 
 
 def _validate_selected(vault, origin, artifacts):
-    """Native usability check of exact selected bytes before any Grant signing."""
+    """Core usability check of exact selected bytes before any Grant signing."""
     handler = vault.exc.routes['/ipex/grant']
     nests = []
     try:
@@ -250,7 +250,7 @@ def _validate_selected(vault, origin, artifacts):
 
 
 def _validate_grant_graph(vault, said):
-    """Recheck this exact accepted Grant through the native read-only verifier."""
+    """Recheck this exact accepted Grant through the core read-only verifier."""
     try:
         _, nests, result, records = vault.exc.reverifyGrant(said)
         _require_graph_result(result)
@@ -524,7 +524,7 @@ def _offer_preview(original):
 
 
 def request_schema(exn, vault=None):
-    """Read the origin schema from the native one-DAG disclosure plan.
+    """Read the origin schema from the v2 one-DAG disclosure plan.
 
     ``vault`` resolves an empty reply ditto through its exact signed priors.
     Retired flat plans raise rather than being silently reinterpreted.

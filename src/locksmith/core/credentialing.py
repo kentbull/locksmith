@@ -10,7 +10,7 @@ from PySide6.QtCore import QUrl
 from PySide6.QtNetwork import QNetworkAccessManager, QNetworkReply, QNetworkRequest
 from hio.base import doing
 from keri import help, kering
-from keri.acdc import Registrar, acdcmap, regeventing, chaining, ipexing as native_ipex
+from keri.acdc import Registrar, acdcmap, regeventing, chaining, ipexing as core_ipex
 from keri.app.habbing import GroupHab
 from keri.app import grouping
 from keri.core import (Aggor, Blinder, BlindState, BoundState, Diger, Noncer, Number, Prefixer, SerderACDC,
@@ -102,7 +102,7 @@ class RegistryEvidencePending(kering.MissingChainError):
 
 
 def require_registry_evidence(vault, acdc, hab):
-    """Queue configured acquisition; native KEL/TEL evidence decides usability."""
+    """Queue configured acquisition; core KEL/TEL evidence decides usability."""
     from locksmith.core.registries import required
     worker = getattr(vault, 'registry_evidence', None)
     if worker is not None and worker.observer_url:
@@ -624,7 +624,7 @@ class IssueCredentialDoer(CredentialUpdateDoer):
                 rip = self.vault.rgy.store.event(registry.regk)
                 yield from self.anchor(registry, rip, receiptor, auths)
                 if self.registry_mode == 'derived':
-                    pending, attachment = native_ipex.grant(hab, self.recipient_pre,
+                    pending, attachment = core_ipex.grant(hab, self.recipient_pre,
                         'Approve registry key agreement', origin=acdc,
                         kind=kering.Kinds.json, gvrsn=kering.Vrsn_2_0)
                     owner = self.vault.auxiliary

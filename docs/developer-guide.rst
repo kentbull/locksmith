@@ -166,12 +166,12 @@ acceptance and the complete credential/disclosure workflow remain open.
 ACDC Graph Policy
 -----------------
 
-The vault composes ordinary KERIpy IPEX handlers and its one native ``Regery``
+The vault composes ordinary KERIpy IPEX handlers and its one core ``Regery``
 with the existing exchanger and mailbox scheduler. New Grant signing checks the
-exact selected substreams using the native graph walk, schema checks and
+exact selected substreams using the core graph walk, schema checks and
 ``EdgeVerdict`` reduction. Final signed IPEX verification remains authoritative.
 New admission and outgoing use recheck the exact accepted Grant through
-``Exchanger.reverifyGrant``. A valid native verdict plus authenticated ``issued``
+``Exchanger.reverifyGrant``. A valid core verdict plus authenticated ``issued``
 state for every disclosed registry-backed node permits use. Retryable unknown
 waits; invalid evidence refuses. Registry-free KEL/signature nodes need no
 registry-state record.
@@ -184,7 +184,7 @@ history preserves exact selected views; a later fuller Grant cannot hydrate an
 older admission. Recorded registry observations are not a current-state verdict.
 
 Current IPEX wire values carry one DAG: ``q.dp = [[[schema, "/", fields], ...]]``;
-``[[]]`` inherits the earlier plan. Opening exchanges use native ``xip`` and do
+``[[]]`` inherits the earlier plan. Opening exchanges use v2 ``xip`` and do
 not contain reply-only ``p``/``x`` fields. Retired flat plans are not rewritten.
 
 The Offer form exposes only attribute material held in the selected view.
@@ -197,14 +197,14 @@ Registry Evidence and Existing Roots
 ------------------------------------
 
 Configured acquisition sends authenticated queries and independently verifies
-supporting KEL/TEL through a strict parser sharing the vault Kramer and native
+supporting KEL/TEL through a strict parser sharing the vault Kramer and core
 Regery. A response must carry the requested registry's complete ordered TEL and
 its exact accepted head. Unrelated scopes, rollback, missing KEL and incomplete
 frames fail verification. Observer metadata and acquisition age are telemetry;
-they do not authorize admission or replace native current evidence. The existing
+they do not authorize admission or replace core current evidence. The existing
 finite Qt request timeout, cancellation and cleanup paths remain in use.
 
-Event openings are native ``Blinder`` values. ``putOpening(eventSaid, blinder)``
+Event openings are core ``Blinder`` values. ``putOpening(eventSaid, blinder)``
 is used only after exact accepted TEL membership; inspecting a credential never
 writes an opening. Public transport includes openings only from locally issued
 records explicitly marked public. Core public TEL cloning remains body-only and
@@ -294,8 +294,8 @@ Grant bytes and private keys never enter the durable outbox.
 
 Individual live Unblind requests use the same vault owner. The recipient explicitly
 requests missing current openings for a new live presentation; the presenter must
-separately approve its exact scope before the native owner replies with minimal
-event proofs. Missing held proof waits under the original request deadline. Native
+separately approve its exact scope before the core owner replies with minimal
+event proofs. Missing held proof waits under the original request deadline. Core
 verification finishes the same Grant; Admit remains a separate decision, and known
 revoked state still prevents application use. A later presentation starts with a
 new Grant from the exact selected admitted view, never the old terminal exchange.
@@ -331,9 +331,9 @@ On the recipient's Received Credentials row, choose **Import encrypted registry
 root**. Select the local recipient, exact received disclosure and held opening
 for an accepted registry BUP. Inspect the file and review its claimed sender,
 recipient, registry and reply SAID. Inspection does not authenticate or consume
-the reply. **Approve and import** gives native ``RegistrySalt`` that exact scope,
+the reply. **Approve and import** gives core ``RegistrySalt`` that exact scope,
 then sends the unchanged reply through the vault's ordinary Parser/KRAM/Revery.
-Only native successful encrypted retention reports success; an existing root or
+Only core successful encrypted retention reports success; an existing root or
 retained reply row is insufficient. Admission and historical proofs are unchanged.
 
 Missing accepted public evidence, an unavailable held opening, changed keys or
@@ -402,7 +402,7 @@ authority.
 
 The verifier separately chooses **Request state openings**. An authenticated
 request enables the discloser's **Approve state openings** action in Activity.
-Native Unblind selects minimal event proofs, verifies and retains the sender's
+Core Unblind selects minimal event proofs, verifies and retains the sender's
 exact live Grant before the reply leaves, then independently verifies the same
 Grant at the recipient. State verification still does not add the credential.
 The verifier must choose **Review credential**, then **Add**.
@@ -417,7 +417,7 @@ Regression disposition
 
 The graph-use regression retains the forbidden-signer guard and complete graph
 shape. Its obsolete expectation that an invalid graph becomes accepted history
-is replaced by native refusal or schema escrow. All five interrupted admission
+is replaced by core refusal or schema escrow. All five interrupted admission
 boundaries now run for signature, KEL-anchor and registry factors; witness timeout
 and witness-rotation quorum tests retain their original topology and deadlines.
 The admitted-view regression retains actual selection controls and reopen checks.
@@ -427,7 +427,7 @@ proof, rollback and header-nonauthority checks. Registry socket timeout,
 cancellation, publication head and current full-evidence observer checks remain.
 The plaintext custody handoff scenario is retired;
 rootless held proofs, supplied-opening independence and damaged-root isolation
-remain. Existing encrypted-root fixtures cover native derivation, explicit bound
+remain. Existing encrypted-root fixtures cover core derivation, explicit bound
 coordinates and reopen without claiming to test root provisioning.
 
 Building the Docs
