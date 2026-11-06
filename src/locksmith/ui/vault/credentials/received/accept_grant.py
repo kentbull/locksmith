@@ -111,10 +111,9 @@ class AcceptGrantDialog(LocksmithDialog):
         exn = self.vault.hby.db.exns.get(keys=(self.grant_said,))
         if exn is None or exn.pvrsn.major != 2 or exn.route != '/ipex/grant':
             raise ValueError("A verified ACDC V2 grant is required")
-        reply = self.vault.hby.db.erpy.get((self.grant_said,))
-        if reply:
-            saved = self.vault.hby.db.exns.get((reply.qb64,))
-            if saved is None or saved.route != '/ipex/admit':
+        saved = self.vault.exc.response(self.grant_said)
+        if saved is not None:
+            if saved.route != '/ipex/admit':
                 raise ValueError('This exchange was declined or closed. Start a new exchange to accept the credential.')
         credential = ipexing.grant_credential(self.vault, self.grant_said)
         self.sender = exn.sad['i']
@@ -125,7 +124,7 @@ class AcceptGrantDialog(LocksmithDialog):
                                 if self._group else None)
         self.timestamp = exn.sad.get('dt', '')
         self.requires_anchor = (exn.sad['a'].get('ax', [False])[0]
-                                and self.vault.hby.db.erpy.get((self.grant_said,)) is None)
+                                and self.vault.exc.response(self.grant_said) is None)
         self.acdc_ked = credential.sad
         self.credential_said = credential.said
         self.issuer = credential.sad['i']
@@ -418,8 +417,8 @@ class AcceptGrantDialog(LocksmithDialog):
                 self.cancel_button.show()
                 self.decline_button.hide()
                 self.delivery_notice.show()
-                reply = self.vault.hby.db.erpy.get((self.grant_said,))
-                queued = self.vault.db.outbox.get((reply.qb64,)) if reply else None
+                reply = self.vault.exc.response(self.grant_said)
+                queued = self.vault.db.outbox.get((reply.said,)) if reply else None
                 if queued is None:
                     self.delivery_notice.setText(
                         "Acceptance preparation is saved. See Credentials → Activity for its status.")

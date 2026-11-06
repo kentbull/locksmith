@@ -17,7 +17,6 @@ from keri.acdc import chaining, regeventing
 from keri.app import agenting, forwarding
 from keri.app.habbing import GroupHab
 from keri.core import BlindState, BoundState, Parser, SealSource, SerderACDC, SerderKERI, messagize
-from keri.db import fetchTsgs
 from keri.help import helping
 from keri.peer import exchanging
 
@@ -100,7 +99,7 @@ class Auxiliary(doing.DoDoer):
 
     def _context(self, hab, said):
         """Authenticate a live pending issuance without accepting its credential."""
-        message = self.vault.hby.db.epse.get((said,))
+        message = self.vault.exc.pending(said)
         if message is None or hab.pre not in (message.pre, message.sad.get('ri')):
             return None
         xid = message.said if message.ilk == 'xip' else message.sad.get('x')
@@ -112,7 +111,7 @@ class Auxiliary(doing.DoDoer):
     def _presentation(self, hab, said):
         """Read the exact live presentation, including pending missing openings."""
         message = (self.vault.hby.db.exns.get((said,))
-                   or self.vault.hby.db.epse.get((said,)))
+                   or self.vault.exc.pending(said))
         if message is None or hab.pre not in (message.pre, message.sad.get('ri')):
             return None
         xid = message.said if message.ilk == 'xip' else message.sad.get('x')
@@ -200,7 +199,7 @@ class Auxiliary(doing.DoDoer):
         result = {}
         self.groups.scan()
         self.presenters.scan()
-        for _, message in self.vault.hby.db.epse.getTopItemIter():
+        for message in self.vault.exc.pendingIter():
             for pre in (message.pre, message.sad.get('ri')):
                 local = self.vault.hby.habByPre(pre)
                 if local is None or hab is not None and local is not hab:
@@ -317,7 +316,7 @@ class Auxiliary(doing.DoDoer):
         """Approve the issuee's exact authenticated pending Grant; never Admit it."""
         ipexing._require_vault(self.vault, hab)
         if isinstance(hab, GroupHab):
-            grant = self.vault.hby.db.epse.get((grant_said,))
+            grant = self.vault.exc.pending(grant_said)
             if grant is not None and grant.sad['ri'] == hab.pre:
                 return self.holders.approve(hab, grant_said, proposal)
             return self.groups.approve(hab, grant_said, proposal)
@@ -454,10 +453,9 @@ class Auxiliary(doing.DoDoer):
             expires = helping.nowUTC() + timedelta(minutes=5)  # Explicit KRAM-off consent wait.
         kramer = self.vault.kramer
         if kramer.enabled and not any(kramer.denial(serder).startswith(value) for value in kramer.denials):
-            cache = self.vault.hby.db.kramMSGC.get((serder.pre, serder.said))
-            if cache is None:
+            expires = kramer.deadline(serder)
+            if expires is None:
                 raise kering.ValidationError('Auxiliary query has no accepted receipt time')
-            expires = helping.fromIso8601(cache.mdt) + timedelta(milliseconds=cache.d + cache.ml)
         expires = self._query_deadlines.setdefault(key, expires)
         if helping.nowUTC() >= expires:
             raise kering.ValidationError('The original auxiliary request deadline has elapsed')
@@ -528,11 +526,12 @@ class Auxiliary(doing.DoDoer):
                     if (operation.group is not None and operation.protocol.complete(operation.xid)
                             and serder.said not in operation.group.forwarded):
                         operation.group.forwarded.add(serder.said)
+                        stored = Parser(version=kering.Vrsn_2_0).parseOneBare(
+                            ims=operation.hab.loadReply(diger), processive=False)
                         verified, _, _, _, _ = exchanging.verifyAttachments(self.vault.hby, serder,
-                            tsgs=fetchTsgs(db=operation.hab.db.tsgs, diger=diger))
-                        state = operation.protocol._operations[operation.xid]
-                        proofs = {state['openings'][said].said: state['openings'][said]
-                                  for saids in state['selected'].values() for said in saids}
+                            tsgs=stored.tsgs)
+                        proofs = {opening.said: opening for opening
+                                  in operation.protocol.openings(operation.xid).values()}
                         raw = messagize(serder, cigars=cigars, tsgs=verified,
                             bonds=[proof.data for proof in proofs.values()], gvrsn=kering.Vrsn_2_0)
                         self.openings.broadcast(operation, raw, 'reply')
@@ -701,8 +700,7 @@ class Auxiliary(doing.DoDoer):
         self.observe_pending()
 
     def _admitted(self, operation):
-        terminal = self.vault.hby.db.erpy.get((operation.grant.said,))
-        response = self.vault.hby.db.exns.get((terminal.qb64,)) if terminal else None
+        response = self.vault.exc.response(operation.grant.said)
         if response is None:
             return False
         message = operation.grant

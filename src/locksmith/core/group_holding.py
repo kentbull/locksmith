@@ -126,7 +126,7 @@ class GroupHolders:
                 self.owner.outgoing.append(((operation.hab.pre, operation.grant.said), member, bytes(wire), topic))
 
     def approve(self, hab, said, selected):
-        grant = self.vault.hby.db.epse.get((said,))
+        grant = self.vault.exc.pending(said)
         if grant is None or selected != said:
             raise kering.ValidationError('Review the exact pending group-holder Grant')
         entry = self.candidate(hab, grant)
@@ -154,7 +154,7 @@ class GroupHolders:
     def reply_scope(self, wrapper, nests):
         child = SimpleNamespace(**nests[0]) if isinstance(nests[0], dict) else nests[0]
         body = child.serder
-        grant = next((message for _, message in self.vault.hby.db.epse.getTopItemIter()
+        grant = next((message for message in self.vault.exc.pendingIter()
                       if message.sad.get('ri') == body.pre and
                       (message.said if message.ilk == 'xip' else message.sad.get('x')) == body.sad['a'].get('x')), None)
         hab = self.vault.hby.habByPre(body.pre)
@@ -328,8 +328,7 @@ def admit_proposal(vault, hab, grant_said):
         return None
     receipt = vault.db.receipts.get((hab.pre, grant_said))
     selected = receipt.admit if receipt else ''
-    terminal = vault.hby.db.erpy.get((grant_said,))
-    completed = vault.hby.db.exns.get((terminal.qb64,)) if terminal else None
+    completed = vault.exc.response(grant_said)
     if completed is not None and completed.route == '/ipex/admit':
         if selected and selected != completed.said:
             raise kering.ValidationError('The terminal Admit differs from local acceptance consent')
@@ -379,10 +378,9 @@ def contribute_admit(vault, hab, grant, message, send, selected):
     """One acceptance click creates or endorses exactly one ordinary group Admit."""
     from locksmith.core import ipexing
     from locksmith.db.basing import GrantReceipt
-    terminal = vault.hby.db.erpy.get((grant.said,))
-    if terminal:
-        response = vault.hby.db.exns.get((terminal.qb64,))
-        if response is None or response.route != '/ipex/admit':
+    response = vault.exc.response(grant.said)
+    if response is not None:
+        if response.route != '/ipex/admit':
             raise kering.ValidationError('This Grant already has a terminal reply and cannot be accepted')
     receipt = vault.db.receipts.get((hab.pre, grant.said))
     if receipt is not None:

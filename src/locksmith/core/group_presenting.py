@@ -61,8 +61,8 @@ def _selection(vault, hab, said, source, paths):
     if (original.pvrsn != V2 or admit.pvrsn != V2
             or original.sad['ri'] != hab.pre or xid(admit) != xid(original)
             or original.sad['a'].get('ax', [False])[0]
-            or (terminal := vault.hby.db.erpy.get((source,))) is None
-            or terminal.qb64 != admit.said):
+            or (terminal := vault.exc.response(source)) is None
+            or terminal.said != admit.said):
         raise ValueError('Select this group\'s exact v2 Grant and accepted Admit')
     selected = exchanging.loadParsedNestedSubstreams(vault.hby, source)
     if selected[0].serder.said != said:
@@ -206,7 +206,7 @@ class GroupPresenters:
         elif deadline is not None:
             # Threshold intake alone assigns the accepted KRAM lifetime.
             phase = 'expired' if helping.nowUTC() >= deadline else 'complete'
-        elif not complete and self.vault.hby.db.epse.get((grant.said,)) is not None:
+        elif not complete and self.vault.exc.pending(grant.said) is not None:
             phase = 'awaiting_threshold' if entry.contributed else 'approval_required'
         else:
             phase = 'expired'
@@ -258,7 +258,7 @@ class GroupPresenters:
             if deadline is None:
                 if complete:
                     raise kering.ValidationError('Accepted group Grant has no authenticated KRAM lifetime')
-                if self.vault.hby.db.epse.get((grant.said,)) is None:
+                if self.vault.exc.pending(grant.said) is None:
                     entry.terminal = 'expired'
                     entry.error = 'The partial group Grant escrow ended before threshold'
                 return  # Partial: no lifetime exists before threshold intake.

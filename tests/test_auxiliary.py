@@ -344,7 +344,8 @@ def test_issuance_worker_finishes_dh_and_cancellation_drops_live_authority(ipex_
         scheduler.exit()
     assert pending.phase == 'cancelled'
     assert not io.outgoing
-    assert pending.protocol._operations[pending.xid]['abandoned']
+    with pytest.raises(kering.ValidationError, match='unavailable, terminated or expired'):
+        pending.protocol.complete(pending.xid)  # Core refuses an abandoned operation.
 
     # A vault close drops an unfinished recipient approval and its queued reply.
     unfinished = ho.operations[(hh.pre, pending.grant.said)]
@@ -355,7 +356,6 @@ def test_issuance_worker_finishes_dh_and_cancellation_drops_live_authority(ipex_
     holder.hby.cf.put(config)
     holder.close_vault()
     assert unfinished.phase == 'interrupted'
-    assert unfinished.protocol._operations[unfinished.xid]['abandoned']
     assert not ho.outgoing
     holder = ipex_vaults('worker-holder', bran='0123456789abcdefghijk')
     hh = holder.hby.habByName('holder')

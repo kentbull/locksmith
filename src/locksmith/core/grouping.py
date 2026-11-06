@@ -762,10 +762,7 @@ class GroupMultisigRotateDoer(doing.DoDoer):
             logger.info(f"Started counselor escrow for rotation of {self.ghab.pre}")
 
             # Step 7: Wait for counselor completion
-            while True:
-                saider = self.hby.db.cgms.get(keys=(self.ghab.pre, seqner.qb64))
-                if saider is not None:
-                    break
+            while not self.counselor.complete(prefixer, seqner):
                 yield self.tock
 
             # Step 8: Handle delegation if present
@@ -949,10 +946,7 @@ class MultisigRotationJoinDoer(doing.DoDoer):
                 )
 
             # Step 10: Wait for counselor completion
-            while True:
-                saider = self.hby.db.cgms.get(keys=(ghab.pre, seqner.qb64))
-                if saider is not None:
-                    break
+            while not self.counselor.complete(prefixer, seqner):
                 yield self.tock
 
             # Step 11: Check for shared witnesses
@@ -1044,8 +1038,8 @@ def check_pending_multisig(app, hab):
     if not isinstance(hab, keri_habbing.GroupHab):
         return False
     try:
-        pending = True if app.vault.hby.db.gpse.get(keys=(hab.pre,)) else False
-        return pending
+        pending = app.vault.counselor.pending(hab.pre)
+        return pending is not None and pending[0] == 'signatures'
     except Exception as e:
         logger.warning(f"Failed to check pending multisig for {hab.pre}: {e}")
         return False

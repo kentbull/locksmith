@@ -970,8 +970,7 @@ class ExchangeResponseDialog(LocksmithDialog):
     def _show_saved_reply_recovery(self):
         """Expose existing explicit recovery after interrupted outbox persistence."""
         prior = self.row['messages'][-1]
-        reply = self.vault.hby.db.erpy.get((prior.said,))
-        saved = self.vault.hby.db.exns.get((reply.qb64,)) if reply else None
+        saved = self.vault.exc.response(prior.said)
         if (saved is None or saved.pre not in self.vault.hby.prefixes
                 or self.vault.db.outbox.get((saved.said,)) is not None):
             return False
