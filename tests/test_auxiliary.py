@@ -1,4 +1,5 @@
 """Actual live Grants and auxiliary protocol owners, without accepted-row seeding."""
+import time
 from datetime import timedelta
 
 import pytest
@@ -309,18 +310,26 @@ def test_expiry_during_an_inflight_delivery_stops_and_reaps_it(ipex_vaults, monk
         assert all(not messenger.deeds for messenger in messengers)
 
 
-def test_repeated_deliveries_do_not_accumulate_scheduler_children(ipex_vaults):
+def test_repeated_deliveries_do_not_accumulate_scheduler_children(ipex_vaults, monkeypatch):
     """Every delivery the run loop extends, it also removes."""
+    from types import SimpleNamespace
+
+    from locksmith.core import auxiliary
+
     issuer, holder, ih, hh, _, _, _, message, atc, _ = pending_issuance(ipex_vaults)
     io, doer = issuer.vault.auxiliary, issuer.vault.auxiliary_doer
+    # The one-second query retry reads this clock; advance it per pass, not by runner speed.
+    clock = [time.monotonic()]
+    monkeypatch.setattr(auxiliary, 'time', SimpleNamespace(monotonic=lambda: clock[0]))
     io.begin_dh(ih, message, atc)
-    seen = set()
+    seen = []  # Hold each delivery so a freed object's id() cannot be counted twice.
     # No route is known, so each attempt ends at once and the query is retried each second.
     for _ in range(200):
         issuer.qtask.run()
+        clock[0] += 0.25
         assert len(doer.doers) <= 2
-        if doer.delivery is not None:
-            seen.add(id(doer.delivery))
+        if doer.delivery is not None and not any(item is doer.delivery for item in seen):
+            seen.append(doer.delivery)
     assert len(seen) >= 4
     io.abandon(ih.pre, message.said)
     for _ in range(10):
