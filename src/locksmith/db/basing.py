@@ -98,6 +98,7 @@ class IpexSubmission:
     """Authorize delivery of one retained EXN, keyed by its SAID in outbox.
 
     ``waiting_evidence`` preserves consent while prohibiting transmission;
+    ``refused`` is terminal: the credential's current registry state is revoked;
     ``attempts`` counts transport attempts, not observer-readiness checks.
     Existing persisted records need no schema migration.
     """

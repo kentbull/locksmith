@@ -101,6 +101,78 @@ class RegistryEvidencePending(kering.MissingChainError):
     """
 
 
+class CredentialRevoked(kering.ValidationError):
+    """The holder can open the issuer registry's current state and it is revoked.
+
+    Unlike RegistryEvidencePending this is final: waiting cannot change it.
+    """
+
+
+def revoked_event(vault, nests):
+    """Return (sn, said) of the revoking registry event the holder can open, else None.
+
+    Uses only core verdicts: the nests' retained openings, the public opening
+    of the registry head and, for a local credential party, openings derived
+    from its authorized registry root, all checked by regeventing.vetBinds.
+    An event the holder cannot open is unknown, never revoked.
+    """
+    store = vault.rgy.store
+    for nest in nests:
+        acdc = nest.serder
+        regid = acdc.sad.get('rd')
+        if not regid:
+            continue
+        rip, head = store.seqEvent(regid, 0), store.headEvent(regid)
+        if rip is None or head is None or head.ilk == 'upd':
+            continue
+        updates = [store.seqEvent(regid, sn) for sn in range(1, Number(numh=head.sad['n']).num + 1)]
+        if any(update is None for update in updates):
+            continue
+        proofs = [Blinder(clan=clan, qb64=b''.join(part.qb64b for part in proof))
+                  for clan, groups in ((BlindState, nest.bsqs), (BoundState, nest.bsss))
+                  for proof in groups]
+        if (public := store.opening(head.said)) is not None:
+            proofs.append(public)
+        for aid in {aid for aid in (acdc.iseaid, acdc.israid) if aid in vault.hby.prefixes}:
+            try:
+                root = disclosing.registry_root(vault, aid, regid)
+            except (kering.KeriError, ValueError):
+                continue
+            for update in reversed(updates):
+                if any(proof.said == update.sad['b'] for proof in proofs):
+                    continue
+                sn = Number(numh=update.sad['n']).num
+                opened = (Blinder.unblind(update.sad['b'], salt=root.qb64, sn=sn, acdc=acdc.said,
+                                          states=['issued', 'revoked'])
+                          or Blinder.unblind(update.sad['b'], salt=root.qb64, sn=sn, acdc='', states=['']))
+                if opened is not None:
+                    proofs.append(opened)
+        unique = {proof.qb64: proof for proof in proofs}
+        try:
+            state = regeventing.vetBinds(rip, updates, db=vault.hby.db, blinders=unique.values(),
+                                         target=acdc.said, acdc=acdc)
+        except kering.KeriError:
+            continue
+        if state.state != 'revoked':
+            continue
+        for update in reversed(updates):
+            for proof in unique.values():
+                if proof.said == update.sad['b']:
+                    try:
+                        td, status = regeventing.vetBlind(proof, blid=update.sad['b'])
+                    except kering.KeriError:
+                        continue
+                    if td or status:
+                        return Number(numh=update.sad['n']).num, update.said
+        return state.sn, state.said
+    return None
+
+
+def revoked_message(event):
+    """Human reason for a known revoked state; event is (sn, said)."""
+    return f'Credential is revoked (registry event {event[0]}/{event[1]})'
+
+
 def require_registry_evidence(vault, acdc, hab):
     """Queue configured acquisition; core KEL/TEL evidence decides usability."""
     from locksmith.core.registries import required

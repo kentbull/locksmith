@@ -431,7 +431,7 @@ class CredentialActivityPage(BaseListPage):
                     if interrupted:
                         actions = ['Resume acceptance']
                     submission = exchange['submissions'].get(tip.said) if tip else None
-                    blocked = bool(tip and tip.pre == pre and submission and submission.status in ('blocked', 'failed'))
+                    blocked = bool(tip and tip.pre == pre and submission and submission.status in ('blocked', 'failed', 'refused'))
                     finished = bool(tip and tip.route in ('/ipex/admit', '/ipex/spurn')
                                     and not interrupted and not exchange['problem']
                                     and (tip.pre != pre or submission and submission.status == 'submitted'))
@@ -636,7 +636,7 @@ class CredentialActivityPage(BaseListPage):
             return 'Acceptance needs to be resumed.'
         if record and local and record.status != 'submitted':
             label = {'pending': 'Queued', 'sending': 'Sending', 'failed': 'Send failed',
-                     'blocked': 'Sending blocked',
+                     'blocked': 'Sending blocked', 'refused': 'Refused: credential revoked',
                      'waiting_evidence': 'Waiting for observer evidence'}.get(record.status, record.status)
             if record.status == 'blocked' and record.missing_route:
                 label = 'Delivery details needed'
