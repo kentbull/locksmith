@@ -237,6 +237,12 @@ class Auxiliary(doing.DoDoer):
         if hab is not None and (context := self._context(hab, grant_said)):
             return self._snapshot(hab, *context)
         if hab is not None and (context := self._presentation(hab, grant_said)):
+            message, xid = context
+            # Match pending(): the presenter has nothing to approve before an
+            # authenticated request for its openings exists.
+            asked = (Unblind.Route, message.sad['ri'], xid)
+            if hab.pre == message.pre and asked not in self._queries and asked not in self._query_deadlines:
+                return None
             return self._snapshot(hab, *context, kind='unblind')
         return None
 

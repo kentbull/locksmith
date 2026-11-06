@@ -223,8 +223,16 @@ def _require_issued(handler, nests, records):
         record = records.get(nest.serder.said)
         if record is None:
             raise credentialing.RegistryEvidencePending('Registry factor awaits authenticated state')
+        if record.state == 'revoked':
+            raise credentialing.CredentialRevoked(credentialing.revoked_message((record.sn, record.said)))
         if record.state != 'issued':
             raise kering.ValidationError(f'Credential state is {record.state}, not issued')
+
+
+def _refuse_if_revoked(vault, nests, error):
+    """Turn a wait into a final refusal only when a revoked state is openable now."""
+    if event := credentialing.revoked_event(vault, nests):
+        raise credentialing.CredentialRevoked(credentialing.revoked_message(event)) from error
 
 
 def _validate_selected(vault, origin, artifacts):
@@ -245,6 +253,9 @@ def _validate_selected(vault, origin, artifacts):
         result = handler._evaluateNode(nests[0].serder.said, nodes=graph[0], memo={}, records=records)
         _require_graph_result(result)
         _require_issued(handler, nests, records)
+    except credentialing.RegistryEvidencePending as error:
+        _refuse_if_revoked(vault, nests, error)
+        raise
     except (kering.MissingSchemaError, kering.MissingChainError) as error:
         raise credentialing.RegistryEvidencePending(str(error)) from error
 
@@ -255,6 +266,9 @@ def _validate_grant_graph(vault, said):
         _, nests, result, records = vault.exc.reverifyGrant(said)
         _require_graph_result(result)
         _require_issued(vault.exc.routes['/ipex/grant'], nests, records)
+    except credentialing.RegistryEvidencePending as error:
+        _refuse_if_revoked(vault, exchanging.loadParsedNestedSubstreams(vault.hby, said), error)
+        raise
     except (kering.MissingSchemaError, kering.MissingChainError) as error:
         raise credentialing.RegistryEvidencePending(str(error)) from error
 
@@ -397,6 +411,31 @@ def _disclosure_plan(origin, nodes):
     return _validate_plan([plan])
 
 
+def _explain_unissued(vault, view, error=None):
+    """Replace a raw refusal with a revoked or needs-current-evidence reason.
+
+    A known revoked state is final. A newer registry event the holder cannot
+    open is unknown, so point to current registry-state evidence instead.
+    """
+    ims = bytearray(view['proof'])
+    nests = parsing.Parser(version=kering.Vrsn_2_0).parse(ims=ims, processive=False)
+    if event := credentialing.revoked_event(vault, nests):
+        raise credentialing.CredentialRevoked(credentialing.revoked_message(event)) from error
+    if error is None:
+        # The stale-view path reports a refusal as 'unknown'; recover its cause.
+        for nest in nests:
+            try:
+                credentialing.authentication(vault, nest)
+            except kering.UnverifiedBlindError as cause:
+                error = cause
+            except kering.KeriError:
+                pass
+    if error is not None:
+        raise kering.ValidationError(
+            'presentation requires current verified issued state; '
+            'choose "Use current registry-state evidence"') from error
+
+
 def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
                          disclose=(), refresh=False, openings=(), derive=False, bound_event=None, preview=False):
     """Load exact selected material and its ACDC v2 IPEX disclosure plan.
@@ -414,9 +453,14 @@ def _credential_evidence(vault, credential_said, hab=None, *, from_grant=None,
             raise ValueError('State opening selection belongs to Grant, not Offer preview')
         view = dict(view, sad=disclosing.select(SerderACDC(sad=view['sad']), disclose).sad)
     elif disclose or refresh or openings or derive or bound_event:
-        view = disclosing.material(vault, view, paths=disclose, refresh=refresh,
-                                   openings=openings, derive=derive, bound_event=bound_event)
+        try:
+            view = disclosing.material(vault, view, paths=disclose, refresh=refresh,
+                                       openings=openings, derive=derive, bound_event=bound_event)
+        except kering.UnverifiedBlindError as error:
+            _explain_unissued(vault, view, error)
+            raise
     if not preview and view['status']['et'] not in ('issued', 'authenticated'):
+        _explain_unissued(vault, view)
         raise kering.ValidationError('Credential does not have a verified issued state or issuer authentication')
     if hab is not None:
         credentialing.require_registry_evidence(vault, SerderACDC(sad=view['sad']), hab)
@@ -1126,6 +1170,15 @@ class SendIpexDoer(credentialing.CredentialUpdateDoer):
             record.status = 'submitted'
             self.vault.db.outbox.pin((self.said,), record)
             self.vault.signals.emit_doer_event('Ipex', 'transport_submitted', {'said': self.said})
+        except credentialing.CredentialRevoked as ex:
+            # Revocation is final: keep the signed message but never retry it.
+            if record is not None and self.vault.db.opened:
+                record.status, record.error = 'refused', str(ex)
+                record.retry_at = 0.0
+                self.vault.db.outbox.pin((self.said,), record)
+                self.vault.signals.emit_doer_event('Ipex', 'send_failed',
+                                                   {'said': self.said, 'error': record.error})
+            logger.warning('IPEX submission refused: %s', ex)
         except credentialing.RegistryEvidencePending as ex:
             if record is not None and self.vault.db.opened:
                 record.status, record.error = 'waiting_evidence', str(ex)
