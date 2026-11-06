@@ -38,12 +38,24 @@ for port in map(int, sys.argv[1:]):
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', port))
 PYPORTS
-# The bootstrap helper still imports kf-registrar, so its install is always required.
-uv sync --project "$registrar_repo" --locked --extra dev --python 3.14
+boot_repo="$keri_workspace/infra/kf-boot"
+# Install only selected Python services. The bootstrap helper needs only KERIpy, so it runs from
+# the Python service that owns retained identities, else from kf-boot's install.
+if [ "$registrar_backend" = python ]; then
+    uv sync --project "$registrar_repo" --locked --extra dev --python 3.14
+fi
 if [ "$observer_backend" = python ]; then
     uv sync --project "$observer_repo" --locked --extra dev --python 3.14
 fi
-service_python="$registrar_repo/.venv/bin/python"
+if [ "$registrar_backend" = python ]; then
+    helper_repo=$registrar_repo
+elif [ "$observer_backend" = python ]; then
+    helper_repo=$observer_repo
+else
+    helper_repo=$boot_repo
+    uv sync --project "$boot_repo" --locked --extra dev --python 3.14
+fi
+service_python="$helper_repo/.venv/bin/python"
 pids=()
 cleanup() {
     trap - EXIT INT TERM

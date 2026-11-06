@@ -10,11 +10,11 @@ import subprocess
 from pathlib import Path
 
 from keri import Vrsn_2_0
+from keri.acdc import Regery
 from keri.app import Habery, openHby
-from keri.core import Parser, SerderKERI
+from keri.core import Kevery, Parser, SerderKERI
 from keri.kering import KeriError
 from keri.peer.exchanging import serializeParsedSubstream
-from kfregistrar.core.serving import makeContext
 
 
 def introductions(config_path):
@@ -30,7 +30,9 @@ def introductions(config_path):
             raise ValueError(f'{role} must be an array of public introduction paths')
     roles, streams = {}, {}
     with openHby(name='local-registry-introductions', temp=True, version=Vrsn_2_0) as hby:
-        context = makeContext(hby)
+        # Core KERIpy acceptance needs no service package, so any selected backend can run this helper.
+        rgy = Regery(hby=hby, name=hby.name, temp=True)
+        kvy = Kevery(db=hby.db, lax=False, local=False)
         try:
             for role, paths in config.items():
                 roles[role] = []
@@ -53,15 +55,16 @@ def introductions(config_path):
                         aid = frames[0].serder.pre
                         kel = b''.join(serializeParsedSubstream(frame) for frame in frames
                                        if frame.serder.ilk != 'rpy')
-                        result = context.ingest(kel)
-                        if result['pending'] or result['rejected'] or aid not in hby.kevers:
+                        outcomes, refusal = rgy.ingest(kel, kvy=kvy)
+                        if (refusal is not None or any(outcome.status != 'accepted' for outcome in outcomes)
+                                or aid not in hby.kevers):
                             raise ValueError(f'Public KEL did not verify completely: {path}')
                         streams[path] = aid, kel
                     aid, _ = streams[path]
                     if aid not in roles[role]:
                         roles[role].append(aid)
         finally:
-            context.close()
+            rgy.close()
     return roles, b''.join(kel for _, kel in streams.values())
 
 
