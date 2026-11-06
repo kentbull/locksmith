@@ -1186,7 +1186,7 @@ def test_acdc_v2_credential_content_kind_and_acceptance_state(ipex_vaults, kind,
         assert not receiver.hby.db.erpy.get((grant.said,))
 
 
-@pytest.mark.parametrize('saved_receipt', ['accepted', 'legacy', 'interrupted'])
+@pytest.mark.parametrize('saved_receipt', ['accepted', 'missing', 'interrupted'])
 def test_accepted_credential_retains_admit_after_revocation(ipex_vaults, monkeypatch, saved_receipt):
     from keri.acdc import Registrar
     from keri.peer import exchanging
@@ -1205,9 +1205,8 @@ def test_accepted_credential_retains_admit_after_revocation(ipex_vaults, monkeyp
     else:
         admit, _ = ipexing.admit(receiver.vault, holder, grant.said)
     retained = exchanging.serializeMessage(receiver.hby, admit.said)
-    if saved_receipt == 'legacy':
-        # Earlier V2 vaults have the same ACDC v2 IPEX evidence and inventory entry,
-        # but no separate per-grant receipt.
+    if saved_receipt == 'missing':
+        # Strict roll-forward: an inventory row alone is not a saved acceptance receipt.
         receiver.vault.db.receipts.rem((holder.pre, grant.said))
     reg = sender.vault.rgy.registryByName('fixture')
     registrar = Registrar(rgy=sender.vault.rgy)
@@ -1226,10 +1225,15 @@ def test_accepted_credential_retains_admit_after_revocation(ipex_vaults, monkeyp
     receiver.close_vault()
     receiver = ipex_vaults('receipt-receiver')
     holder = receiver.hby.habByName('holder')
-    if saved_receipt != 'legacy':
-        assert receiver.vault.db.receipts.get((holder.pre, grant.said)).status == 'accepted'
     # Recovery preserves past acceptance; the old disclosure cannot reveal the new state.
     assert credentialing.credential(receiver.vault, credential.said)['status']['et'] == 'unknown'
+    if saved_receipt == 'missing':
+        # Without a receipt, Admit takes the ordinary validation path; the old view cannot prove current state.
+        with pytest.raises(credentialing.RegistryEvidencePending):
+            ipexing.admit(receiver.vault, holder, grant.said)
+        assert receiver.vault.db.receipts.get((holder.pre, grant.said)) is None
+        return
+    assert receiver.vault.db.receipts.get((holder.pre, grant.said)).status == 'accepted'
     restored, atc = ipexing.admit(receiver.vault, holder, grant.said)
     assert restored.raw + atc == retained
     receipt = receiver.vault.db.receipts.get((holder.pre, grant.said))

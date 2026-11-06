@@ -258,8 +258,13 @@ class GroupPresenters:
             if deadline is None:
                 if complete:
                     raise kering.ValidationError('Accepted group Grant has no authenticated KRAM lifetime')
+                if self.vault.hby.db.epse.get((grant.said,)) is None:
+                    entry.terminal = 'expired'
+                    entry.error = 'The partial group Grant escrow ended before threshold'
                 return  # Partial: no lifetime exists before threshold intake.
             if helping.nowUTC() >= deadline:
+                entry.terminal = 'expired'
+                entry.error = 'The original group Grant deadline has elapsed'
                 return
             if not complete and self.owner._presentation(entry.hab, grant.said) is None:
                 return

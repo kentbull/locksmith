@@ -908,12 +908,6 @@ def admit(vault, hab, grant_said, message='', *, send=False, proposal=None):
     receipt = vault.db.receipts.get((hab.pre, grant_said))
     if receipt is None:
         credential = grant_credential(vault, grant_said)
-        accepted = vault.db.accepted.get((credential.said,))
-        if accepted is not None and accepted.grant == grant_said:
-            # Earlier V2 vaults saved acceptance without a separate receipt.
-            receipt = GrantReceipt(credential=credential.said, admit=accepted.admit,
-                                   send=send, status='accepted')
-            return _finish_receipt(vault, hab.pre, grant_said, receipt, restore=True)
         if reply is None and (error := expiry_error(vault, grant)):
             raise kering.ValidationError(error)
         if grant.sad['a'].get('ax', [False])[0] and vault.hby.db.erpy.get((grant_said,)) is None:
