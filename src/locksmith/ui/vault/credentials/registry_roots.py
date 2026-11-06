@@ -103,7 +103,7 @@ class RootCopiesSection(QWidget):
     """Read-only Activity list of received copies still waiting for local state.
 
     Received roots are retained automatically; nothing here approves or
-    dismisses a copy. Escrowed copies are retried until their deadline.
+    dismisses a copy. Escrowed copies are retried until retained or refused.
     """
 
     def __init__(self, page):
@@ -138,11 +138,11 @@ class RootCopiesSection(QWidget):
         name = self.page._name
         for item in items:
             try:
-                deadline = helping.fromIso8601(item.deadline).astimezone().strftime('%b %d, %Y %H:%M')
+                since = helping.fromIso8601(item.escrowed).astimezone().strftime('%b %d, %Y %H:%M')
             except (ValueError, TypeError):
-                deadline = item.deadline
+                since = item.escrowed
             text = QLabel(f'{name(item.sender)} → {name(item.gid)} · registry {item.registry[:12]}… · '
-                          f'waiting for {item.waiting} · retried until {deadline}')
+                          f'waiting for {item.waiting} since {since}')
             text.setTextFormat(Qt.TextFormat.PlainText)
             text.setWordWrap(True)
             text.setToolTip(f'Copy {item.said}\nRecipient {item.recipient}\nRegistry {item.registry}')

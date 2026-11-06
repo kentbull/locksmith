@@ -388,7 +388,7 @@ def test_issuer_root_copy_is_retained_automatically(ipex_vaults, qapp, tmp_path)
     target.vault.roots.retry = lambda: None  # Without the held-opening retry the copy waits.
     page.root_copies.import_file(hintless)
     copy, = target.vault.roots.pending()
-    assert copy.waiting == 'opening evidence' and copy.deadline
+    assert copy.waiting == 'opening evidence' and copy.escrowed
     assert 'waiting for local state' in page.root_copies.message
     assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk) is None
     page.refresh()
@@ -412,7 +412,7 @@ def test_issuer_root_copy_is_retained_automatically(ipex_vaults, qapp, tmp_path)
     page.set_vault_name(target.name)
 
     # A correctly signed wrong root, imported from a file, never verifies: it waits in
-    # escrow, never replaces the retained root, and is dropped once its deadline passes.
+    # escrow with no timeout and never replaces the retained root.
     bad = tmp_path / 'wrong.cesr'
     bad.write_bytes(rootExn(issuer, holder.pre, holder.pre, registry.regk, Salter(),
                             event=head.said, td=acdc.said))
@@ -425,11 +425,8 @@ def test_issuer_root_copy_is_retained_automatically(ipex_vaults, qapp, tmp_path)
     assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
     target.hby.db.rrpe.pin(keys=(wrong.said,), val=Dater(dts='2020-01-01T00:00:00.000000+00:00'))
     target.vault.mbx.exchanger.processEscrow()
-    assert target.vault.roots.pending() == []
+    assert [item.said for item in target.vault.roots.pending()] == [wrong.said]
     assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
-    # Re-importing the dropped copy reports that it is not retained.
-    page.root_copies.import_file(bad)
-    assert page.root_copies.error.startswith('Registry root copy not retained'), page.root_copies.error
     # The Activity list is informational: no approve or dismiss control exists.
     assert not hasattr(page.root_copies, 'approve') and not hasattr(page.root_copies, 'dismiss')
     assert not hasattr(target.vault.roots, 'approve') and not hasattr(target.vault.roots, 'dismiss')

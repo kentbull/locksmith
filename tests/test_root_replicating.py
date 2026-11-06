@@ -151,7 +151,7 @@ def test_copy_escrows_until_the_newcomer_has_the_registry(ipex_vaults):
     event, = _sent(alice)
     _deliver_ipex(carol.vault, event['serder'].raw + event['attachment'])
     copy, = carol.vault.roots.pending()
-    assert copy.said == event['serder'].said and 'registry' in copy.waiting and copy.deadline
+    assert copy.said == event['serder'].said and 'registry' in copy.waiting and copy.escrowed
     assert carol.hby.mgr.getRegistryRoot(w.gid, w.registry) is None
     assert not _notes(carol)
     # The vault's escrow loop retries the copy; without the registry it stays escrowed.
@@ -219,3 +219,25 @@ def test_owed_copy_survives_transient_prepare_errors_and_drops_only_on_refusal(i
     roots.owe(w.gid, w.registry, w.ch.pre)
     alice.vault.auxiliary.process()
     assert not list(alice.vault.db.rootSends.getTopItemIter())
+
+
+def test_stored_copy_dropped_from_escrow_is_restored_on_reopen(ipex_vaults):
+    w = _rotated_group(ipex_vaults, newcomer_has_tel=False)
+    alice, carol = w.alice, w.carol
+    alice.vault.auxiliary.process()
+    event, = _sent(alice)
+    _deliver_ipex(carol.vault, event['serder'].raw + event['attachment'])
+    said = event['serder'].said
+    # A previous core timed the copy out of escrow; the stored exchange remains.
+    carol.hby.db.rrpe.rem(keys=(said,))
+    _deliver_ipex(carol.vault, w.tel)
+    carol.vault.mbx.exchanger.processEscrow()
+    assert carol.vault.roots.pending() == []
+    assert carol.hby.mgr.getRegistryRoot(w.gid, w.registry) is None
+
+    # The next session hands the stored copy back to core, which now retains it.
+    carol.close_vault()
+    carol = ipex_vaults('roots-carol', bran=BRAN)
+    assert carol.hby.mgr.getRegistryRoot(w.gid, w.registry).qb64 == w.root.qb64
+    assert carol.vault.roots.pending() == []
+    assert carol.vault.roots.restore() == []
