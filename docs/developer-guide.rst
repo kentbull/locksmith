@@ -110,9 +110,52 @@ that installed dependency on subsequent restarts:
    LOCAL_PROVIDER_BACKEND=typescript bash scripts/local-provider.sh \
      "$HOME/.local/share/locksmith-local-provider-ts"
 
-Use a separate state directory for each backend choice. Python dependencies use
-their locked installs; TypeScript services use the normal Tufa commands through
-Deno. Service identities and TLS certificates are retained across restarts.
+Each role can also be selected on its own. ``LOCAL_PROVIDER_BACKEND`` sets the
+default for the four service roles, and each of these overrides one role:
+
+.. list-table::
+   :header-rows: 1
+
+   * - Variable
+     - Role
+     - Default
+   * - ``LOCAL_PROVIDER_BOOT``
+     - kf-boot
+     - ``python``
+   * - ``LOCAL_PROVIDER_WITNESS_BACKEND``
+     - the four witnesses
+     - ``LOCAL_PROVIDER_BACKEND``
+   * - ``LOCAL_PROVIDER_WATCHER_BACKEND``
+     - the watcher
+     - ``LOCAL_PROVIDER_BACKEND``
+   * - ``LOCAL_PROVIDER_REGISTRAR_BACKEND``
+     - Registrar
+     - ``LOCAL_PROVIDER_BACKEND``
+   * - ``LOCAL_PROVIDER_OBSERVER_BACKEND``
+     - Observer
+     - ``LOCAL_PROVIDER_BACKEND``
+
+Every value is ``python`` or ``typescript``. For example, Python kf-boot over
+TypeScript witnesses and a Python watcher, Registrar and Observer:
+
+.. code-block:: bash
+
+   LOCAL_PROVIDER_WITNESS_BACKEND=typescript bash scripts/local-provider.sh \
+     "$HOME/.local/share/locksmith-local-provider-mixed"
+
+``LOCAL_PROVIDER_BOOT=typescript`` runs ``tufa boot backend`` from the keri-ts
+checkout in place of the Python kf-boot. Both read the same ``KF_BOOT_*``
+settings exported by the launcher.
+
+The state directory records the selected roles in a ``topology`` file, for
+example ``boot=python witness=typescript watcher=python registrar=python
+observer=python``. The launcher refuses a state directory whose topology differs,
+and it refuses retained state without that file, including state from launchers
+that recorded only one backend. Use a separate state directory for each topology.
+Python dependencies use their locked installs, and the launcher installs only the
+Python repositories of the selected roles; TypeScript roles use the normal Tufa
+commands through Deno. The launcher prints its start message after kf-boot answers
+``/health``. Service identities and TLS certificates are retained across restarts.
 The launcher refuses occupied ports. Set ``KERI_WORKSPACE`` if repositories live
 under another KERI workspace root. The optional first argument selects service
 state; the default is ``~/.local/share/locksmith-local-provider``.

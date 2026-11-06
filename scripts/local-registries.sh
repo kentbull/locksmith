@@ -8,8 +8,13 @@ if [ "$#" -lt 1 ] || [ "$#" -gt 2 ]; then
 fi
 script_dir=$(cd -- "$(dirname -- "${BASH_SOURCE[0]}")" && pwd)
 keri_workspace=${KERI_WORKSPACE:-$(cd "$script_dir/../../../.." && pwd)}
-backend=${LOCAL_PROVIDER_BACKEND:-python}
-case "$backend" in python|typescript) ;; *) echo 'LOCAL_PROVIDER_BACKEND must be python or typescript' >&2; exit 2 ;; esac
+default_backend=${LOCAL_PROVIDER_BACKEND:-python}
+registrar_backend=${LOCAL_PROVIDER_REGISTRAR_BACKEND:-$default_backend}
+observer_backend=${LOCAL_PROVIDER_OBSERVER_BACKEND:-$default_backend}
+for knob in LOCAL_PROVIDER_BACKEND:"$default_backend" LOCAL_PROVIDER_REGISTRAR_BACKEND:"$registrar_backend" \
+    LOCAL_PROVIDER_OBSERVER_BACKEND:"$observer_backend"; do
+    case "${knob#*:}" in python|typescript) ;; *) echo "${knob%%:*} must be python or typescript" >&2; exit 2 ;; esac
+done
 offset=$(python3 - "${LOCAL_PROVIDER_PORT_OFFSET:-0}" <<'PYOFFSET'
 import sys
 value = sys.argv[1]
@@ -33,8 +38,9 @@ for port in map(int, sys.argv[1:]):
     with socket.socket() as listener:
         listener.bind(('127.0.0.1', port))
 PYPORTS
+# The bootstrap helper still imports kf-registrar, so its install is always required.
 uv sync --project "$registrar_repo" --locked --extra dev --python 3.14
-if [ "$backend" = python ]; then
+if [ "$observer_backend" = python ]; then
     uv sync --project "$observer_repo" --locked --extra dev --python 3.14
 fi
 service_python="$registrar_repo/.venv/bin/python"
@@ -58,7 +64,7 @@ rm -f "$state_dir/registry-services.env"
 bootstrap_args=("$state_dir")
 if [ "$#" -eq 2 ]; then bootstrap_args+=("$2"); fi
 "$service_python" "$script_dir/local_registry_bootstrap.py" "${bootstrap_args[@]}" \
-    --backend "$backend" --ts-repo "$ts_repo" > "$state_dir/bootstrap.log" 2>&1 &
+    --registrar-backend "$registrar_backend" --observer-backend "$observer_backend" --ts-repo "$ts_repo" > "$state_dir/bootstrap.log" 2>&1 &
 pids+=("$!")
 wait "${pids[0]}"
 pids=()
@@ -127,39 +133,40 @@ for certificate, key in (sys.argv[1:3], sys.argv[3:5]):
 PY
 
 
-if [ "$backend" = python ]; then
-    (cd "$registrar_repo" && KLI_KEYSTORE_PASSCODE=$(cat "$state_dir/service-passcode") \
+tufa=(deno run --allow-all --unstable-ffi packages/tufa/mod.ts)
+passcode=$(cat "$state_dir/service-passcode")
+if [ "$registrar_backend" = python ]; then
+    (cd "$registrar_repo" && KLI_KEYSTORE_PASSCODE="$passcode" \
         exec .venv/bin/kf-registrar start --name localdev-registrar --alias registrar \
         --base "$registry_base/registrar" --host 127.0.0.1 --http "$registrar_public" \
         --boothost 127.0.0.1 --bootport "$registrar_boot" --observer "$observer_aid" \
         ${publishers[@]+"${publishers[@]}"} --kel "$state_dir/public-bootstrap.cesr" \
         --keypath "$key" --certpath "$certificate" --cafilepath "$ca" --no-prompt) \
         > "$state_dir/registrar.log" 2>&1 &
-    pids+=("$!")
-    (cd "$observer_repo" && KLI_KEYSTORE_PASSCODE=$(cat "$state_dir/service-passcode") \
+else
+    (cd "$ts_repo" && exec "${tufa[@]}" registrar start --name localdev-registrar --alias registrar \
+        --head-dir "$state_dir/tufa" --passcode "$passcode" --url "https://localhost:$registrar_public" \
+        --http "$registrar_public" --boot-port "$registrar_boot" --observer "$observer_aid" \
+        --kel "$state_dir/public-bootstrap.cesr" --tls-key "$key" --tls-cert "$certificate") \
+        > "$state_dir/registrar.log" 2>&1 &
+fi
+pids+=("$!")
+if [ "$observer_backend" = python ]; then
+    (cd "$observer_repo" && KLI_KEYSTORE_PASSCODE="$passcode" \
         exec .venv/bin/kf-observer start --name localdev-observer --alias observer \
         --base "$registry_base/observer" --host 127.0.0.1 --http "$observer_public" --bootport "$observer_boot" \
         --registrar "https://localhost:$registrar_public/" --registrar-ca "$ca" \
         --keypath "$key" --certpath "$certificate" --cafilepath "$ca" \
         ${readers[@]+"${readers[@]}"} --kel "$state_dir/public-bootstrap.cesr" --poll 1 --timeout 5 --no-prompt) \
         > "$state_dir/observer.log" 2>&1 &
-    pids+=("$!")
 else
-    tufa=(deno run --allow-all --unstable-ffi packages/tufa/mod.ts)
-    passcode=$(cat "$state_dir/service-passcode")
-    (cd "$ts_repo" && exec "${tufa[@]}" registrar start --name localdev-registrar --alias registrar \
-        --head-dir "$state_dir/tufa" --passcode "$passcode" --url "https://localhost:$registrar_public" \
-        --http "$registrar_public" --boot-port "$registrar_boot" --observer "$observer_aid" \
-        --kel "$state_dir/public-bootstrap.cesr" --tls-key "$key" --tls-cert "$certificate") \
-        > "$state_dir/registrar.log" 2>&1 &
-    pids+=("$!")
     (cd "$ts_repo" && exec "${tufa[@]}" observer start --name localdev-observer --alias observer \
         --head-dir "$state_dir/tufa" --passcode "$passcode" --url "https://localhost:$observer_public" \
         --http "$observer_public" --boot-port "$observer_boot" --registrar "https://localhost:$registrar_public" \
         --registrar-ca "$ca" --kel "$state_dir/public-bootstrap.cesr" --poll-interval 1 \
         ${readers[@]+"${readers[@]}"} --tls-key "$key" --tls-cert "$certificate") > "$state_dir/observer.log" 2>&1 &
-    pids+=("$!")
 fi
+pids+=("$!")
 
 "$service_python" - "$ca" "$registrar_boot" "$registrar_public" "$observer_boot" "$observer_public" ${pids[@]+"${pids[@]}"} <<'PYREADY'
 import os, ssl, sys, time
@@ -197,7 +204,8 @@ PYREADY
     printf 'export KF_BOOT_OBSERVER_CA_FILE=%q\n' "$ca"
 } > "$state_dir/registry-services.env.tmp"
 mv "$state_dir/registry-services.env.tmp" "$state_dir/registry-services.env"
-printf 'Local %s registry services ready. Logs/state: %s\n' "$backend" "$state_dir"
+printf 'Local registry services ready (registrar=%s observer=%s). Logs/state: %s\n' \
+    "$registrar_backend" "$observer_backend" "$state_dir"
 printf 'Registrar: https://localhost:%s; Observer: https://localhost:%s\n' "$registrar_public" "$observer_public"
 printf 'Explicit public service CA: %s\n' "$ca"
 printf 'Ctrl-C stops only these services and preserves their state.\n'
