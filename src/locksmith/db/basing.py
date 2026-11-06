@@ -177,9 +177,4 @@ class LocksmithBaser(dbing.LMDBer):
         self.rootHints = subing.Suber(db=self, subkey='roothints.')
         self.rootRotations = subing.Suber(db=self, subkey='rootrotations.')
 
-        # Members this member proposed or joined for a pending group rotation,
-        # (group AID, rotation SAID) -> JSON {"smids": [...], "rmids": [...]}, kept
-        # until core accepts that rotation and the members are committed locally.
-        self.memberCommits = subing.Suber(db=self, subkey='membercommits.')
-
         return self.env
