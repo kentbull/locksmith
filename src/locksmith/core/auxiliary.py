@@ -101,7 +101,7 @@ class Auxiliary(doing.DoDoer):
         return (message, xid) if context else None
 
     def _needs_openings(self, message):
-        """Offer requests only while the native current graph still needs evidence."""
+        """Offer requests only while the core current graph still needs evidence."""
         if not self.vault.exc.complete(message.said):
             return True
         try:
@@ -111,7 +111,7 @@ class Auxiliary(doing.DoDoer):
         return verdict.verdict == chaining.Verdicts.unknown and verdict.retryable
 
     def _owner(self, hab, kind='dh'):
-        """Keep native operation owners and their transient state within this vault."""
+        """Keep core operation owners and their transient state within this vault."""
         if hab is not self.vault.hby.habByPre(hab.pre):
             raise ValueError('Live agreement requires a local identifier')
         if kind == 'unblind':
@@ -346,7 +346,7 @@ class Auxiliary(doing.DoDoer):
         return self.status(*key)
 
     def approve_openings(self, hab, grant_said, *, proposer=None):
-        """Approve native minimal proof selection for one exact live presentation."""
+        """Approve core minimal proof selection for one exact live presentation."""
         ipexing._require_vault(self.vault, hab)
         existing = self.operations.get((hab.pre, grant_said))
         if existing is not None and (existing.kind != 'unblind' or existing.phase in self.Terminal):
@@ -517,7 +517,7 @@ class Auxiliary(doing.DoDoer):
             raise
 
     def _finish_openings(self, operation):
-        """Finish only after the native owner reports an authenticated reply."""
+        """Finish only after the core owner reports an authenticated reply."""
         if not operation.protocol.complete(operation.xid):
             return
         if not operation.protocol.finish(operation.xid):
@@ -763,7 +763,7 @@ class _Delivery(doing.DoDoer):
                 operation.protocol.complete(operation.xid)  # Recheck the DH protocol owner before egress.
             if operation.kind == 'unblind':
                 if operation.release_approved:
-                    operation.protocol.complete(operation.xid)  # Native live scope/head checks also run when False.
+                    operation.protocol.complete(operation.xid)  # Core live scope/head checks also run when False.
                 else:
                     context = self.owner._presentation(hab, operation.grant.said)
                     if context is None or context[0].raw != operation.grant.raw:
@@ -779,7 +779,7 @@ class _Delivery(doing.DoDoer):
                 ims=bytearray(self.wire), processive=False)
             message, wire = parsed.serder, self.wire
             if message.ilk in ('qry', 'rpy'):
-                # The native owner returns a nested CESR substream. StreamPoster
+                # The core owner returns a nested CESR substream. StreamPoster
                 # takes a top-level body and its exact parsed attachment values.
                 wire = messagize(message, sigers=parsed.sigers, tsgs=parsed.tsgs,
                     lsgs=parsed.lsgs, cigars=parsed.cigars,

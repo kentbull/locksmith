@@ -231,7 +231,7 @@ def test_issuance_worker_finishes_dh_and_cancellation_drops_live_authority(ipex_
     finally:
         scheduler.exit()
 
-    # Cancelling an issuance worker interrupts its native operation, not history.
+    # Cancelling an issuance worker interrupts its core operation, not history.
     cancelled = credentialing.IssueCredentialDoer(issuer, schema.said, hh.pre,
         {'LEI': 'cancelled'}, registry_mode='derived')
     scheduler = doing.Doist(doers=[cancelled], tock=0.03125)
@@ -520,7 +520,7 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
             contributions=(root_copying.inspect(contribution),))
         assert result == selected.said and holder_peer.vault.root_copies.active is None
         assert holder_peer.hby.mgr.getRegistryRoot(hph.pre, rip.said).qb64 == root.qb64
-        # The issuer peer naturally has no inventory row; native accepted BUP/opening evidence suffices.
+        # The issuer peer naturally has no inventory row; core accepted BUP/opening evidence suffices.
         assert peer.vault.db.issued.get((credential_said,)) is None
         assert peer.vault.db.accepted.get((credential_said,)) is None
         selected, contribution = prepare_copy(issuer, peer, groups[0], groups[1], members[1])

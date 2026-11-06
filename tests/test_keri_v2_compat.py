@@ -287,7 +287,7 @@ def test_keri_v2_runtime_object_api_surfaces():
 
         rgy = registraring.Regery(hby=hby, name=hby.name, temp=True)
         try:
-            reg = rgy.makeRegistry(name='native', prefix=hab.pre)
+            reg = rgy.makeRegistry(name='v2', prefix=hab.pre)
             assert rgy.store.event(reg.regk).sad['t'] == 'rip'
         finally:
             rgy.close()
@@ -856,7 +856,7 @@ def test_mailbox_accepts_v1_key_events_and_rejects_legacy_ipex(ipex_vaults, gvrs
     old, old_atc = protocoling.ipexApplyExn(sh, rh.pre, 'Legacy', 'schema', {})
     _deliver_ipex(receiver.vault, old.raw + old_atc)
     assert not receiver.vault.exc.complete(old.said)
-    new, new_atc = ipexing.apply(sh, rh.pre, 'Native', modifiers=dict(dp=IPEX_PLAN))
+    new, new_atc = ipexing.apply(sh, rh.pre, 'V2', modifiers=dict(dp=IPEX_PLAN))
     receiver.vault.mbx.messages.append((bytearray(b'{malformed'), None))
     _deliver_ipex(receiver.vault, new.raw + new_atc)
     assert receiver.vault.exc.complete(new.said)
@@ -968,7 +968,7 @@ def test_ipex_outbox_rechecks_revoked_route_before_send(ipex_vaults, monkeypatch
     for _ in range(64):
         sender.qtask.run()
     record = sender.vault.db.outbox.get((exn.said,))
-    # Native endpoint selection excludes the revoked endpoint. An independently
+    # Core endpoint selection excludes the revoked endpoint. An independently
     # authorized endpoint remains usable; without one, no transport may start.
     assert peer.pre not in hab.endsFor(peer.pre).get(role, {})
     if mixed:
@@ -1262,7 +1262,7 @@ def test_acdc_v2_ipex_cannot_fall_back_to_legacy_validation(ipex_vaults):
     _deliver_ipex(receiver.vault, sh.replay(gvrsn=kering.Vrsn_2_0))
     # Missing ACDC v2 IPEX routing and dp fields do not make an envelope legacy.
     invalid = exchange(sender=sh.pre, receiver='', xid='', route='/ipex/apply',
-                       modifiers={}, attributes={'m': 'Malformed native opener'},
+                       modifiers={}, attributes={'m': 'Malformed v2 opener'},
                        pvrsn=kering.Vrsn_2_0, gvrsn=kering.Vrsn_2_0,
                        kind=kering.Kinds.json)
     wire = sh.endorse(invalid, last=False, framed=False, gvrsn=kering.Vrsn_2_0)

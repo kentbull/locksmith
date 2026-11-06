@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 
 from keri import kering
 from keri.acdc import chaining
-from keri.acdc import ipexing as native
+from keri.acdc import ipexing as core_ipex
 from keri.app.grouping import multisigExn
 from keri.app.habbing import GroupHab
 from keri.core import Parser, Prefixer, SealEvent, messagize
@@ -106,7 +106,7 @@ def propose(vault, hab, *, said, source, recipient, message='', paths=()):
     _issued_source(vault, original.said)
     ipexing._require_presenter(selected[0].serder, hab.pre, recipient, vault=vault)
     streams = [exchanging.serializeParsedSubstream(node) for node in selected]
-    grant, atc = native.grant(hab, recipient, message, origin=streams[0],
+    grant, atc = core_ipex.grant(hab, recipient, message, origin=streams[0],
         artifacts=streams[1:] or None, modifiers=dict(dp=plan), kind=kering.Kinds.json,
         gvrsn=V2)
     presenters = vault.auxiliary.presenters

@@ -341,7 +341,7 @@ def test_existing_keeper_root_derives_only_explicit_accepted_selection(ipex_vaul
 
 
 def test_encrypted_root_file_requires_inspected_consent_and_actual_retention(ipex_vaults, qapp, tmp_path):
-    """Real file controls preserve native replay, wrong-root and retention boundaries."""
+    """Real file controls preserve core replay, wrong-root and retention boundaries."""
     from datetime import timedelta
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
@@ -405,7 +405,7 @@ def test_encrypted_root_file_requires_inspected_consent_and_actual_retention(ipe
     assert target.vault.root_copies.active is None
     assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
 
-    # A fresh correctly signed wrong root reaches native retention even with a root present.
+    # A fresh correctly signed wrong root reaches core retention even with a root present.
     cipher = Encrypter(verkey=holder.kever.verfers[0].qb64).encrypt(prim=Salter())
     wrong = reply(pre=issuer.pre, route='/registry/salt', data=dict(body.sad['a'], cipher=cipher.qb64),
                   pvrsn=kering.Vrsn_2_0)

@@ -1,4 +1,4 @@
-"""Public KEL/TEL transport composed from the vault's native verifiers.
+"""Public KEL/TEL transport composed from the vault's core verifiers.
 
 Network lifetime belongs to RegistrySyncDoer. Response bodies are independently
 verified; observer timestamps and headers are not protocol authority.
@@ -15,7 +15,7 @@ from keri.help import helping
 
 
 def processor(vault):
-    """Borrow the native Regery and a strict KEL intake sharing the vault Kramer."""
+    """Borrow the core Regery and a strict KEL intake sharing the vault Kramer."""
     if getattr(vault, 'evidence', None) is None:
         kvy = Kevery(db=vault.hby.db, lax=False, local=False,
                      kramer=getattr(vault, 'kramer', None))
@@ -34,7 +34,7 @@ def signed_query(hab, route, attributes):
 def clone(vault, regk):
     """Publish owned accepted history and explicitly public issuance openings.
 
-    Native TEL cloning stays body-only. Arbitrary held openings and Keeper roots
+    Core TEL cloning stays body-only. Arbitrary held openings and Keeper roots
     never enter public transport.
     """
     rip = vault.rgy.store.seqEvent(regk, 0)
@@ -65,7 +65,7 @@ def receive(vault, regk, raw, headers):
 
     The body itself selects the head. No Observer-* header or age claim permits
     acceptance. Missing KEL, conflicting history, unrelated TEL and rollback fail
-    closed; native dependency escrows remain owned by the vault.
+    closed; core dependency escrows remain owned by the vault.
     """
     if headers.get('content-type', '').split(';')[0] != CESR_CONTENT_TYPE:
         raise kering.ValidationError('Registry evidence must be CESR')

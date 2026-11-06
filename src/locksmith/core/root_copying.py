@@ -1,4 +1,4 @@
-"""Explicit encrypted-file copies of existing roots; native RegistrySalt owns retention."""
+"""Explicit encrypted-file copies of existing roots; core RegistrySalt owns retention."""
 from dataclasses import dataclass
 
 from keri import kering
@@ -31,7 +31,7 @@ class InspectedProposal:
 
 
 def inspect(raw):
-    """Parse one finite native reply without dispatch, authentication or replay writes."""
+    """Parse one finite v2 reply without dispatch, authentication or replay writes."""
     if not raw or len(raw) > 65536:
         raise ValueError('Select one encrypted registry-root reply (at most 64 KiB)')
     stream = bytearray(raw)
@@ -59,7 +59,7 @@ def inspect_proposal(raw):
             or len(frame.nests) != 1
             or any(value for name, value in vars(frame).items()
                    if name not in ('serder', 'tsgs', 'cigars', 'nests', 'local'))):
-        raise kering.ValidationError('Expected one native multisig registry-root proposal')
+        raise kering.ValidationError('Expected one v2 multisig registry-root proposal')
     selected = inspect(exchanging.serializeParsedSubstream(frame.nests[0]))
     if wrapper.sad['a'] != dict(gid=selected.sender, rpy=selected.said):
         raise kering.ValidationError('Group proposal does not commit to this exact reply')
@@ -92,7 +92,7 @@ class RootCopies:
     """One vault route, active only during a synchronous explicitly approved import.
 
     Inspecting never dispatches. The existing mailbox Parser/KRAM/Revery decides
-    authentication; only native True for this invocation's exact SAID is success.
+    authentication; only core True for this invocation's exact SAID is success.
     There is no pending-operation persistence or implicit escrow retry authority.
     """
 
@@ -137,7 +137,7 @@ class RootCopies:
         """Authenticate the selected custodian's envelope, then sign unchanged ciphertext.
 
         This finite file action does not dispatch the reply or authorize import.
-        Native attachment verification owns the envelope's signature threshold;
+        Core attachment verification owns the envelope's signature threshold;
         RegistrySalt owns accepted registry authority and current target scope.
         """
         inspected = inspect_proposal(proposal)
@@ -174,9 +174,9 @@ class RootCopies:
         selected = inspected.reply
         if (selected.sender, selected.registry, selected.recipient, selected.target) != (aid, registry, recipient, target):
             raise kering.ValidationError('Root proposal differs from the selected transfer scope')
-        native = RegistrySalt(hab, self.vault.rgy)
-        native._unlocked()
-        native._scope(registry, aid, recipient, target)
+        registry_salt = RegistrySalt(hab, self.vault.rgy)
+        registry_salt._unlocked()
+        registry_salt._scope(registry, aid, recipient, target)
         cipher = Cipher(qb64=child.serder.sad['a']['cipher'])
         if cipher.code != MtrDex.X25519_Cipher_Salt or cipher.qb64 != child.serder.sad['a']['cipher']:
             raise kering.ValidationError('Root proposal requires an encrypted Salt128 ciphertext')
@@ -194,7 +194,7 @@ class RootCopies:
             raise ValueError('Select this issuer\'s registry-backed issued credential')
         if recipient not in self.vault.hby.kevers:
             raise ValueError('Introduce the recipient before exporting an encrypted root')
-        # Native preparation requires accepted authority, current keys and an existing root.
+        # Core preparation requires accepted authority, current keys and an existing root.
         return RegistrySalt(hab, self.vault.rgy).prepare(view['sad']['rd'], recipient, recipient)
 
     def receive(self, selected, recipient, said, grant, event, opening):
@@ -216,7 +216,7 @@ class RootCopies:
     def receive_group(self, selected, aid, registry, event, opening, *, contributions=()):
         """Approve exact group-targeted files against an explicitly held BUP opening.
 
-        No wallet inventory row is necessary. Native accepted KEL/TEL, the
+        No wallet inventory row is necessary. Core accepted KEL/TEL, the
         current target member, author threshold and decrypted-root opening
         verification decide retention under the recipient group AID.
         """
@@ -239,11 +239,11 @@ class RootCopies:
         selected = files[0]
         if self.active is not None:
             raise ValueError('Another root import is active')
-        native = RegistrySalt(hab, self.vault.rgy)
+        registry_salt = RegistrySalt(hab, self.vault.rgy)
         self.received, self.error = None, ''
-        self.active = (native, selected)
+        self.active = (registry_salt, selected)
         try:
-            native.approve(selected.registry, selected.sender, event=event, opening=opening)
+            registry_salt.approve(selected.registry, selected.sender, event=event, opening=opening)
             for item in files:
                 self.vault.mbx.parser.parse(ims=bytearray(item.wire), version=kering.Vrsn_2_0)
             if self.received != selected.said:
@@ -268,6 +268,6 @@ class RootCopies:
     def close(self):
         """Drop receive consent on completion, refusal, cancellation or vault close."""
         if self.active is not None:
-            native, selected = self.active
-            native.abandon(selected.registry, selected.sender)
+            registry_salt, selected = self.active
+            registry_salt.abandon(selected.registry, selected.sender)
             self.active = None

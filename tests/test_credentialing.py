@@ -135,7 +135,7 @@ def _issue(app, schema, recipient, attributes=None, edges=None, authentication='
 
 
 def test_acdc_v2_issuance_keeps_independent_credentials_valid_after_reopen(ipex_vaults):
-    app = ipex_vaults('native-issuer')
+    app = ipex_vaults('v2-issuer')
     issuer = app.hby.makeHab(name='issuer')
     holder = app.hby.makeHab(name='holder')
     schema = _load_schema(app, issuer)
@@ -149,7 +149,7 @@ def test_acdc_v2_issuance_keeps_independent_credentials_valid_after_reopen(ipex_
     assert all(view['sad']['a']['i'] == holder.pre for view in views)
     assert not credentialing.credentials(app.vault, received=True)
     app.close_vault()
-    app = ipex_vaults('native-issuer')
+    app = ipex_vaults('v2-issuer')
     assert {view['sad']['d'] for view in credentialing.credentials(app.vault)} == {first, second}
     assert credentialing.credential(app.vault, first)['status']['et'] == 'issued'
     assert credentialing.delete_credential(app.vault, first)
@@ -1248,7 +1248,7 @@ def test_accepted_credential_retains_admit_after_revocation(ipex_vaults, monkeyp
         ipexing.grant(receiver.vault, holder, credential.said, issuer.pre)
 
 
-def test_registry_exchange_uses_native_evidence_without_observer_age_gate(ipex_vaults):
+def test_registry_exchange_uses_core_evidence_without_observer_age_gate(ipex_vaults):
     from locksmith.core import evidence
     sender = ipex_vaults('local-evidence-issuer', registry_services=True)
     receiver = ipex_vaults('local-evidence-holder', registry_services=True)

@@ -417,7 +417,7 @@ def test_graph_use_gate_precedes_signing_consent_and_inventory(ipex_vaults, monk
     assert list(target.hby.db.emse.getTopItemIter(keys=(grant.said,)))
     original_body, original_sn = grant.raw, issuer.kever.sn
 
-    # Native escrow retries after the missing schema arrives, without re-signing.
+    # Core escrow retries after the missing schema arrives, without re-signing.
     target.hby.db.schema.pin((pin.said,), pin)
     _retry_ipex(target.vault)
     assert target.vault.exc.complete(grant.said)

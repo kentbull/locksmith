@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from types import SimpleNamespace
 
 from keri import kering
-from keri.acdc import regeventing, ipexing as native_ipex
+from keri.acdc import regeventing, ipexing as core_ipex
 from keri.acdc.dhking import Dhke
 from keri.app.grouping import multisigExn, multisigRpyExn
 from keri.app.habbing import GroupHab
@@ -77,7 +77,7 @@ class _Replies:
 
 
 class GroupHolders:
-    """One vault dispatcher, borrowing native DH and verification authority."""
+    """One vault dispatcher, borrowing core DH and verification authority."""
     resource = ProofRoute
 
     def __init__(self, owner):
@@ -207,7 +207,7 @@ class GroupHolders:
             wrapper = self.vault.hby.db.exns.get((said,))
             child = exchanging.loadParsedNestedSubstreams(self.vault.hby, said)[0]
             self.reply_scope(wrapper, [child])
-            # The native owner requires the authenticated peer query before contribution.
+            # The core owner requires the authenticated peer query before contribution.
             if operation.protocol._operations[operation.xid]['peer'] is None:
                 continue
             raw = exchanging.serializeParsedSubstream(child)
@@ -418,7 +418,7 @@ def contribute_admit(vault, hab, grant, message, send, selected):
         if (selected is not None or hab.mhab.pre not in hab.db.signingMembers(pre=hab.pre)
                 or proposer is not None and hab.mhab.pre != proposer):
             raise kering.ValidationError('Wait for and review the selected member\'s exact Admit proposal')
-        body, atc = native_ipex.admit(hab, message, grant, kind=kering.Kinds.json, gvrsn=V2)
+        body, atc = core_ipex.admit(hab, message, grant, kind=kering.Kinds.json, gvrsn=V2)
         raw = body.raw + atc
     else:
         if selected != body.said:

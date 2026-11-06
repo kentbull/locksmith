@@ -22,7 +22,7 @@ logger = help.ogler.getLogger(__name__)
 
 
 def registry_proposal(vault, said):
-    """Authenticate an exact native TEL/anchor pair without contributing a signature."""
+    """Authenticate an exact core TEL/anchor pair without contributing a signature."""
     wrapper, _ = exchanging.cloneMessage(vault.hby, said)
     if (wrapper is None or wrapper.pvrsn != kering.Vrsn_2_0
             or wrapper.route not in ('/multisig/rip', '/multisig/bup') or not vault.exc.complete(said)):

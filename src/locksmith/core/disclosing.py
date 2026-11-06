@@ -1,7 +1,7 @@
 """Select held disclosures and optional registry-opening capabilities.
 
 The compaction path adapts KERIpy ExchangeDoer at a6539208. Opening composition
-uses native registry vetting; existing encrypted roots belong to Keeper.
+uses core registry vetting; existing encrypted roots belong to Keeper.
 These are local wallet controls, not a new delegation or provisioning protocol.
 """
 from dataclasses import replace

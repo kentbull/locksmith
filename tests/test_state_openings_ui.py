@@ -1,4 +1,4 @@
-"""Explicit Qt consent over native event-opening requests and exact held views."""
+"""Explicit Qt consent over v2 event-opening requests and exact held views."""
 from PySide6.QtCore import Qt
 from PySide6.QtTest import QTest
 from PySide6.QtWidgets import QWidget
@@ -126,7 +126,7 @@ def test_wrong_event_opening_is_visibly_refused(qapp, ipex_vaults):
 
 
 def test_revoked_opening_is_delivered_but_never_enables_admit(qapp, ipex_vaults):
-    """Native protocol completion does not authorize issued use of a revoked credential."""
+    """Core protocol completion does not authorize issued use of a revoked credential."""
     holder, verifier, hh, vh, acdc, _, issuance, retained, message, _, _ = live_presentation(
         ipex_vaults, state='revoked')
     ho, vo = holder.vault.auxiliary, verifier.vault.auxiliary

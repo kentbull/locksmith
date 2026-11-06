@@ -1,4 +1,4 @@
-"""Exact member consent for fresh group-issuer DH over the vault's native owners."""
+"""Exact member consent for fresh group-issuer DH over the vault's core owners."""
 from dataclasses import dataclass
 
 from keri import kering
@@ -64,7 +64,7 @@ class GroupIssuers:
     def _read(self, wrapper, *, authored=False):
         if (wrapper.pvrsn != V2 or wrapper.route != '/multisig/exn'
                 or not self.vault.exc.complete(wrapper.said)):
-            raise kering.ValidationError('Select an authenticated native group Grant wrapper')
+            raise kering.ValidationError('Select an authenticated v2 group Grant wrapper')
         children = exchanging.loadParsedNestedSubstreams(self.vault.hby, wrapper.said)
         self.vault.mux.validate(wrapper, nests=children)
         child = children[0]
@@ -102,7 +102,7 @@ class GroupIssuers:
         proposal.interrupted = not authored and any(
             member.qb64 == hab.mhab.pre for member in hab.db.maids.get((grant.said,)))
         self.proposals[key] = proposal
-        # Establish native partial-signature escrow and its put-only deadline.
+        # Establish core partial-signature escrow and its put-only deadline.
         # Parsing public evidence contributes no local signature or DH approval.
         protected = Parser(version=V2, kvy=self.vault.hby.kvy, exc=self.vault.exc,
             rvy=self.vault.hby.rvy, rgy=self.vault.rgy, local=True)
