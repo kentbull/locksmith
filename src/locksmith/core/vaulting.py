@@ -238,10 +238,6 @@ class Vault(doing.DoDoer):
 
         logger.info(f"Vault initialized for {hby.name} with {len(self.doers)} doers")
 
-    def exit(self, **kwa):
-        self.root_copies.close()
-        super().exit(**kwa)
-
     def update_plugin_identifier(self, plugin_identifier):
         if not ENABLE_TURRET_BROWSER_PLUGIN:
             return None

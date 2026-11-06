@@ -123,6 +123,8 @@ class QtTask:
         Must be called after shutdown to properly exit all doers.
         """
         try:
+            # A late timeout must not run an exited doist.
+            self.timer.stop()
             if not self.doist.done:
                 logger.info("QtTask: Cleaning up doers")
             self.doist.exit()
