@@ -613,6 +613,22 @@ class Auxiliary:
         self.outgoing.append(((operation.hab.pre, operation.grant.said),
                               operation.grant.sad['ri'], operation.publication, 'credential'))
 
+    def publishing(self, operation, wire, destination, topic):
+        """Is this outgoing item a verified operation's own publication?
+
+        A publication is the table's last action for a verified operation. It
+        carries accepted public evidence, not live agreement state, so delivery
+        neither stops it as terminal nor rechecks the finished DH exchange.
+        """
+        if operation.phase != 'verified':
+            return False
+        if operation.group is None:
+            return bool(operation.publication) and wire == operation.publication
+        hab = operation.hab
+        return (wire == operation.group.publication
+                or operation.kind == 'unblind' and topic == 'reply'
+                and destination in hab.db.signingMembers(pre=hab.pre))
+
     def _retry_query(self, operation):
         """Queue another delivery of the requester's query, signed fresh when it is sent.
 
@@ -826,12 +842,7 @@ class _Delivery(doing.DoDoer):
         def check():
             ipexing._require_vault(vault, hab)
             deadline = vault.exc.exchangeDeadline(operation.grant)
-            publication = (operation.phase == 'verified' and operation.group is None
-                           and bool(operation.publication) and self.wire == operation.publication) or (
-                           operation.group is not None and operation.phase == 'verified'
-                           and (self.wire == operation.group.publication
-                                or operation.kind == 'unblind' and self.topic == 'reply'
-                                and self.destination in hab.db.signingMembers(pre=hab.pre)))
+            publication = self.owner.publishing(operation, self.wire, self.destination, self.topic)
             if (operation.phase in self.owner.Terminal and not publication or original is None or deadline is None
                     or deadline != original or helping.nowUTC() >= deadline):
                 raise kering.ValidationError('The original live presentation deadline or approval has ended')
