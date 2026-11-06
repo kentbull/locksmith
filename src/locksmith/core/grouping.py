@@ -761,9 +761,15 @@ class GroupMultisigRotateDoer(doing.DoDoer):
             )
             logger.info(f"Started counselor escrow for rotation of {self.ghab.pre}")
 
-            # Step 7: Wait for counselor completion
+            # Step 7: Wait for counselor completion. Membership changes only
+            # once the rotation is accepted.
+            committed = False
             while not self.counselor.complete(prefixer, seqner):
+                committed = committed or self.ghab.commitAcceptedMembers(
+                    rserder, smids=self.smids, rmids=self.rmids)
                 yield self.tock
+            if not committed:
+                self.ghab.commitAcceptedMembers(rserder, smids=self.smids, rmids=self.rmids)
 
             # Step 8: Handle delegation if present
             if self.ghab.kever.delpre:
@@ -825,6 +831,7 @@ class MultisigRotationJoinDoer(doing.DoDoer):
     Mirrors keripy JoinDoer.rotate(). Handles:
     - Cloning the rotation proposal EXN
     - Applying the rotation event via ghab.rotate(serder=orot)
+    - Committing the new members once the rotation is accepted
     - Creating and sending response EXN
     - Starting Counselor escrow
     - Waiting for counselor completion
@@ -911,7 +918,7 @@ class MultisigRotationJoinDoer(doing.DoDoer):
 
             # Step 7: Create response EXN
             resp_exn, resp_atc = keri_grouping.multisigRotateExn(
-                ghab, smids=ghab.smids, rmids=ghab.rmids, rot=rot
+                ghab, smids=smids, rmids=rmids, rot=rot
             )
 
             # Step 8: Send to all other members
@@ -945,9 +952,14 @@ class MultisigRotationJoinDoer(doing.DoDoer):
                     data={'alias': ghab.name, 'pre': ghab.pre}
                 )
 
-            # Step 10: Wait for counselor completion
+            # Step 10: Wait for counselor completion. Membership changes only
+            # once the rotation is accepted.
+            committed = False
             while not self.counselor.complete(prefixer, seqner):
+                committed = committed or ghab.commitAcceptedMembers(orot, smids=smids, rmids=rmids)
                 yield self.tock
+            if not committed:
+                ghab.commitAcceptedMembers(orot, smids=smids, rmids=rmids)
 
             # Step 11: Check for shared witnesses
             shared_witnesses = get_shared_witnesses(ghab)
