@@ -112,8 +112,8 @@ class LocksmithApplication:
                 if self.vault is not None:
                     self.vault.closed = True
                     self.plugin_manager.on_vault_closed(self.vault)
-                    # Root-import consent belongs to the session, not the scheduler.
-                    self.vault.root_copies.close()
+                    # Root replication belongs to the session, not the scheduler.
+                    self.vault.roots.close()
 
                 self.qtask.shutdown()
                 self.qtask.cleanup()
@@ -174,7 +174,7 @@ class LocksmithApplication:
 
         # First, shutdown the QtTask to stop all doers
         self.vault.closed = True
-        self.vault.root_copies.close()
+        self.vault.roots.close()
         if self.qtask is not None:
             try:
                 self.qtask.shutdown()

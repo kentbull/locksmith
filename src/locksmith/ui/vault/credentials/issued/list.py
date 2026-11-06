@@ -9,7 +9,6 @@ from typing import Dict, Any, TYPE_CHECKING
 from PySide6.QtGui import QPalette, QColor
 from PySide6.QtWidgets import QVBoxLayout, QSizePolicy
 from keri import help
-from keri.app.habbing import GroupHab
 
 from locksmith.ui import colors
 from locksmith.core import credentialing
@@ -75,7 +74,7 @@ class IssuedCredentialsListPage(BaseListPage):
             show_search=True,
             show_add_button=True,
             add_button_text="Issue Credential",
-            row_actions=["View", "Offer", "Grant", "Export encrypted registry root", "View exchange history", "Refresh state commitment", "Revoke", "Delete"],
+            row_actions=["View", "Offer", "Grant", "Send registry root", "View exchange history", "Refresh state commitment", "Revoke", "Delete"],
             row_action_icons={
                 "View": ":/assets/material-icons/view.svg",
                 "Offer": ":/assets/material-icons/share.svg",
@@ -147,13 +146,10 @@ class IssuedCredentialsListPage(BaseListPage):
             self.parent.show_credential_activity(credential_said, received=False)
         elif action == "Offer":
             self.parent.start_credential_exchange('Offer', credential_said=credential_said)
-        elif action == "Export encrypted registry root":
-            from locksmith.ui.vault.credentials.root_copy import GroupRootCopyDialog, RootCopyDialog
-            if isinstance(self.app.vault.hby.habByPre(credential_issuer), GroupHab):
-                self._root_copy_dialog = GroupRootCopyDialog(self.app, self.parent, said=credential_said)
-            else:
-                self._root_copy_dialog = RootCopyDialog(self.app, self.parent, credential_said)
-            self._root_copy_dialog.open()
+        elif action == "Send registry root":
+            from locksmith.ui.vault.credentials.registry_roots import RootSendDialog
+            self._root_send_dialog = RootSendDialog(self.app, self.parent, credential_said)
+            self._root_send_dialog.open()
         elif action == "View":
             # Open view credential dialog
             try:

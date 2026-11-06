@@ -262,8 +262,8 @@ proposal without setup consent or closing an unapproved review signs nothing.
 The dialog identifies the member, frozen coordinator event and elected custodian.
 
 Only the elected custodian establishes and retains the issuer group's derivation
-root. Other members contribute signatures; this does not copy the root to their
-stores. The holder separately approves registry setup. Issuance then
+root. Other members contribute signatures; the custodian then sends each of them
+an encrypted copy to approve (see `Registry root copies`_). The holder separately approves registry setup. Issuance then
 proposes its BUP through the registry-approval controls described above. The
 original Grant and deadline remain unchanged; an expired exchange cannot be
 revived. The holder's **Review credential / Accept Grant** decision remains
@@ -274,7 +274,8 @@ authorizes its contribution to the custodian's reply for that exact exchange;
 there is no additional reply-approval click. The normal group threshold must
 authenticate the reply before it leaves. Only the elected holder custodian
 derives the root. Other members verify the issued Grant using public registry
-evidence and the exact event opening, without receiving that root.
+evidence and the exact event opening; the root reaches them only as an
+encrypted copy each approves (see `Registry root copies`_).
 
 After setup verifies, **Review credential** offers a separate group acceptance
 decision. The custodian proposes one Admit; other members review and approve
@@ -317,64 +318,42 @@ setup or opening exchange allows any current signing member to propose its
 first Admit. Other members review and approve that same body. Conflicting
 proposals are refused; inventory changes only after the ordinary threshold.
 
-Individual encrypted root files
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+Registry root copies
+~~~~~~~~~~~~~~~~~~~~
 
-On an Issued Credentials row, choose **Export encrypted registry root**, select
-the intended introduced individual recipient, then export a new CESR file. The
-issuer must already hold the registry root in its unlocked encrypted Keeper.
-Export reports only that an encrypted copy was written; recipient retention is
-unconfirmed. Deliver this ciphertext file separately. A root permits deriving
-future state openings, not issuer signing authority.
+Every current signing member of a group must hold every registry root the group
+knows, or later rotations lock the threshold out of its own state. Copies use
+KERIpy's local-profile ``/registry/root`` ESSR exchange
+(``keri.acdc.salting.RegistryRoot``; see KERIpy
+``docs/acdc-v2-registry-roots.md``): one signed ``exn`` per recipient and
+registry, sealed to the recipient member's current key and sent from the
+sender's individual member identifier. ``core/root_replicating.py`` is a member
+of the Auxiliary operation table; it adds no doer.
 
-On the recipient's Received Credentials row, choose **Import encrypted registry
-root**. Select the local recipient, exact received disclosure and held opening
-for an accepted registry BUP. Inspect the file and review its claimed sender,
-recipient, registry and reply SAID. Inspection does not authenticate or consume
-the reply. **Approve and import** gives core ``RegistrySalt`` that exact scope,
-then sends the unchanged reply through the vault's ordinary Parser/KRAM/Revery.
-Only core successful encrypted retention reports success; an existing root or
-retained reply row is insufficient. Admission and historical proofs are unchanged.
+- **After DH.** When the elected custodian retains new roots, KERIpy's Dhke
+  cues ``replicate``. The table records one owed copy per other current member
+  in the vault database. The run loop sends each copy through the vault's
+  mailbox ``postman`` (topic ``credential``) once the registry update that the
+  root opens is accepted locally, so owed copies survive a restart.
+- **After a group rotation.** When an accepted rotation adds members, the
+  rotation's elected witnesser owes every held root to each newcomer
+  (``RegistryRoot.newcomers``). Other members can send manually.
+- **Manual send.** Issued and group Received credential rows offer **Send
+  registry root**. Choose the holder AID; recipients are its current members
+  (or the holder itself). Mailbox delivery is the default; **Save to file** is
+  the fallback for an offline recipient.
+- **Receiving.** Copies arrive through the ordinary mailbox Parser, KRAM and
+  Exchanger path and are stored pending; nothing is decrypted or retained.
+  **Activity → Registry root copies** lists them. **Approve root** asks KERIpy
+  to re-authorize the copy, decrypt it, and verify the root against a held
+  opening or the registry commitment before retaining it. A copy whose
+  registry, key state or group is not yet local shows *Waiting for local
+  state* and stays pending until that state arrives. **Import registry root
+  file…** feeds a saved file through the same intake. **Dismiss** hides a
+  copy. Approval admits no credential and changes no historical proof.
 
-Missing accepted public evidence, an unavailable held opening, changed keys or
-expired message timing refuse import. There is no acquisition, automatic retry,
-new root generation or timestamp renewal. Normal operator KRAM policy applies
-(the wallet's default single-key reply lag is five minutes); Exchanger's pending
-Grant timeout does not govern root replies. Cancellation, refusal, completion
-and vault close abandon process-local approval. Closing after successful import
-does not undo the retained root. Network delivery/acknowledgment remains outside
-this file workflow.
-
-Group encrypted root files
-~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-**Activity → Group registry roots** opens group provisioning without requiring a
-credential inventory row. Issued and Received credential actions also open it
-with the registry and an existing held opening selected where available. A new
-member must already belong to the accepted group; importing a root does not join
-the group or accept a credential.
-
-Choose the local group, registry, recipient AID and encryption target member.
-The recipient owns the retained root; the target member's current key decrypts
-the file. An issuer group may provision a recipient; a holder group may provision
-its own current members. **Prepare encrypted copy** requires an exact accepted
-coordinator event whose elected member already holds the root. The default is
-the displayed current event; select the appropriate accepted historical event
-when needed. There is no root generation or coordinator fallback.
-
-Preparation writes an encrypted reply and a sibling ``.proposal.cesr`` file.
-Other members choose **Contribute signature**, inspect that original proposal,
-select the same coordinator and transfer scope, then explicitly export their
-signature on the unchanged ciphertext. Preparation alone does not establish the
-group's full threshold or recipient retention.
-
-The target member chooses **Import encrypted copy**, inspects sufficient reply
-signature files for the same exact reply, and supplies an already held opening
-for an accepted BUP. **Approve and import** uses KERIpy to verify the current
-sender threshold, target membership, decryption and root/opening match before
-encrypted Keeper retention under the group AID. A partial signature set retains
-no root. Closing discards inspected files and receive approval; existing
-credential admissions and public registry evidence remain unchanged.
+Removal revokes nothing: knowledge of a root is irrevocable, and a removed
+member is never a recipient of later copies.
 
 Group presentations
 ~~~~~~~~~~~~~~~~~~~

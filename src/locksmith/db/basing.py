@@ -169,4 +169,12 @@ class LocksmithBaser(dbing.LMDBer):
         self.outbox = koming.Komer(db=self, subkey='outbox.', klas=IpexSubmission)
         self.inbox = koming.Komer(db=self, subkey='inbox.', klas=MailboxFrame)
 
+        # Registry-root copies still owed to members: (holder AID, registry,
+        # member AID) -> ACDC SAID hint ('' for none); the ACDC SAID learned
+        # when a root was derived, (holder AID, registry) -> SAID; and the group
+        # rotations whose newcomers this member has already been asked to catch up.
+        self.rootSends = subing.Suber(db=self, subkey='rootsends.')
+        self.rootHints = subing.Suber(db=self, subkey='roothints.')
+        self.rootRotations = subing.Suber(db=self, subkey='rootrotations.')
+
         return self.env

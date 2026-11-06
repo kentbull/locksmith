@@ -135,6 +135,7 @@ def wallet(qapp, mailbox_routes):
                                     exc=exc, mux=mux, signals=signals, notifier=notifier, extend=queued.extend, doers=queued, kvy=hby.kvy)
             vault.mbx = SimpleNamespace(parser=parsing.Parser(kvy=hby.kvy, exc=exc, version=kering.Vrsn_2_0))
             vault.auxiliary = auxiliary.Auxiliary(vault)
+            vault.roots = vault.auxiliary.roots
             app = SimpleNamespace(hby=hby, vault=vault, queued=queued)
             return app
         yield create

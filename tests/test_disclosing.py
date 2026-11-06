@@ -146,7 +146,7 @@ def test_supplied_opening_refresh_is_separate_from_content_and_custody(ipex_vaul
 
 
 # The protected plaintext RegistryCustody export/import scenario is retired.
-# RegistrySalt auxiliary transfer and futureDhke consent are a subsequent unit.
+# Registry roots now travel only as ESSR /registry/root copies (test below).
 
 
 def test_graduated_offer_dialog_previews_exact_sent_fields(ipex_vaults, qapp):
@@ -340,85 +340,78 @@ def test_existing_keeper_root_derives_only_explicit_accepted_selection(ipex_vaul
     assert later.qb64b not in target.vault.rgy.store.cloneTel(registry.regk)
 
 
-def test_encrypted_root_file_requires_inspected_consent_and_actual_retention(ipex_vaults, qapp, tmp_path):
-    """Real file controls preserve core replay, wrong-root and retention boundaries."""
-    from datetime import timedelta
+def test_issuer_root_copy_waits_for_explicit_approval_and_survives_reopen(ipex_vaults, qapp, tmp_path):
+    """Mailbox and file copies reach the holder pending; only Approve retains the root."""
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QWidget
-    from keri.core import Encrypter, Salter, SerderKERI, reply
-    from keri.help import helping
-    from locksmith.core import root_copying
-    from locksmith.ui.vault.credentials.root_copy import RootCopyDialog
+    from keri.acdc.salting import rootExn
+    from keri.core import Salter
+    from locksmith.core import root_replicating
+    from locksmith.ui.vault.credentials.activity import CredentialActivityPage
+    from locksmith.ui.vault.credentials.registry_roots import RootSendDialog
 
     source, target, issuer, holder, registry, root, acdc, held, _ = _existing_root_fixture(ipex_vaults)
     parent = QWidget()
-    public = target.vault.rgy.store.cloneTel(registry.regk)
+    parent.app = source
     old = credentialing.credential(target.vault, acdc.said, grant=held)['proof']
-    export = RootCopyDialog(source, parent, acdc.said)
-    export.selection.setCurrentIndex(export.selection.combo_box.findData(holder.pre))
-    path = tmp_path / 'encrypted.cesr'
-    export.export_file(path)
-    assert 'retention unconfirmed' in export.status.text()
+    send = RootSendDialog(source, parent, acdc.said)
+    assert (send.sender.currentData(), send.holder.currentData()) == (issuer.pre, holder.pre)
+    assert send.delivery.currentData() == 'mailbox' and send.action.isEnabled()
+    QTest.mouseClick(send.action, Qt.MouseButton.LeftButton)
+    assert 'Queued 1 encrypted copy' in send.status.text(), send.status.text()
+    event = source.vault.postman.evts.popleft()
+    assert (event['dest'], event['topic'], event['stream']) == (holder.pre, 'credential', True)
+    assert event['serder'].route == '/registry/root' and event['serder'].pre == issuer.pre
+    wire = event['serder'].raw + event['attachment']
+    assert root.qb64b not in wire
+    # The file fallback writes the same kind of ciphertext copy.
+    path = tmp_path / 'root.cesr'
+    send.export_file(path)
+    assert 'retention unconfirmed' in send.status.text()
     raw = path.read_bytes()
-    selected = root_copying.inspect(raw)
-    assert root.qb64b not in raw
-    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk) is None
+    assert len(root_replicating.inspect(raw)) == 1 and root.qb64b not in raw
     for malformed in (raw + b'garbage', raw[:-4]):
         with pytest.raises((kering.KeriError, ValueError)):
-            root_copying.inspect(malformed)
+            root_replicating.inspect(malformed)
 
-    # Inspection and cancellation consume no authenticated replay slot or root.
-    cancelled = RootCopyDialog(target, parent, acdc.said, received=True)
-    cancelled.open()
-    assert not cancelled.action.isEnabled()
-    cancelled.inspect_file(path)
-    assert 'Unauthenticated file claims' in cancelled.status.text()
-    assert target.hby.db.kramMSGC.get((issuer.pre, selected.said)) is None
-    cancelled.close()
-    assert cancelled.inspected is None and target.vault.root_copies.active is None
+    _deliver_ipex(target.vault, wire)
+    copy, = target.vault.roots.pending()
+    assert (copy.sender, copy.recipient, copy.gid, copy.registry) == (
+        issuer.pre, holder.pre, holder.pre, registry.regk)
+    assert not copy.deferred and not copy.error
+    # Arrival decrypts and retains nothing; a pending copy survives restart.
     assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk) is None
-
-    body = SerderKERI(raw=raw)
-    expired = reply(pre=issuer.pre, route='/registry/salt', data=body.sad['a'],
-        stamp=helping.toIso8601(helping.nowUTC() - timedelta(days=2)), pvrsn=kering.Vrsn_2_0)
-    stale = root_copying.inspect(bytes(issuer.endorse(expired, gvrsn=kering.Vrsn_2_0)))
-    event, opening = root_copying.held_openings(target.vault, acdc.said, held)[0]
-    with pytest.raises(kering.ValidationError, match='not retained'):
-        target.vault.root_copies.receive(stale, holder.pre, acdc.said, held, event, opening)
-    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk) is None
-    assert target.vault.root_copies.active is None
-
-    old_dialog = RootCopyDialog(target, parent, acdc.said, received=True)
-    old_dialog.open()
-    old_dialog.inspect_file(path)
     target.close_vault()
-    QTest.mouseClick(old_dialog.action, Qt.MouseButton.LeftButton)
-    assert 'vault is closed' in old_dialog.status.text()
     target = ipex_vaults('existing-root-holder', bran='0123456789abcdefghijk')
-    dialog = RootCopyDialog(target, parent, acdc.said, received=True)
-    dialog.open()
-    dialog.inspect_file(path)
-    QTest.mouseClick(dialog.action, Qt.MouseButton.LeftButton)
-    assert 'retained and verified' in dialog.status.text(), dialog.status.text()
-    assert target.vault.root_copies.received == selected.said
-    assert target.vault.root_copies.active is None
+    receiver = QWidget()
+    receiver.app = target
+    page = CredentialActivityPage(receiver)
+    page.set_vault_name(target.name)
+    assert list(page.root_copies.buttons) == [copy.said]
+    QTest.mouseClick(page.root_copies.buttons[copy.said], Qt.MouseButton.LeftButton)
+    assert not page.root_copies.error, page.root_copies.error
     assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
-
-    # A fresh correctly signed wrong root reaches core retention even with a root present.
-    cipher = Encrypter(verkey=holder.kever.verfers[0].qb64).encrypt(prim=Salter())
-    wrong = reply(pre=issuer.pre, route='/registry/salt', data=dict(body.sad['a'], cipher=cipher.qb64),
-                  pvrsn=kering.Vrsn_2_0)
-    bad = root_copying.inspect(bytes(issuer.endorse(wrong, gvrsn=kering.Vrsn_2_0)))
-    with pytest.raises(kering.ValidationError, match='approved accepted opening'):
-        target.vault.root_copies.receive(bad, holder.pre, acdc.said, held, event, opening)
-    assert target.hby.db.kramMSGC.get((issuer.pre, wrong.said)) is not None
-    assert target.hby.db.rpys.get((wrong.said,)) is not None
-    assert target.vault.root_copies.received is None and target.vault.root_copies.active is None
-    assert target.vault.rgy.store.cloneTel(registry.regk) == public
+    assert not page.root_copies.buttons and target.vault.roots.pending() == []
     assert credentialing.credential(target.vault, acdc.said, grant=held)['proof'] == old
     assert target.vault.db.accepted.get((acdc.said,)).grant == held
-    target.close_vault()
-    target = ipex_vaults('existing-root-holder', bran='0123456789abcdefghijk')
+
+    # A correctly signed wrong root, imported from a file, never replaces the retained one.
+    head = source.vault.rgy.store.headEvent(registry.regk)
+    bad = tmp_path / 'wrong.cesr'
+    bad.write_bytes(rootExn(issuer, holder.pre, holder.pre, registry.regk, Salter(),
+                            event=head.said, td=acdc.said))
+    page.root_copies.import_file(bad)
+    assert not page.root_copies.error, page.root_copies.error
+    wrong, = target.vault.roots.pending()
+    QTest.mouseClick(page.root_copies.buttons[wrong.said], Qt.MouseButton.LeftButton)
+    assert page.root_copies.error
     assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
-    assert target.vault.root_copies.active is None
+    assert [item.said for item in target.vault.roots.pending()] == [wrong.said]
+    QTest.mouseClick(page.root_copies.dismiss_buttons[wrong.said], Qt.MouseButton.LeftButton)
+    assert target.vault.roots.pending() == [] and not page.root_copies.buttons
+    # Approving from a page whose vault has closed changes nothing.
+    page.root_copies.show_copies([wrong])
+    target.close_vault()
+    page.root_copies.approve(wrong.said)
+    assert 'closed' in page.root_copies.error
