@@ -126,7 +126,6 @@ class GroupIssuers:
         bounds the partial escrow until then. DH work still requires the
         accepted deadline through pendingGrant and Dhke.
         """
-        # Pinned core exposes no public partial-escrow accessor; read epse directly.
         return (self.vault.exc.exchangeDeadline(grant) is None
                 and self.vault.exc.pending(grant.said) is not None)
 

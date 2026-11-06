@@ -20,7 +20,8 @@ class RootSendDialog(LocksmithDialog):
     """Send one credential registry's root as ESSR copies, one per recipient member.
 
     Mailbox delivery is the default; a file is the fallback for an offline
-    recipient. Each recipient still approves its copy explicitly.
+    recipient. Each recipient's wallet retains its copy automatically once
+    it verifies against local registry state.
     """
 
     def __init__(self, app, parent, said, *, received=False):
@@ -86,7 +87,7 @@ class RootSendDialog(LocksmithDialog):
     def send(self):
         sent = self.vault.roots.send(self._hab(), self.holder.currentData(), self.registry, td=self.said)
         self.status.setText(f'Queued {len(sent)} encrypted cop{"y" if len(sent) == 1 else "ies"} '
-                            'for mailbox delivery; each recipient approves its copy.')
+                            'for mailbox delivery; each recipient retains its copy once it verifies.')
 
     def export_file(self, path):
         """Write ciphertext exclusively; the sender cannot observe recipient retention."""

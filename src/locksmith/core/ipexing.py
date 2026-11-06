@@ -245,11 +245,7 @@ def _validate_selected(vault, origin, artifacts):
             if ims or len(parsed) != 1 or not isinstance(parsed[0].serder, SerderACDC):
                 raise kering.ValidationError('Invalid selected credential evidence')
             nests.append(parsed[0])
-        graph = handler._walkGraph(nests[0].serder.said, nests, closed=True)
-        if graph is None or not handler._verifyNodeSchemas(*graph):
-            raise kering.ValidationError('Selected credential graph or schema is invalid')
-        records = {}
-        result = handler._evaluateNode(nests[0].serder.said, nodes=graph[0], memo={}, records=records)
+        result, records = handler.verifySelection(nests)
         _require_graph_result(result)
         _require_issued(handler, nests, records)
     except credentialing.RegistryEvidencePending as error:

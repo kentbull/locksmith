@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 from keri import kering
 from keri.acdc import Registrar, acdcmap
+from keri.acdc.salting import RootRefused, RootUnverified
 from keri.core import Parser, Salter
 
 from locksmith.core import evidence
@@ -165,3 +166,56 @@ def test_copy_escrows_until_the_newcomer_has_the_registry(ipex_vaults):
     assert carol.vault.roots.pending() == []
     note, = _notes(carol)
     assert note.attrs['d'] == copy.said
+
+
+def test_rotation_catch_up_waits_for_local_state_instead_of_being_skipped(ipex_vaults, monkeypatch):
+    w = _rotated_group(ipex_vaults)
+    alice = w.alice
+    roots = alice.vault.roots
+    elect = roots.core.witnesser
+    monkeypatch.setattr(roots.core, 'witnesser', lambda hab, rotation: (_ for _ in ()).throw(
+        kering.ValidationError('member key state is not yet local')))
+    alice.vault.auxiliary.process()
+    alice.vault.auxiliary.process()
+    assert not _sent(alice)
+    assert alice.vault.db.rootRotations.get(keys=(w.gid, w.rotation)) is None
+    assert not list(alice.vault.db.rootSends.getTopItemIter())
+
+    # The missing state arrives in the same session; the next pass owes and sends the copy.
+    monkeypatch.setattr(roots.core, 'witnesser', elect)
+    alice.vault.auxiliary.process()
+    event, = _sent(alice)
+    assert event['dest'] == w.ch.pre
+    assert alice.vault.db.rootRotations.get(keys=(w.gid, w.rotation)) == w.ah.pre
+
+
+def test_owed_copy_survives_transient_prepare_errors_and_drops_only_on_refusal(ipex_vaults, monkeypatch):
+    w = _rotated_group(ipex_vaults)
+    alice = w.alice
+    roots = alice.vault.roots
+    prepare = roots.core.prepare
+    keys = (w.gid, w.registry, w.ch.pre)
+    errors = [RootUnverified('root verification BUP is not accepted'),
+              kering.ValidationError('head update anchor is not yet in the issuer KEL')]
+    for error in errors:
+        monkeypatch.setattr(roots.core, 'prepare', lambda *a, error=error, **kw: (_ for _ in ()).throw(error))
+        alice.vault.auxiliary.process()
+        assert not _sent(alice)
+        assert alice.vault.db.rootSends.get(keys=keys) is not None
+    monkeypatch.setattr(roots.core, 'prepare', prepare)
+    alice.vault.auxiliary.process()
+    event, = _sent(alice)
+    assert event['dest'] == w.ch.pre
+    assert alice.vault.db.rootSends.get(keys=keys) is None
+
+    # A recipient that is not a current member is a hard refusal: the row is dropped.
+    roots.owe(w.gid, w.registry, w.issuer.hby.habByName('roots-issuer-member').pre)
+    alice.vault.auxiliary.process()
+    assert not _sent(alice)
+    assert not list(alice.vault.db.rootSends.getTopItemIter())
+    # So is an explicit core refusal, even when authorization passes.
+    monkeypatch.setattr(roots.core, 'prepare', lambda *a, **kw: (_ for _ in ()).throw(
+        RootRefused('refused')))
+    roots.owe(w.gid, w.registry, w.ch.pre)
+    alice.vault.auxiliary.process()
+    assert not list(alice.vault.db.rootSends.getTopItemIter())

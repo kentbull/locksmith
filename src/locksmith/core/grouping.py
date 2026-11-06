@@ -4,6 +4,8 @@ locksmith.core.grouping module
 
 Doers and helpers for KERI group multisig identifier operations.
 """
+import json
+
 from ordered_set import OrderedSet as oset
 
 from hio.base import doing
@@ -19,6 +21,45 @@ from keri.peer import exchanging
 from locksmith.db.basing import IdentifierMetaInfo
 
 logger = help.ogler.getLogger(__name__)
+
+
+def record_members(vault, ghab, serder, smids, rmids):
+    """Remember the members of a pending group rotation until they are committed.
+
+    Core commits members only when called with the accepted event, which the
+    live rotate and join loops do. This record lets a later session commit
+    them when the vault closed between acceptance and that call.
+    """
+    vault.db.memberCommits.pin(keys=(ghab.pre, serder.said),
+                               val=json.dumps(dict(smids=list(smids), rmids=list(rmids or smids))))
+
+
+def commit_members(vault, ghab, serder, smids, rmids):
+    """Commit members when ``serder`` is the accepted latest establishment event."""
+    if not ghab.commitAcceptedMembers(serder, smids=smids, rmids=rmids):
+        return False
+    vault.db.memberCommits.rem(keys=(ghab.pre, serder.said))
+    return True
+
+
+def commit_recorded_members(vault, pre=None):
+    """Commit recorded members of accepted rotations; drop records a later event superseded.
+
+    Returns the group AIDs whose members were committed.
+    """
+    committed = []
+    for (gid, said), raw in list(vault.db.memberCommits.getTopItemIter(keys=(pre, "") if pre else "")):
+        ghab = vault.hby.habs.get(gid)
+        kever = vault.hby.kevers.get(gid)
+        serder = vault.hby.db.evts.get(keys=(gid, said))
+        if not isinstance(ghab, keri_habbing.GroupHab) or kever is None or serder is None:
+            continue  # Not yet accepted here (or not a local group); keep waiting.
+        members = json.loads(raw)
+        if commit_members(vault, ghab, serder, members['smids'], members['rmids']):
+            committed.append(gid)
+        elif kever.lastEst.s >= serder.sn:
+            vault.db.memberCommits.rem(keys=(gid, said))  # A later establishment superseded it.
+    return committed
 
 
 def registry_proposal(vault, said):
@@ -755,6 +796,7 @@ class GroupMultisigRotateDoer(doing.DoDoer):
                 )
 
             # Step 6: Start counselor escrow
+            record_members(self.app.vault, self.ghab, rserder, self.smids, self.rmids)
             self.counselor.start(
                 ghab=self.ghab, prefixer=prefixer, number=seqner,
                 diger=coring.Diger(qb64=rserder.said)
@@ -765,11 +807,11 @@ class GroupMultisigRotateDoer(doing.DoDoer):
             # once the rotation is accepted.
             committed = False
             while not self.counselor.complete(prefixer, seqner):
-                committed = committed or self.ghab.commitAcceptedMembers(
-                    rserder, smids=self.smids, rmids=self.rmids)
+                committed = committed or commit_members(
+                    self.app.vault, self.ghab, rserder, self.smids, self.rmids)
                 yield self.tock
             if not committed:
-                self.ghab.commitAcceptedMembers(rserder, smids=self.smids, rmids=self.rmids)
+                commit_members(self.app.vault, self.ghab, rserder, self.smids, self.rmids)
 
             # Step 8: Handle delegation if present
             if self.ghab.kever.delpre:
@@ -938,6 +980,7 @@ class MultisigRotationJoinDoer(doing.DoDoer):
             prefixer = coring.Prefixer(qb64=ghab.pre)
             seqner = coring.Number(sn=serder.sn)
 
+            record_members(self.app.vault, ghab, orot, smids, rmids)
             self.counselor.start(
                 ghab=ghab, prefixer=prefixer, number=seqner,
                 diger=coring.Diger(qb64=serder.said)
@@ -956,10 +999,10 @@ class MultisigRotationJoinDoer(doing.DoDoer):
             # once the rotation is accepted.
             committed = False
             while not self.counselor.complete(prefixer, seqner):
-                committed = committed or ghab.commitAcceptedMembers(orot, smids=smids, rmids=rmids)
+                committed = committed or commit_members(self.app.vault, ghab, orot, smids, rmids)
                 yield self.tock
             if not committed:
-                ghab.commitAcceptedMembers(orot, smids=smids, rmids=rmids)
+                commit_members(self.app.vault, ghab, orot, smids, rmids)
 
             # Step 11: Check for shared witnesses
             shared_witnesses = get_shared_witnesses(ghab)
@@ -1093,12 +1136,13 @@ class CounselingCompletionDoer(doing.DoDoer):
         self.tock = tock
         _ = (yield self.tock)
 
-        # Maybe we need self.counselor.start() here?
-
         while not self.counselor.complete(self.prefixer, self.seqner):
             yield self.tock
 
         logger.info(f"Counseling complete for {self.ghab.name} ({self.ghab.pre}), sn={self.seqner.sn}")
+        # The rotate or join loop that recorded the members may have ended with the
+        # last session; commit them now that the rotation is accepted.
+        commit_recorded_members(self.vault, self.ghab.pre)
 
         if self.ghab.pre not in self.vault.hby.prefixes:
             kever = self.vault.hby.kevers[self.ghab.pre]
