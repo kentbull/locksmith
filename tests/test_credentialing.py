@@ -1090,6 +1090,35 @@ def test_issuance_rejects_schema_mismatch(ipex_vaults):
     assert hab.kever.sn == 0
 
 
+def test_quorum_receipts_complete_issuance_when_receipt_propagation_stalls(ipex_vaults, monkeypatch):
+    """Sharing receipts among witnesses is best effort; the accepted quorum decides the update."""
+    app = ipex_vaults('issuance-propagation-stall')
+    witness = app.hby.makeHab(name='witness', transferable=False)
+    hab = app.hby.makeHab(name='issuer', wits=[witness.pre], toad=1)
+    schema = _load_schema(app, hab)
+    closed = []
+
+    def receipt(self, pre, sn=None, auths=None):
+        # The witness receipt is accepted, then forwarding it to other witnesses never answers.
+        _deliver_ipex(app.vault, witness.witness(SerderKERI(raw=hab.msgOwnEvent(sn=sn))))
+        try:
+            while True:
+                yield self.tock
+        finally:
+            closed.append(sn)
+    monkeypatch.setattr(credentialing.LocksmithReceiptor, 'receipt', receipt)
+    events = []
+    app.vault.signals.doer_event.connect(lambda name, event, data: events.append((event, data)))
+    doer = credentialing.IssueCredentialDoer(app, schema.said, hab.pre, {'LEI': 'test'})
+    doing.Doist(doers=[doer], tock=0.03125, limit=70.0).do()
+    assert doer.done and not doer.deeds
+    assert [event for event, _ in events if event.startswith('credential_issu')] == ['credential_issued'], events
+    assert closed == [1, 2]
+    ((said,), _), = app.vault.db.issued.getTopItemIter()
+    app.vault.rgy.processEscrows()
+    assert credentialing.credential(app.vault, said)['status']['et'] == 'issued'
+
+
 @pytest.mark.parametrize(('authentication', 'ends_early'), [('registry', False), ('anchor', True)])
 def test_witness_timeout_preserves_pending_issuance_and_closes_receiptor(
         ipex_vaults, monkeypatch, authentication, ends_early):

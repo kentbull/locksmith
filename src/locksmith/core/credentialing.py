@@ -557,6 +557,11 @@ class CredentialUpdateDoer(doing.DoDoer):
         try:
             for _ in receipt:
                 if self.tyme >= deadline:
+                    # The receiptor also forwards collected receipts to the other
+                    # witnesses; that sharing is best effort. The accepted quorum
+                    # below decides the update, not a stalled forwarding request.
+                    if len(self.vault.hby.db.wigs.get(keys=(hab.pre, anchor.said))) >= threshold:
+                        break
                     raise TimeoutError('Witness receipts are still pending for the credential update')
                 yield self.tock
         finally:
