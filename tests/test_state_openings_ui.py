@@ -34,6 +34,7 @@ def test_openings_require_request_approval_and_separate_admit(qapp, ipex_vaults)
     QTest.mouseClick(request.request, Qt.MouseButton.LeftButton)
     assert request.state.text() == 'Waiting for state openings'
     _, _, query, _ = vo.outgoing.popleft()
+    query = query()  # Requests are signed when delivery starts.
     _deliver_ipex(holder.vault, query)
     qapp.processEvents()
 
@@ -79,6 +80,7 @@ def test_missing_opening_waits_until_the_presenter_cancels(qapp, ipex_vaults):
     ho, vo = holder.vault.auxiliary, verifier.vault.auxiliary
     vo.request_openings(vh, message.said)
     _, _, query, _ = vo.outgoing.popleft()
+    query = query()  # Requests are signed when delivery starts.
     _deliver_ipex(holder.vault, query)
     window = QWidget()
     window.app = holder
@@ -108,6 +110,7 @@ def test_wrong_event_opening_is_visibly_refused(qapp, ipex_vaults):
     dialog = page._response_dialog
     QTest.mouseClick(dialog.request, Qt.MouseButton.LeftButton)
     _, _, query, _ = vo.outgoing.popleft()
+    query = query()  # Requests are signed when delivery starts.
     _deliver_ipex(holder.vault, query)
     ho.approve_openings(hh, message.said)
     _, _, reply, _ = ho.outgoing.popleft()
@@ -139,6 +142,7 @@ def test_revoked_opening_is_delivered_but_never_enables_admit(qapp, ipex_vaults)
     dialog = page._response_dialog
     QTest.mouseClick(dialog.request, Qt.MouseButton.LeftButton)
     _, _, query, _ = vo.outgoing.popleft()
+    query = query()  # Requests are signed when delivery starts.
     _deliver_ipex(holder.vault, query)
     ho.approve_openings(hh, message.said)
     assert holder.hby.db.exrs.get((message.said, acdc.said)).state == 'revoked'

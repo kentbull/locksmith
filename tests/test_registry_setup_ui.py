@@ -25,6 +25,7 @@ def test_registry_setup_approval_requires_a_separate_admit(qapp, ipex_vaults):
     _, _, wire, _ = io.outgoing.popleft()
     _deliver_ipex(holder.vault, wire)
     _, _, query, _ = io.outgoing.popleft()
+    query = query()  # Requests are signed when delivery starts.
     _deliver_ipex(holder.vault, query)
     qapp.processEvents()
 
@@ -104,6 +105,7 @@ def test_registry_setup_refuses_a_revoked_opening(qapp, ipex_vaults):
     _, _, wire, _ = io.outgoing.popleft()
     _deliver_ipex(holder.vault, wire)
     _, _, query, _ = io.outgoing.popleft()
+    query = query()  # Requests are signed when delivery starts.
     _deliver_ipex(holder.vault, query)
     parent = QWidget()
     parent.app = holder

@@ -126,12 +126,13 @@ def wallet(qapp, mailbox_routes):
             exc = exchanging.Exchanger(hby=hby, handlers=[])
             hby.kvy.exc = exc
             # Match the real vault: core multisig routes exist before Auxiliary composes them.
-            grouping.loadHandlers(exc=exc, mux=grouping.Multiplexor(hby=hby, notifier=notifier, rgy=rgy))
+            mux = grouping.Multiplexor(hby=hby, notifier=notifier, rgy=rgy)
+            grouping.loadHandlers(exc=exc, mux=mux)
             for verb in ('apply', 'offer', 'agree', 'grant', 'admit', 'spurn'):
                 exc.addHandler(ipexing.IpexHandler(f'/ipex/{verb}', hby, notifier, rgy, signals=signals))
             queued = []
             vault = SimpleNamespace(hby=hby, rgy=rgy, db=db, org=organizing.Organizer(hby=hby),
-                                    exc=exc, signals=signals, notifier=notifier, extend=queued.extend, doers=queued, kvy=hby.kvy)
+                                    exc=exc, mux=mux, signals=signals, notifier=notifier, extend=queued.extend, doers=queued, kvy=hby.kvy)
             vault.mbx = SimpleNamespace(parser=parsing.Parser(kvy=hby.kvy, exc=exc, version=kering.Vrsn_2_0))
             vault.auxiliary = auxiliary.Auxiliary(vault)
             app = SimpleNamespace(hby=hby, vault=vault, queued=queued)
