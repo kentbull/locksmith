@@ -71,8 +71,14 @@ class _Query:
     expires: object
 
 
-class Auxiliary(doing.DoDoer):
-    """Compose approved live operations over one vault's normal protocol intake."""
+class Auxiliary:
+    """Compose approved live operations over one vault's normal protocol intake.
+
+    This is the operation table and reply/query route handler. It holds no
+    scheduler state: ending an operation is a phase transition, and the
+    ``outgoing`` queue is drained by ``AuxiliaryDoer``, the same split as
+    KERIpy's ``Exchanger`` and the ``MailboxDirector`` that drives it.
+    """
 
     Terminal = ('cancelled', 'interrupted', 'expired', 'refused', 'verified', 'admitted')
 
@@ -84,7 +90,7 @@ class Auxiliary(doing.DoDoer):
         self._queries = {}
         self._query_deadlines = {}
         self.outgoing = deque()
-        self._delivery = None
+        self.inflight = None  # The outgoing item AuxiliaryDoer is sending now, if any.
         self._observed = {}
         from locksmith.core.group_dh import GroupIssuers
         from locksmith.core.group_holding import GroupHolders
@@ -96,7 +102,6 @@ class Auxiliary(doing.DoDoer):
         self.presenters = GroupPresenters(self)
         vault.hby.rtr.addRoute(Dhke.Route, self)
         vault.hby.rtr.addRoute(Unblind.Route, self, blinders=True, attachments=True)
-        super().__init__(doers=[doing.doify(self.run)])
 
     def _context(self, hab, said):
         """Authenticate a live pending issuance without accepting its credential."""
@@ -608,6 +613,22 @@ class Auxiliary(doing.DoDoer):
         self.outgoing.append(((operation.hab.pre, operation.grant.said),
                               operation.grant.sad['ri'], operation.publication, 'credential'))
 
+    def publishing(self, operation, wire, destination, topic):
+        """Is this outgoing item a verified operation's own publication?
+
+        A publication is the table's last action for a verified operation. It
+        carries accepted public evidence, not live agreement state, so delivery
+        neither stops it as terminal nor rechecks the finished DH exchange.
+        """
+        if operation.phase != 'verified':
+            return False
+        if operation.group is None:
+            return bool(operation.publication) and wire == operation.publication
+        hab = operation.hab
+        return (wire == operation.group.publication
+                or operation.kind == 'unblind' and topic == 'reply'
+                and destination in hab.db.signingMembers(pre=hab.pre))
+
     def _retry_query(self, operation):
         """Queue another delivery of the requester's query, signed fresh when it is sent.
 
@@ -620,9 +641,7 @@ class Auxiliary(doing.DoDoer):
             return
         if time.monotonic() < operation.query_retry_at:
             return
-        delivery = self._delivery
-        inflight = delivery is not None and not delivery.done and delivery.item == item
-        if item not in self.outgoing and not inflight:
+        if item not in self.outgoing and item != self.inflight:
             self.outgoing.append(item)
             operation.query_retry_at = time.monotonic() + 1.0
 
@@ -740,7 +759,7 @@ class Auxiliary(doing.DoDoer):
 
         Ending an operation is a state transition only. An in-flight delivery
         reads the terminal phase on its next tick, stops itself and releases its
-        transport; ``run`` then removes it from the scheduler.
+        transport; ``AuxiliaryDoer`` then removes it from the scheduler.
         """
         if operation.release_approved and (operation.group is None or operation.group.started):
             operation.protocol.abandon(operation.xid)
@@ -771,27 +790,37 @@ class Auxiliary(doing.DoDoer):
         self.presenters.clear()
         self.outgoing.clear()
 
-    def run(self, tymth=None, tock=0.0, **kwa):
-        """Own the delivery child: only this frame extends and removes it, as a pair.
 
-        Vault close reaches the operation table once, from this frame's
-        ``finally``, after HIO's exit cascade has already closed the delivery.
-        """
+class AuxiliaryDoer(doing.DoDoer):
+    """Schedule one vault's Auxiliary table: process it, then send its queue one item at a time.
+
+    ``run`` is the only code that extends or removes a delivery child, always
+    as a pair in its own frame. Vault close reaches the table once, from the
+    ``finally``, after HIO's exit cascade has already closed the delivery.
+    """
+    def __init__(self, auxiliary, **kwa):
+        self.auxiliary = auxiliary
+        self.delivery = None
+        super().__init__(doers=[doing.doify(self.run)], **kwa)
+
+    def run(self, tymth=None, tock=0.0, **kwa):
         self.wind(tymth)
+        auxiliary = self.auxiliary
         try:
             yield self.tock
-            while not self.vault.closed:
-                self.process()
-                if self._delivery is not None and self._delivery.done:
-                    self.remove([self._delivery])
-                    self._delivery = None
-                if self._delivery is None and self.outgoing:
-                    key, destination, wire, topic = self.outgoing.popleft()
-                    self._delivery = _Delivery(self, key, destination, wire, topic)
-                    self.extend([self._delivery])
+            while not auxiliary.vault.closed:
+                auxiliary.process()
+                if self.delivery is not None and self.delivery.done:
+                    self.remove([self.delivery])
+                    self.delivery = auxiliary.inflight = None
+                if self.delivery is None and auxiliary.outgoing:
+                    item = auxiliary.outgoing.popleft()
+                    self.delivery, auxiliary.inflight = _Delivery(auxiliary, *item), item
+                    self.extend([self.delivery])
                 yield .1
         finally:
-            self.close()
+            auxiliary.inflight = None
+            auxiliary.close()
 
 
 class _Delivery(doing.DoDoer):
@@ -813,12 +842,7 @@ class _Delivery(doing.DoDoer):
         def check():
             ipexing._require_vault(vault, hab)
             deadline = vault.exc.exchangeDeadline(operation.grant)
-            publication = (operation.phase == 'verified' and operation.group is None
-                           and bool(operation.publication) and self.wire == operation.publication) or (
-                           operation.group is not None and operation.phase == 'verified'
-                           and (self.wire == operation.group.publication
-                                or operation.kind == 'unblind' and self.topic == 'reply'
-                                and self.destination in hab.db.signingMembers(pre=hab.pre)))
+            publication = self.owner.publishing(operation, self.wire, self.destination, self.topic)
             if (operation.phase in self.owner.Terminal and not publication or original is None or deadline is None
                     or deadline != original or helping.nowUTC() >= deadline):
                 raise kering.ValidationError('The original live presentation deadline or approval has ended')
@@ -918,4 +942,5 @@ def install(vault):
     vault.kvy.rvy = vault.rvy
     vault.auxiliary = Auxiliary(vault)
     vault.kvy.qvy = vault.auxiliary
-    return vault.auxiliary
+    vault.auxiliary_doer = AuxiliaryDoer(vault.auxiliary)
+    return vault.auxiliary_doer

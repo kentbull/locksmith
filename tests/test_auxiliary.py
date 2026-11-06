@@ -233,33 +233,33 @@ def _second_grant(issuer, ih, hh):
         attribute=dict(d='', i=hh.pre, role='holder')), kind=kering.Kinds.json)
 
 
-def _inflight(app, io, messengers):
+def _inflight(app, doer, messengers):
     """Run the production scheduler until a delivery holds an open transport."""
     for _ in range(100):
         app.qtask.run()
         if messengers:
-            assert io._delivery is not None and not io._delivery.done
-            return io._delivery
+            assert doer.delivery is not None and not doer.delivery.done
+            return doer.delivery
     pytest.fail('No auxiliary delivery reached its transport')
 
 
-def _reaped(app, io, delivery):
+def _reaped(app, doer, delivery):
     for _ in range(20):
         app.qtask.run()
-        if delivery not in io.doers:
+        if delivery not in doer.doers:
             return
     pytest.fail('The finished auxiliary delivery was never removed')
 
 
-def _count_exits(patch, io):
+def _count_exits(patch, doer):
     calls = []
-    exit = io.exit
+    exit = doer.exit
 
     def counted(*args, **kwa):
         calls.append(kwa.get('deeds', args[0] if args else None))
         return exit(*args, **kwa)
 
-    patch.setattr(io, 'exit', counted)
+    patch.setattr(doer, 'exit', counted)
     return calls
 
 
@@ -267,85 +267,86 @@ def test_cancelling_an_inflight_delivery_stops_it_next_tick_without_closing_the_
         ipex_vaults, monkeypatch):
     """Cancel is a state transition; the run loop alone removes its delivery child."""
     issuer, holder, ih, hh, _, _, _, message, atc, _ = pending_issuance(ipex_vaults)
-    io = issuer.vault.auxiliary
+    io, doer = issuer.vault.auxiliary, issuer.vault.auxiliary_doer
     with monkeypatch.context() as patch:
         messengers = _stall_issuer_transport(patch, ih, hh)
         io.begin_dh(ih, message, atc)
         message2, atc2 = _second_grant(issuer, ih, hh)
         io.begin_dh(ih, message2, atc2)
-        delivery = _inflight(issuer, io, messengers)
+        delivery = _inflight(issuer, doer, messengers)
         assert delivery.key == (ih.pre, message.said)
-        exits = _count_exits(patch, io)
+        exits = _count_exits(patch, doer)
         io.abandon(ih.pre, message.said)
         # Termination touches no scheduler state; the delivery observes it.
-        assert io._delivery is delivery and delivery in io.doers
+        assert doer.delivery is delivery and delivery in doer.doers and io.inflight == delivery.item
         assert not any(item[0] == delivery.key for item in io.outgoing)
-        _reaped(issuer, io, delivery)
+        _reaped(issuer, doer, delivery)
     assert io.status(ih.pre, message.said)['phase'] == 'cancelled'
-    assert delivery.done and delivery is not io._delivery
+    assert delivery.done and delivery is not doer.delivery and io.inflight != delivery.item
+    assert not isinstance(io, doing.Doer)  # The operation table holds no scheduler state.
     assert all(not messenger.deeds for messenger in messengers)
     # The reap went through HIO remove() exactly once and did not close the table.
     assert len(exits) == 1 and exits[0] is not None
     assert io.status(ih.pre, message2.said)['phase'] not in io.Terminal
-    assert io._delivery is None or io._delivery.key == (ih.pre, message2.said)
+    assert doer.delivery is None or doer.delivery.key == (ih.pre, message2.said)
 
 
 def test_expiry_during_an_inflight_delivery_stops_and_reaps_it(ipex_vaults, monkeypatch):
     issuer, holder, ih, hh, _, _, _, message, atc, _ = pending_issuance(ipex_vaults)
-    io = issuer.vault.auxiliary
+    io, doer = issuer.vault.auxiliary, issuer.vault.auxiliary_doer
     with monkeypatch.context() as patch:
         messengers = _stall_issuer_transport(patch, ih, hh)
         io.begin_dh(ih, message, atc)
-        delivery = _inflight(issuer, io, messengers)
+        delivery = _inflight(issuer, doer, messengers)
         late = issuer.vault.exc.exchangeDeadline(message) + timedelta(seconds=1)
         patch.setattr(helping, 'nowUTC', lambda: late)
-        _reaped(issuer, io, delivery)
+        _reaped(issuer, doer, delivery)
         operation = io.operations[delivery.key]
         assert operation.phase == 'expired'
         assert operation.error == 'The original Grant deadline has elapsed'
-        assert delivery.done and io._delivery is None and not io.outgoing
-        assert list(io.doers) == [io.doers[0]] and len(io.deeds) == 1
+        assert delivery.done and doer.delivery is None and not io.outgoing
+        assert list(doer.doers) == [doer.doers[0]] and len(doer.deeds) == 1
         assert all(not messenger.deeds for messenger in messengers)
 
 
 def test_repeated_deliveries_do_not_accumulate_scheduler_children(ipex_vaults):
     """Every delivery the run loop extends, it also removes."""
     issuer, holder, ih, hh, _, _, _, message, atc, _ = pending_issuance(ipex_vaults)
-    io = issuer.vault.auxiliary
+    io, doer = issuer.vault.auxiliary, issuer.vault.auxiliary_doer
     io.begin_dh(ih, message, atc)
     seen = set()
     # No route is known, so each attempt ends at once and the query is retried each second.
     for _ in range(200):
         issuer.qtask.run()
-        assert len(io.doers) <= 2
-        if io._delivery is not None:
-            seen.add(id(io._delivery))
+        assert len(doer.doers) <= 2
+        if doer.delivery is not None:
+            seen.add(id(doer.delivery))
     assert len(seen) >= 4
     io.abandon(ih.pre, message.said)
     for _ in range(10):
         issuer.qtask.run()
-    assert io._delivery is None
-    assert len(io.doers) == 1 and len(io.deeds) == 1
+    assert doer.delivery is None
+    assert len(doer.doers) == 1 and len(doer.deeds) == 1
 
 
 def test_vault_close_interrupts_waiting_and_inflight_operations_once(ipex_vaults, monkeypatch):
     """Close runs one HIO exit cascade: no re-entrant remove, no view updates, stores closed."""
     issuer, holder, ih, hh, _, _, _, message, atc, _ = pending_issuance(ipex_vaults)
-    vault, io = issuer.vault, issuer.vault.auxiliary
+    vault, io, doer = issuer.vault, issuer.vault.auxiliary, issuer.vault.auxiliary_doer
     with monkeypatch.context() as patch:
         messengers = _stall_issuer_transport(patch, ih, hh)
         io.begin_dh(ih, message, atc)
         message2, atc2 = _second_grant(issuer, ih, hh)
         io.begin_dh(ih, message2, atc2)
-        delivery = _inflight(issuer, io, messengers)
+        delivery = _inflight(issuer, doer, messengers)
         waiting = io.operations[(ih.pre, message2.said)]
         assert waiting.phase == 'waiting' and any(item[0] == (ih.pre, message2.said) for item in io.outgoing)
         events = []
         vault.signals.doer_event.connect(lambda *args: events.append(args))
-        exits = _count_exits(patch, io)
+        exits = _count_exits(patch, doer)
         issuer.close_vault()
     assert [operation.phase for operation in io.operations.values()] == ['interrupted', 'interrupted']
-    assert not io.outgoing and not io.deeds and not delivery.deeds
+    assert not io.outgoing and not doer.deeds and not delivery.deeds
     assert all(not messenger.deeds for messenger in messengers)
     assert exits == [None]  # Only the owner's own exit; nothing removed a child during close.
     assert not any(args[0] == 'Auxiliary' for args in events), events
