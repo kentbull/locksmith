@@ -15,7 +15,8 @@ from keri.app import habbing, indirecting, storing
 from keri.core import Number, Prefixer, SerderACDC
 from keri.db import openLMDB
 
-from locksmith.core.grouping import (get_pending_multisig_proposals, inception_proposal,
+from locksmith.core.grouping import (CounselingCompletionDoer, commit_members, commit_recorded_members,
+                                     record_members, get_pending_multisig_proposals, inception_proposal,
                                      pending_registry_proposals, registry_proposal)
 from locksmith.ui.vault.credentials.activity import CredentialActivityPage
 from locksmith.ui.vault.credentials.issued.issue import IssueCredentialDialog
@@ -244,3 +245,60 @@ def test_create_join_v2_group_preserves_inception_and_reopens(ipex_vaults, qapp,
             assert app.hby.db.evts.get((gid, gid)).raw == original
         issue.close()
         page.close()
+
+
+def _stale_rotation(ipex_vaults):
+    """An accepted group rotation adding Carol whose members were never committed."""
+    from test_root_replicating import _rotated_group
+    w = _rotated_group(ipex_vaults)
+    group = w.alice.hby.habs[w.gid]
+    rotation = w.alice.hby.db.evts.get(keys=(w.gid, w.rotation))
+    assert w.ch.pre not in group.smids
+    assert w.ch.pre not in w.alice.hby.db.habs.get(keys=(w.gid,)).smids
+    return w, group, rotation, [w.ah.pre, w.bh.pre, w.ch.pre]
+
+
+def test_rotation_members_recorded_before_close_commit_on_reopen(ipex_vaults):
+    w, group, rotation, members = _stale_rotation(ipex_vaults)
+    # The rotate/join loop recorded the members, then the wallet closed before committing.
+    record_members(w.alice.vault, group, rotation, members, members)
+    w.alice.close_vault()
+
+    alice = ipex_vaults('roots-alice', bran='0123456789abcdefghijk')
+    group = alice.hby.habs[w.gid]
+    assert group.smids == members and group.rmids == members
+    assert alice.hby.db.habs.get(keys=(w.gid,)).smids == members
+    assert w.ch.pre in alice.hby.db.signingMembers(pre=w.gid)
+    assert not list(alice.vault.db.memberCommits.getTopItemIter())
+
+
+def test_live_commit_waits_for_acceptance_and_superseded_records_are_dropped(ipex_vaults):
+    w, group, rotation, members = _stale_rotation(ipex_vaults)
+    vault = w.alice.vault
+    inception = vault.hby.db.evts.get(keys=(w.gid, vault.hby.kevers[w.gid].serder.ked['p']))
+    # A non-latest establishment never commits; its record is dropped as superseded.
+    record_members(vault, group, inception, [w.ah.pre], [w.ah.pre])
+    assert not commit_members(vault, group, inception, [w.ah.pre], [w.ah.pre])
+    assert vault.db.memberCommits.get(keys=(w.gid, inception.said)) is not None
+    assert commit_recorded_members(vault, w.gid) == []
+    assert vault.db.memberCommits.get(keys=(w.gid, inception.said)) is None
+    assert group.smids == [w.ah.pre, w.bh.pre]
+    # The accepted rotation commits through the live helper and clears its record.
+    record_members(vault, group, rotation, members, members)
+    assert commit_members(vault, group, rotation, members, members)
+    assert group.smids == members
+    assert not list(vault.db.memberCommits.getTopItemIter())
+
+
+def test_counseling_completion_commits_recorded_members(ipex_vaults, monkeypatch):
+    w, group, rotation, members = _stale_rotation(ipex_vaults)
+    app = w.alice
+    record_members(app.vault, group, rotation, members, members)
+    monkeypatch.setattr(app.vault.counselor, 'complete', lambda prefixer, number, diger=None: True)
+    doer = CounselingCompletionDoer(app.vault, Prefixer(qb64=w.gid), Number(sn=rotation.sn), group)
+    app.vault.extend([doer])
+    for _ in range(5):
+        app.qtask.run()
+    assert group.smids == members and group.rmids == members
+    assert app.hby.db.habs.get(keys=(w.gid,)).rmids == members
+    assert not list(app.vault.db.memberCommits.getTopItemIter())
