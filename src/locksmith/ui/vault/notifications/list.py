@@ -148,9 +148,7 @@ class NotificationsListPage(QWidget):
                     notification_row = dict(
                         self._format_generic_notification(note, rid, timestamp_display),
                         Type='Registry root',
-                        Message='Encrypted registry root copy'
-                                + (' (waiting for local state)' if note.attrs.get('deferred') else '')
-                                + '; approve it in Credential Activity')
+                        Message='Registry root received')
                 elif route.startswith('/challenge/response'):
                     notification_row = self._format_challenge_response_notification(note, rid, timestamp_display)
                 elif route.startswith('/keystate/update'):

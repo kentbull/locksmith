@@ -340,13 +340,13 @@ def test_existing_keeper_root_derives_only_explicit_accepted_selection(ipex_vaul
     assert later.qb64b not in target.vault.rgy.store.cloneTel(registry.regk)
 
 
-def test_issuer_root_copy_waits_for_explicit_approval_and_survives_reopen(ipex_vaults, qapp, tmp_path):
-    """Mailbox and file copies reach the holder pending; only Approve retains the root."""
+def test_issuer_root_copy_is_retained_automatically(ipex_vaults, qapp, tmp_path):
+    """Mailbox and file copies are accepted on arrival; a different root is never retained."""
     from PySide6.QtCore import Qt
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QWidget
     from keri.acdc.salting import rootExn
-    from keri.core import Salter
+    from keri.core import Dater, Salter
     from locksmith.core import root_replicating
     from locksmith.ui.vault.credentials.activity import CredentialActivityPage
     from locksmith.ui.vault.credentials.registry_roots import RootSendDialog
@@ -375,43 +375,61 @@ def test_issuer_root_copy_waits_for_explicit_approval_and_survives_reopen(ipex_v
         with pytest.raises((kering.KeriError, ValueError)):
             root_replicating.inspect(malformed)
 
-    _deliver_ipex(target.vault, wire)
-    copy, = target.vault.roots.pending()
-    assert (copy.sender, copy.recipient, copy.gid, copy.registry) == (
-        issuer.pre, holder.pre, holder.pre, registry.regk)
-    assert not copy.deferred and not copy.error
-    # Arrival decrypts and retains nothing; a pending copy survives restart.
-    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk) is None
-    target.close_vault()
-    target = ipex_vaults('existing-root-holder', bran='0123456789abcdefghijk')
+    head = source.vault.rgy.store.headEvent(registry.regk)
+    # A copy sent without a hint verifies against the opening held in the accepted proof.
+    hintless = tmp_path / 'hintless.cesr'
+    hintless.write_bytes(rootExn(issuer, holder.pre, holder.pre, registry.regk, root, event=head.said))
     receiver = QWidget()
     receiver.app = target
     page = CredentialActivityPage(receiver)
     page.set_vault_name(target.name)
-    assert list(page.root_copies.buttons) == [copy.said]
-    QTest.mouseClick(page.root_copies.buttons[copy.said], Qt.MouseButton.LeftButton)
-    assert not page.root_copies.error, page.root_copies.error
+    assert not page.root_copies.isVisibleTo(page)
+    assert target.vault.rgy.store.opening(head.said) is None
+    target.vault.roots.retry = lambda: None  # Without the held-opening retry the copy waits.
+    page.root_copies.import_file(hintless)
+    copy, = target.vault.roots.pending()
+    assert copy.waiting == 'opening evidence' and copy.deadline
+    assert 'waiting for local state' in page.root_copies.message
+    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk) is None
+    page.refresh()
+    assert page.root_copies.isVisibleTo(page) and page.root_copies.items == [copy]
+    del target.vault.roots.retry
+    target.vault.auxiliary.process()
+    assert target.vault.roots.pending() == []
     assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
-    assert not page.root_copies.buttons and target.vault.roots.pending() == []
+
+    # The mailbox copy is retained on arrival with no approval step.
+    _deliver_ipex(target.vault, wire)
+    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
+    assert target.vault.roots.pending() == []
     assert credentialing.credential(target.vault, acdc.said, grant=held)['proof'] == old
     assert target.vault.db.accepted.get((acdc.said,)).grant == held
+    target.close_vault()
+    target = ipex_vaults('existing-root-holder', bran='0123456789abcdefghijk')
+    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
+    receiver.app = target
+    page = CredentialActivityPage(receiver)
+    page.set_vault_name(target.name)
 
-    # A correctly signed wrong root, imported from a file, never replaces the retained one.
-    head = source.vault.rgy.store.headEvent(registry.regk)
+    # A correctly signed wrong root, imported from a file, never verifies: it waits in
+    # escrow, never replaces the retained root, and is dropped once its deadline passes.
     bad = tmp_path / 'wrong.cesr'
     bad.write_bytes(rootExn(issuer, holder.pre, holder.pre, registry.regk, Salter(),
                             event=head.said, td=acdc.said))
     page.root_copies.import_file(bad)
     assert not page.root_copies.error, page.root_copies.error
     wrong, = target.vault.roots.pending()
-    QTest.mouseClick(page.root_copies.buttons[wrong.said], Qt.MouseButton.LeftButton)
-    assert page.root_copies.error
+    assert page.root_copies.items == [wrong]
+    target.vault.auxiliary.process()
+    target.vault.mbx.exchanger.processEscrow()
     assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
-    assert [item.said for item in target.vault.roots.pending()] == [wrong.said]
-    QTest.mouseClick(page.root_copies.dismiss_buttons[wrong.said], Qt.MouseButton.LeftButton)
-    assert target.vault.roots.pending() == [] and not page.root_copies.buttons
-    # Approving from a page whose vault has closed changes nothing.
-    page.root_copies.show_copies([wrong])
-    target.close_vault()
-    page.root_copies.approve(wrong.said)
-    assert 'closed' in page.root_copies.error
+    target.hby.db.rrpe.pin(keys=(wrong.said,), val=Dater(dts='2020-01-01T00:00:00.000000+00:00'))
+    target.vault.mbx.exchanger.processEscrow()
+    assert target.vault.roots.pending() == []
+    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
+    # Re-importing the dropped copy reports that it is not retained.
+    page.root_copies.import_file(bad)
+    assert page.root_copies.error.startswith('Registry root copy not retained'), page.root_copies.error
+    # The Activity list is informational: no approve or dismiss control exists.
+    assert not hasattr(page.root_copies, 'approve') and not hasattr(page.root_copies, 'dismiss')
+    assert not hasattr(target.vault.roots, 'approve') and not hasattr(target.vault.roots, 'dismiss')

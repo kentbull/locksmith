@@ -787,7 +787,7 @@ def test_group_derived_worker_requires_member_consent_then_replicates_roots(ipex
             assert accepted.grant == grant_said and accepted.admit == admitted.said
 
         # Each custodian replicated its new root to the other current member once the
-        # registry update was accepted; nothing is retained before explicit approval.
+        # registry update was accepted; the member retained it on arrival.
         credential_said = message.sad['a']['o'][0]
         historical = [(app.vault.db.accepted.get((credential_said,)),
                        credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'])
@@ -798,14 +798,12 @@ def test_group_derived_worker_requires_member_consent_then_replicates_roots(ipex
             assert event['dest'] == member.pre and event['hab'].pre == custodian.pre
             assert root.qb64b not in event['serder'].raw + event['attachment']
             assert not list(source.vault.db.rootSends.getTopItemIter())
-            copy, = target.vault.roots.pending()
-            assert (copy.sender, copy.recipient, copy.gid, copy.registry) == (
-                custodian.pre, member.pre, held_for, rip.said)
-            assert not copy.deferred, copy
-            assert target.hby.mgr.getRegistryRoot(held_for, rip.said) is None
-            assert target.vault.roots.approve(copy.said) is True
-            assert target.hby.mgr.getRegistryRoot(held_for, rip.said).qb64 == root.qb64
             assert target.vault.roots.pending() == []
+            assert target.hby.mgr.getRegistryRoot(held_for, rip.said).qb64 == root.qb64
+            note, = [note for _, note in target.vault.notifier.noter.notes.getTopItemIter()
+                     if note.attrs.get('r') == '/exn/registry/root']
+            assert (note.attrs['d'], note.attrs['i'], note.attrs['gid'], note.attrs['rd']) == (
+                event['serder'].said, custodian.pre, held_for, rip.said)
         assert peer.vault.db.issued.get((credential_said,)) is None
         assert peer.vault.db.accepted.get((credential_said,)) is None
         for app, (admission, proof) in zip(holders, historical):

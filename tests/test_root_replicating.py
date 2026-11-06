@@ -1,10 +1,8 @@
-"""Registry roots reach group newcomers as pending ESSR copies; only approval retains them."""
+"""Registry roots reach group newcomers as ESSR copies that are retained automatically."""
 from types import SimpleNamespace
 
-import pytest
 from keri import kering
 from keri.acdc import Registrar, acdcmap
-from keri.acdc.salting import RootDeferred
 from keri.core import Parser, Salter
 
 from locksmith.core import evidence
@@ -74,8 +72,7 @@ def _rotated_group(ipex_vaults, *, newcomer_has_tel=True):
     event, = _sent(alice)
     assert event['dest'] == bh.pre
     _deliver_ipex(bob.vault, event['serder'].raw + event['attachment'])
-    copy, = bob.vault.roots.pending()
-    assert bob.vault.roots.approve(copy.said) is True
+    assert bob.vault.roots.pending() == []
     assert bob.hby.mgr.getRegistryRoot(gid, registry.regk).qb64 == root.qb64
 
     # Every member rotates its own keys; the accepted group rotation adds Carol.
@@ -110,7 +107,12 @@ def _sent(app):
     return events
 
 
-def test_rotation_witnesser_catches_a_newcomer_up_and_approval_retains_the_root(ipex_vaults):
+def _notes(app):
+    return [note for _, note in app.vault.notifier.noter.notes.getTopItemIter()
+            if note.attrs.get('r') == '/exn/registry/root']
+
+
+def test_rotation_witnesser_catches_a_newcomer_up_and_arrival_retains_the_root(ipex_vaults):
     w = _rotated_group(ipex_vaults)
     alice, bob, carol = w.alice, w.bob, w.carol
     # Only the rotation's elected witnesser sends, exactly once per rotation.
@@ -125,39 +127,41 @@ def test_rotation_witnesser_catches_a_newcomer_up_and_approval_retains_the_root(
     alice.vault.auxiliary.process()
     assert not _sent(alice)
 
+    # Arrival verifies and retains the root with no approval step and one informational note.
     _deliver_ipex(carol.vault, event['serder'].raw + event['attachment'])
-    copy, = carol.vault.roots.pending()
-    assert (copy.sender, copy.recipient, copy.gid, copy.registry) == (w.ah.pre, w.ch.pre, w.gid, w.registry)
-    assert not copy.deferred and not copy.error
-    # Arrival retains nothing; restart keeps the copy pending until explicit approval.
-    assert carol.hby.mgr.getRegistryRoot(w.gid, w.registry) is None
+    assert carol.hby.mgr.getRegistryRoot(w.gid, w.registry).qb64 == w.root.qb64
+    assert carol.vault.roots.pending() == []
+    note, = _notes(carol)
+    assert (note.attrs['d'], note.attrs['gid'], note.attrs['rd']) == (event['serder'].said, w.gid, w.registry)
+    assert 'deferred' not in note.attrs
+    # A duplicate delivery is idempotent and adds no note; the root survives restart.
+    _deliver_ipex(carol.vault, event['serder'].raw + event['attachment'])
+    assert len(_notes(carol)) == 1
     carol.close_vault()
     carol = ipex_vaults('roots-carol', bran=BRAN)
-    assert [item.said for item in carol.vault.roots.pending()] == [copy.said]
-    assert carol.vault.roots.approve(copy.said) is True
     assert carol.hby.mgr.getRegistryRoot(w.gid, w.registry).qb64 == w.root.qb64
     assert carol.vault.roots.pending() == []
 
 
-def test_copy_waits_deferred_until_the_newcomer_has_the_registry(ipex_vaults):
+def test_copy_escrows_until_the_newcomer_has_the_registry(ipex_vaults):
     w = _rotated_group(ipex_vaults, newcomer_has_tel=False)
     alice, carol = w.alice, w.carol
     alice.vault.auxiliary.process()
     event, = _sent(alice)
     _deliver_ipex(carol.vault, event['serder'].raw + event['attachment'])
     copy, = carol.vault.roots.pending()
-    assert 'registry' in copy.deferred
-    note, = [note for _, note in carol.vault.notifier.noter.notes.getTopItemIter()
-             if note.attrs.get('r') == '/exn/registry/root']
-    assert note.attrs['d'] == copy.said and note.attrs['deferred']
-    with pytest.raises(RootDeferred, match='stays pending'):
-        carol.vault.roots.approve(copy.said)
+    assert copy.said == event['serder'].said and 'registry' in copy.waiting and copy.deadline
     assert carol.hby.mgr.getRegistryRoot(w.gid, w.registry) is None
+    assert not _notes(carol)
+    # The vault's escrow loop retries the copy; without the registry it stays escrowed.
+    carol.vault.mbx.exchanger.processEscrow()
     assert [item.said for item in carol.vault.roots.pending()] == [copy.said]
 
-    # The registry state arrives later; the same copy now verifies without a resend.
+    # The registry state arrives later; the same escrowed copy verifies without a resend.
     _deliver_ipex(carol.vault, w.tel)
-    copy, = carol.vault.roots.pending()
-    assert not copy.deferred
-    assert carol.vault.roots.approve(copy.said) is True
+    assert carol.vault.mbx.exchanger is carol.vault.exc
+    carol.vault.mbx.exchanger.processEscrow()
     assert carol.hby.mgr.getRegistryRoot(w.gid, w.registry).qb64 == w.root.qb64
+    assert carol.vault.roots.pending() == []
+    note, = _notes(carol)
+    assert note.attrs['d'] == copy.said

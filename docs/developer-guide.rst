@@ -263,7 +263,7 @@ The dialog identifies the member, frozen coordinator event and elected custodian
 
 Only the elected custodian establishes and retains the issuer group's derivation
 root. Other members contribute signatures; the custodian then sends each of them
-an encrypted copy to approve (see `Registry root copies`_). The holder separately approves registry setup. Issuance then
+an encrypted copy that its wallet accepts automatically (see `Registry root copies`_). The holder separately approves registry setup. Issuance then
 proposes its BUP through the registry-approval controls described above. The
 original Grant and deadline remain unchanged; an expired exchange cannot be
 revived. The holder's **Review credential / Accept Grant** decision remains
@@ -275,7 +275,7 @@ there is no additional reply-approval click. The normal group threshold must
 authenticate the reply before it leaves. Only the elected holder custodian
 derives the root. Other members verify the issued Grant using public registry
 evidence and the exact event opening; the root reaches them only as an
-encrypted copy each approves (see `Registry root copies`_).
+encrypted copy each wallet accepts automatically (see `Registry root copies`_).
 
 After setup verifies, **Review credential** offers a separate group acceptance
 decision. The custodian proposes one Admit; other members review and approve
@@ -343,14 +343,20 @@ of the Auxiliary operation table; it adds no doer.
   (or the holder itself). Mailbox delivery is the default; **Save to file** is
   the fallback for an offline recipient.
 - **Receiving.** Copies arrive through the ordinary mailbox Parser, KRAM and
-  Exchanger path and are stored pending; nothing is decrypted or retained.
-  **Activity → Registry root copies** lists them. **Approve root** asks KERIpy
-  to re-authorize the copy, decrypt it, and verify the root against a held
-  opening or the registry commitment before retaining it. A copy whose
-  registry, key state or group is not yet local shows *Waiting for local
-  state* and stays pending until that state arrives. **Import registry root
-  file…** feeds a saved file through the same intake. **Dismiss** hides a
-  copy. Approval admits no credential and changes no historical proof.
+  Exchanger path and are accepted automatically; there is no approval step.
+  KERIpy re-authorizes the copy, decrypts it, and verifies the root against a
+  held opening or the registry commitment, then retains it and adds one
+  informational **Registry root received** notification. A copy whose
+  registry, key state, group or opening evidence is not yet local is escrowed
+  (``Baser.rrpe``) and retried by the vault's escrow loop
+  (``Exchanger.processEscrow``) for an hour. The run loop also retries each
+  escrowed copy, at most once a minute, with openings held in local credential
+  proofs, for a copy sent without a usable hint. **Activity** lists escrowed
+  copies read-only, with what each waits for and its deadline. A copy refused
+  on any attempt is dropped; a different retained root is never replaced.
+  **Import registry root file…** feeds a saved file through the same intake
+  and reports whether each copy was received, is waiting, or was not retained.
+  Retention admits no credential and changes no historical proof.
 
 Removal revokes nothing: knowledge of a root is irrevocable, and a removed
 member is never a recipient of later copies.
