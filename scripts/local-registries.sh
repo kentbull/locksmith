@@ -132,7 +132,7 @@ if [ "$backend" = python ]; then
         exec .venv/bin/kf-registrar start --name localdev-registrar --alias registrar \
         --base "$registry_base/registrar" --host 127.0.0.1 --http "$registrar_public" \
         --boothost 127.0.0.1 --bootport "$registrar_boot" --observer "$observer_aid" \
-        ${publishers[@]+"${publishers[@]}"} --full-evidence --kel "$state_dir/public-bootstrap.cesr" \
+        ${publishers[@]+"${publishers[@]}"} --kel "$state_dir/public-bootstrap.cesr" \
         --keypath "$key" --certpath "$certificate" --cafilepath "$ca" --no-prompt) \
         > "$state_dir/registrar.log" 2>&1 &
     pids+=("$!")
