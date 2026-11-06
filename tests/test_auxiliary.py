@@ -14,6 +14,12 @@ from test_credentialing import _load_schema
 from test_keri_v2_compat import ipex_vaults as ipex_vaults, _deliver_ipex
 
 
+def sent(item):
+    """Return the bytes an outgoing item transmits; a query is signed as it is sent."""
+    wire = item[2]
+    return wire() if callable(wire) else wire
+
+
 def pending_issuance(open_vault):
     """Three independent stores; real witness receipts authorize the fresh RIP."""
     issuer = open_vault('aux-issuer', bran='0123456789abcdefghijk')
@@ -61,16 +67,17 @@ def test_live_dh_preserves_early_query_then_accepts_the_same_grant(ipex_vaults):
     _, _, wire, _ = io.outgoing.popleft()
     _deliver_ipex(holder.vault, wire)
     deadline = holder.hby.db.epsd.get((message.said,)).dts
-    key, destination, query, topic = io.outgoing.popleft()
+    item = io.outgoing.popleft()
+    key = item[0]
     operation = io.operations[key]
-    # The first delivery could not reach the listener; retry the exact approved query.
+    query = sent(item)
+    # The first delivery could not reach the listener; retry the same approved query.
     operation.query_retry_at = 0
     io.process()
-    assert list(io.outgoing) == [(key, destination, query, topic)]
+    assert list(io.outgoing) == [item]
     io.process()
     assert len(io.outgoing) == 1
-    _, _, retried, _ = io.outgoing.popleft()
-    assert retried == query
+    retried = sent(io.outgoing.popleft())
     assert issuer.hby.db.epsd.get((message.said,)).dts == deadline
     _deliver_ipex(holder.vault, retried)
     assert ho.status(hh.pre, message.said)['phase'] == 'approval_required'
@@ -114,13 +121,95 @@ def test_live_dh_preserves_early_query_then_accepts_the_same_grant(ipex_vaults):
     assert holder.vault.db.accepted.get((acdc.said,)).grant == message.said
 
 
+def _tighten_kram(vault):
+    """Give this recipient the 1 s drift and 5 s lifetime of the E5 run."""
+    ctyp = vault.hby.db.kramCTYP.get('~')
+    ctyp.d, ctyp.sl, ctyp.ll, ctyp.xl = 1000, 5000, 5000, 5000
+    ctyp.psl, ctyp.pll, ctyp.pxl = 5000, 5000, 5000
+    vault.hby.db.kramCTYP.pin('~', ctyp)
+
+
+def _query_dt(wire):
+    return helping.fromIso8601(
+        Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(wire), processive=False).serder.ked['dt'])
+
+
+def test_dh_query_is_signed_when_its_delivery_starts_not_when_queued(ipex_vaults, monkeypatch):
+    issuer, holder, ih, hh, _, _, _, message, atc, _ = pending_issuance(ipex_vaults)
+    io, ho = issuer.vault.auxiliary, holder.vault.auxiliary
+    _tighten_kram(holder.vault)
+    io.begin_dh(ih, message, atc)
+    grant_item, query_item = io.outgoing.popleft(), io.outgoing.popleft()
+    assert callable(query_item[2])
+    _deliver_ipex(holder.vault, sent(grant_item))
+    # What a query timestamped at operation creation would carry once the Grant delivery stalls.
+    stale = sent(query_item)
+    now = helping.nowUTC()
+    monkeypatch.setattr(helping, 'nowUTC', lambda: now + timedelta(seconds=22))
+    _deliver_ipex(holder.vault, stale)
+    assert not ho._queries
+    fresh = sent(query_item)
+    assert _query_dt(fresh) - _query_dt(stale) >= timedelta(seconds=22)
+    assert fresh != stale
+    _deliver_ipex(holder.vault, fresh)
+    assert len(ho._queries) == 1
+    assert next(iter(ho._queries.values())).serder.raw == bytes(Parser(version=kering.Vrsn_2_0).parseOne(
+        ims=bytearray(fresh), processive=False).serder.raw)
+
+
+def test_refused_dh_query_is_replaced_with_a_fresh_one_until_the_grant_deadline(ipex_vaults, monkeypatch):
+    issuer, holder, ih, hh, _, _, _, message, atc, _ = pending_issuance(ipex_vaults)
+    io, ho = issuer.vault.auxiliary, holder.vault.auxiliary
+    _tighten_kram(holder.vault)
+    io.begin_dh(ih, message, atc)
+    _deliver_ipex(holder.vault, sent(io.outgoing.popleft()))
+    item = io.outgoing.popleft()
+    key = item[0]
+    operation = io.operations[key]
+    deadline = issuer.hby.db.epsd.get((message.said,)).dts
+    clock = [helping.nowUTC()]
+    monkeypatch.setattr(helping, 'nowUTC', lambda: clock[0])
+
+    def attempt():
+        """Run the real delivery owner; no transport is configured, so it is not accepted."""
+        delivery = auxiliary._Delivery(io, *io.outgoing.popleft())
+        doing.Doist(tock=.03125, real=False, limit=.2).do(doers=[delivery])
+        assert delivery.done and callable(delivery.item[2]) and isinstance(delivery.wire, bytes)
+        return delivery.wire
+
+    io.outgoing.appendleft(item)
+    first = attempt()
+    assert operation.phase == 'waiting'
+    clock[0] += timedelta(seconds=22)
+    operation.query_retry_at = 0
+    io.process()
+    assert list(io.outgoing) == [item]
+    second = attempt()
+    parsed = [Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(wire), processive=False).serder
+              for wire in (first, second)]
+    assert parsed[0].said != parsed[1].said and parsed[0].ked['q'] == parsed[1].ked['q']
+    assert _query_dt(second) - _query_dt(first) >= timedelta(seconds=22)
+    assert issuer.hby.db.epsd.get((message.said,)).dts == deadline
+    _deliver_ipex(holder.vault, second)
+    assert len(ho._queries) == 1
+
+    # The Grant's accepted lifetime is never extended: past it, retry ends with a clear error.
+    clock[0] = issuer.vault.exc.exchangeDeadline(message) + timedelta(seconds=1)
+    operation.query_retry_at = 0
+    io.process()
+    assert operation.phase == 'expired' and operation.error == 'The original Grant deadline has elapsed'
+    assert not io.outgoing
+    with pytest.raises(kering.ValidationError):
+        item[2]()
+
+
 def test_partial_query_signatures_do_not_authorize_agreement(ipex_vaults):
     issuer, holder, ih, hh, _, registry, _, message, atc, _ = pending_issuance(ipex_vaults)
     io, ho = issuer.vault.auxiliary, holder.vault.auxiliary
     io.begin_dh(ih, message, atc)
     _, _, wire, _ = io.outgoing.popleft()
     _deliver_ipex(holder.vault, wire)
-    _, _, query, _ = io.outgoing.popleft()
+    query = sent(io.outgoing.popleft())
     parsed = Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(query), processive=False)
     signatures = ih.sign(parsed.serder.raw)
     partial = messagize(parsed.serder, lsgs=[(ih.kever.prefixer, signatures[:1])], gvrsn=kering.Vrsn_2_0)
@@ -139,7 +228,7 @@ def test_original_query_deadline_and_cancelled_agreement_do_not_restart(ipex_vau
     io.begin_dh(ih, message, atc)
     _, _, wire, _ = io.outgoing.popleft()
     _deliver_ipex(holder.vault, wire)
-    _, _, query, _ = io.outgoing.popleft()
+    query = sent(io.outgoing.popleft())
     _deliver_ipex(holder.vault, query)
     cutoff = next(iter(ho._queries.values())).expires
     monkeypatch.setattr(helping, 'nowUTC', lambda: cutoff + timedelta(milliseconds=1))
@@ -163,7 +252,7 @@ def test_definitive_finish_refusal_keeps_encrypted_roots_and_no_admission(ipex_v
     _, _, wire, _ = io.outgoing.popleft()
     _deliver_ipex(holder.vault, wire)
     ho.approve_dh(hh, message.said)
-    _, _, query, _ = io.outgoing.popleft()
+    query = sent(io.outgoing.popleft())
     _deliver_ipex(holder.vault, query)
     _, _, reply, _ = ho.outgoing.popleft()
     _deliver_ipex(issuer.vault, reply)
@@ -208,7 +297,7 @@ def test_issuance_worker_finishes_dh_and_cancellation_drops_live_authority(ipex_
         _deliver_ipex(holder.vault, evidence.clone(issuer.vault, regk))
         _, _, wire, _ = io.outgoing.popleft()
         _deliver_ipex(holder.vault, wire)
-        _, _, query, _ = io.outgoing.popleft()
+        query = sent(io.outgoing.popleft())
         _deliver_ipex(holder.vault, query)
         assert not list(issuer.vault.db.issued.getTopItemIter())
         ho.approve_dh(hh, grant_said)
@@ -248,7 +337,7 @@ def test_issuance_worker_finishes_dh_and_cancellation_drops_live_authority(ipex_
         _deliver_ipex(holder.vault, evidence.clone(issuer.vault, registries[0]))
         _, _, wire, _ = io.outgoing.popleft()
         _deliver_ipex(holder.vault, wire)
-        _, _, query, _ = io.outgoing.popleft()
+        query = sent(io.outgoing.popleft())
         _deliver_ipex(holder.vault, query)
         ho.approve_dh(hh, pending.grant.said)
     finally:

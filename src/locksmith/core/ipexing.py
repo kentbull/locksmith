@@ -56,7 +56,7 @@ class UnsupportedDisclosurePlan(kering.ValidationError):
 def _validate_plan(plan):
     """Require the v2 one-DAG outer wire value without rewriting history."""
     if (not isinstance(plan, list) or len(plan) != 1
-            or not ipexing._validDisclosurePath(plan[0])):
+            or not ipexing.validDisclosurePath(plan[0])):
         raise UnsupportedDisclosurePlan('Expected one DAG in q.dp')
     return plan
 
@@ -219,7 +219,7 @@ def _require_issued(handler, nests, records):
         if not nest.serder.sad.get('rd'):
             continue
         if nest.serder.said not in records:
-            _require_graph_result(handler._verifyIssuerAuthNode(nest.serder, nest, records=records))
+            _require_graph_result(handler.verifyIssuerAuthNode(nest.serder, nest, records=records))
         record = records.get(nest.serder.said)
         if record is None:
             raise credentialing.RegistryEvidencePending('Registry factor awaits authenticated state')

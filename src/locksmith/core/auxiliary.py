@@ -24,6 +24,26 @@ from keri.peer import exchanging
 from locksmith.core import ipexing
 
 
+class _FreshQuery:
+    """Sign a requester's query at the moment its delivery slot starts.
+
+    A queue position can stall behind another delivery for longer than a
+    recipient's KRAM timeliness window, so the timestamp must not be fixed when
+    the item is queued. The core owner's ``requery`` keeps the approved keys
+    and requested scope and only renews the query's own ``dt`` and SAID; it
+    never touches the Grant's accepted exchange lifetime.
+    """
+    def __init__(self, owner, operation):
+        self.owner, self.operation = owner, operation
+
+    def __call__(self):
+        operation = self.operation
+        deadline = self.owner.vault.exc.exchangeDeadline(operation.grant)
+        if deadline is None or helping.nowUTC() >= deadline:
+            raise kering.ValidationError('The original Grant deadline has elapsed')
+        return operation.protocol.requery(operation.xid)
+
+
 @dataclass
 class _Operation:
     """One local approval bound to the original signed Grant."""
@@ -276,7 +296,8 @@ class Auxiliary(doing.DoDoer):
         operation = _Operation(hab, grant, xid, owner, wire)
         self.operations[key] = operation
         self.outgoing.append((key, grant.sad['ri'], wire, 'credential'))
-        operation.query = (key, grant.sad['ri'], bytes(owner.start(grant.said)), 'reply')
+        owner.start(grant.said)  # Validate and keep the approved keys; the sent query is signed later.
+        operation.query = (key, grant.sad['ri'], _FreshQuery(self, operation), 'reply')
         operation.query_retry_at = time.monotonic() + 1.0
         self.outgoing.append(operation.query)
         self.vault.signals.emit_doer_event('Auxiliary', 'changed', dict(aid=hab.pre, grant=grant.said))
@@ -343,11 +364,13 @@ class Auxiliary(doing.DoDoer):
         key = (hab.pre, grant_said)
         self.operations[key] = operation
         try:
-            query = owner.start(grant_said)
+            owner.start(grant_said)  # Validate now; the sent query is signed when its delivery starts.
         except kering.KeriError as error:
             self._terminate(operation, 'refused', str(error))
             raise
-        self.outgoing.append((key, context[0].pre, query, 'reply'))
+        operation.query = (key, context[0].pre, _FreshQuery(self, operation), 'reply')
+        operation.query_retry_at = time.monotonic() + 1.0
+        self.outgoing.append(operation.query)
         self.vault.signals.emit_doer_event('Auxiliary', 'changed', dict(aid=hab.pre, grant=grant_said))
         return self.status(*key)
 
@@ -566,16 +589,20 @@ class Auxiliary(doing.DoDoer):
                 operation.query_retry_at = time.monotonic() + 1.0
             self.outgoing.append(item)
 
-    def _retry_dh_query(self, operation):
-        """Resend the exact approved query without renewing its keys or lifetime."""
+    def _retry_query(self, operation):
+        """Queue another delivery of the requester's query, signed fresh when it is sent.
+
+        Resending the earlier bytes cannot succeed once they age past the
+        recipient's timeliness window, and a refused or unanswered query was
+        never authenticated there. Retrying stops with the Grant's own deadline.
+        """
         item = operation.query
         if item is None or operation.protocol.complete(operation.xid):
             return
         if time.monotonic() < operation.query_retry_at:
             return
         delivery = self._delivery
-        inflight = (delivery is not None and not delivery.done
-                    and (delivery.key, delivery.destination, delivery.wire, delivery.topic) == item)
+        inflight = delivery is not None and not delivery.done and delivery.item == item
         if item not in self.outgoing and not inflight:
             self.outgoing.append(item)
             operation.query_retry_at = time.monotonic() + 1.0
@@ -631,6 +658,7 @@ class Auxiliary(doing.DoDoer):
                         self._terminate(operation, 'admitted')
                         continue
                     if operation.hab.pre == operation.grant.sad['ri']:
+                        self._retry_query(operation)
                         self._finish_openings(operation)
                     else:
                         self._retry_queries(operation)
@@ -650,7 +678,7 @@ class Auxiliary(doing.DoDoer):
                     self._terminate(operation, 'refused', str(error))
                 continue
             try:
-                self._retry_dh_query(operation)
+                self._retry_query(operation)
                 self._retry_queries(operation)
                 if operation.phase in self.Terminal or not operation.protocol.complete(operation.xid):
                     continue
@@ -745,6 +773,7 @@ class _Delivery(doing.DoDoer):
     def __init__(self, owner, key, destination, wire, topic):
         self.owner, self.key = owner, key
         self.destination, self.wire, self.topic = destination, wire, topic
+        self.item = (key, destination, wire, topic)
         super().__init__(doers=[doing.doify(self.send)])
 
     def send(self, tymth=None, tock=0.0, **kwa):
@@ -775,11 +804,13 @@ class _Delivery(doing.DoDoer):
                     if context is None or context[0].raw != operation.grant.raw:
                         raise kering.ValidationError('The exact approved presentation is no longer live')
         try:
-            if (operation.kind == 'dh'
-                    and operation.query == (self.key, self.destination, self.wire, self.topic)
+            if (operation.query is not None
+                    and operation.query == self.item
                     and operation.protocol.complete(operation.xid)):
                 return
             check()
+            if callable(self.wire):
+                self.wire = self.wire()  # Timestamp a query only as its delivery begins.
             ipexing._require_route(hab, self.destination)
             parsed = Parser(version=kering.Vrsn_2_0).parseOne(
                 ims=bytearray(self.wire), processive=False)
