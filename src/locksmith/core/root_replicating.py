@@ -13,7 +13,7 @@ import time
 from dataclasses import dataclass
 
 from keri import help, kering
-from keri.acdc.salting import RegistryRoot, RootDeferred, RootUnverified
+from keri.acdc.salting import RegistryRoot, RootDeferred, RootRefused, RootUnverified
 from keri.app.habbing import GroupHab
 from keri.core import Blinder, BlindState, BoundState, Parser, SerderACDC
 
@@ -80,11 +80,13 @@ class Copy:
 class RootReplicas:
     """Queue and send registry-root copies for one vault; retry received ones.
 
-    Owed copies persist in the vault database until core ``prepare`` either
-    succeeds or refuses them, so a copy whose registry update is not yet
-    accepted here (the custodian derives the root before the BUP exists)
-    waits across restarts. Received copies need no approval: core retains
-    each verifiable root on arrival or from its escrow.
+    Owed copies persist in the vault database until core ``prepare``
+    succeeds or core authorization refuses them, so a copy whose registry
+    update or its anchor is not yet accepted here (the custodian derives the
+    root before the BUP exists) waits across passes and restarts. A group
+    rotation is marked examined only once its owed copies are recorded.
+    Received copies need no approval: core retains each verifiable root on
+    arrival or from its escrow.
     """
 
     def __init__(self, owner):
@@ -92,7 +94,8 @@ class RootReplicas:
         self.vault = owner.vault
         self.core = RegistryRoot(self.vault.hby, self.vault.rgy, self.vault.notifier)
         self.vault.exc.addHandler(self.core)
-        self._rotations = set()  # (gid, rotation) already examined in this session.
+        self._rotations = set()  # (gid, rotation) decided in this session.
+        self._reported = set()  # rotations and owed copies whose wait is already logged.
         self._retried = {}  # escrowed copy SAID -> monotonic time of its last held-opening retry
         self.closed = False
 
@@ -153,15 +156,20 @@ class RootReplicas:
             key = (hab.pre, est.d)
             if est.s == 0 or key in self._rotations:
                 continue
-            self._rotations.add(key)
             if self.vault.db.rootRotations.get(keys=key) is not None:
+                self._rotations.add(key)
                 continue
             try:
                 # Only the rotation's elected witnesser catches newcomers up automatically.
                 if self.core.witnesser(hab, est.d):
                     self.catch_up(hab, est.d)
             except kering.KeriError as error:
-                logger.info('Registry root catch-up for %s rotation %s skipped: %s', hab.pre, est.d, error)
+                # Usually a member KEL that is not yet local; examine it again next pass.
+                self._report(key, 'Registry root catch-up for %s rotation %s waits: %s',
+                             hab.pre, est.d, error)
+                continue
+            self._rotations.add(key)  # Decided: owed copies are recorded or none are owed.
+            self._reported.discard(key)
         for gid, registry, recipient, td in self.owed():
             self._flush(gid, registry, recipient, td)
         self.retry()
@@ -174,14 +182,45 @@ class RootReplicas:
             return
         try:
             wire = self.core.prepare(hab.mhab, recipient, gid, registry, td=td or None)
-        except RootDeferred:
-            return  # The registry update or member state is not yet accepted here.
+        except RootUnverified as error:  # Includes RootDeferred.
+            self._report(keys, 'Registry root copy to %s for %s waits: %s', recipient, registry, error)
+            return  # The registry update, its anchor or member state is not yet accepted here.
+        except kering.ValidationError as error:
+            if not isinstance(error, RootRefused) and self._authorized(hab, recipient, gid, registry):
+                # Authorized, so the failure is local state still arriving, such as the
+                # head update's issuer anchor or this member's own copy of the root.
+                self._report(keys, 'Registry root copy to %s for %s waits: %s', recipient, registry, error)
+                return
+            self._drop(keys, error)
+            return
         except (kering.KeriError, ValueError) as error:
-            logger.info('Registry root copy to %s for %s refused: %s', recipient, registry, error)
-            self.vault.db.rootSends.rem(keys=keys)
+            self._drop(keys, error)
             return
         self.post(hab.mhab, recipient, wire)
         self.vault.db.rootSends.rem(keys=keys)
+        self._reported.discard(keys)
+
+    def _authorized(self, hab, recipient, gid, registry):
+        """True unless core authorization refuses this copy outright."""
+        try:
+            self.core.authorize(hab.mhab.pre, recipient, gid, registry)
+        except RootDeferred:
+            return True
+        except (kering.KeriError, ValueError):
+            return False
+        return True
+
+    def _drop(self, keys, error):
+        gid, registry, recipient = keys
+        logger.warning('Registry root copy to %s for %s refused and dropped: %s', recipient, registry, error)
+        self.vault.db.rootSends.rem(keys=keys)
+        self._reported.discard(keys)
+
+    def _report(self, key, message, *args):
+        """Log a waiting item once per session; it is retried every pass."""
+        if key not in self._reported:
+            self._reported.add(key)
+            logger.info(message, *args)
 
     def post(self, sender, recipient, wire):
         """Queue one prepared copy on the recipient's mailbox through the vault postman."""
