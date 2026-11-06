@@ -66,14 +66,18 @@ def inspect(raw):
 
 @dataclass(frozen=True)
 class Copy:
-    """One escrowed copy addressed to a local member, waiting for local state."""
+    """One escrowed copy addressed to a local member, waiting for local state.
+
+    ``escrowed`` is when the copy last entered core's escrow, which has no
+    timeout: it stays until retained or refused.
+    """
     said: str
     sender: str
     recipient: str
     gid: str
     registry: str
     dt: str
-    deadline: str
+    escrowed: str
     waiting: str = ''
 
 
@@ -98,6 +102,7 @@ class RootReplicas:
         self._reported = set()  # rotations and owed copies whose wait is already logged.
         self._retried = {}  # escrowed copy SAID -> monotonic time of its last held-opening retry
         self.closed = False
+        self.restore()
 
     # owed copies
 
@@ -284,6 +289,32 @@ class RootReplicas:
                 outcome['refused'][said] = str(error)
         return outcome
 
+    def restore(self):
+        """Escrow again every stored copy that is neither escrowed nor retained.
+
+        Core escrows a copy without a timeout and re-escrows an identical
+        resend, but a copy a previous core dropped from escrow (it timed out)
+        stays stored and would wait for a resend. Each vault session therefore
+        hands such copies back to core once; core refuses and drops any that
+        can never be retained. Returns the re-escrowed SAIDs.
+        """
+        restored = []
+        db = self.vault.hby.db
+        for (said,), serder in list(db.exns.getTopItemIter()):
+            if serder.ked.get('r') != RegistryRoot.Route or db.rrpe.get(keys=(said,)) is not None:
+                continue
+            data = serder.ked.get('a') if isinstance(serder.ked.get('a'), dict) else {}
+            recipient = self.vault.hby.habs.get(serder.ked.get('ri'))
+            if (recipient is None or isinstance(recipient, GroupHab)
+                    or self.vault.hby.ks.rroots.get(keys=(data.get('gid', ''), data.get('rd', '')))
+                    is not None):
+                continue
+            self.core.handle(serder)
+            restored.append(said)
+        if restored:
+            logger.info('Re-escrowed %d stored registry root copies', len(restored))
+        return restored
+
     def pending(self):
         """Escrowed copies still waiting for local state, with what each still needs."""
         ipexing._require_vault(self.vault)
@@ -300,7 +331,7 @@ class RootReplicas:
             except (kering.KeriError, ValueError):
                 pass  # The next escrow attempt refuses and drops this copy.
             items.append(Copy(item['said'], item['sender'], item['recipient'], item['gid'],
-                              item['registry'], item['dt'] or '', item['deadline'], waiting))
+                              item['registry'], item['dt'] or '', item['escrowed'], waiting))
         return items
 
     def retry(self):

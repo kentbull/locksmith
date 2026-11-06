@@ -25,7 +25,7 @@ from keri.peer import exchanging
 from locksmith.core import indirecting, challenging, ipexing, registries, evidence, auxiliary
 from locksmith.core.adjudication import Watchmen, KeyStateVarianceAuthority
 from locksmith.core.configing import ENABLE_TURRET_BROWSER_PLUGIN
-from locksmith.core.grouping import CounselingCompletionDoer, commit_recorded_members
+from locksmith.core.grouping import CounselingCompletionDoer
 from locksmith.core.receipting import LocksmithReceiptor
 from locksmith.core.signals import DoerSignalBridge
 from locksmith.core.tasking import QtDoist, QtTask
@@ -220,11 +220,6 @@ class Vault(doing.DoDoer):
             self.doers.append(self.turrent_doer)
         # Initialize DoDoer with always=True to keep running
         super(Vault, self).__init__(doers=self.doers, always=True)
-
-        # A rotation accepted after the last session's rotate or join loop ended
-        # still needs its recorded members committed locally.
-        for pre in commit_recorded_members(self):
-            logger.info(f"Committed recorded members of accepted rotation for {pre}")
 
         # Add counseling doers for group identifiers awaiting participant signatures
         self.counseling_completion_doers = {}
