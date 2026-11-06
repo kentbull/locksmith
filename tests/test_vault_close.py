@@ -19,12 +19,12 @@ def test_close_vault_closes_stores_when_a_doer_exit_fails(ipex_vaults, monkeypat
     assert app.vault is None and app.qtask is None and app.hby is None and app.rgy is None
 
 
-def test_root_import_consent_closes_with_the_session_not_on_child_removal(ipex_vaults, monkeypatch):
+def test_root_replication_closes_with_the_session_not_on_child_removal(ipex_vaults, monkeypatch):
     """Vault has no exit override, so HIO's remove() is not a session close."""
     app = ipex_vaults('child-removal')
     vault = app.vault
     closed = []
-    monkeypatch.setattr(vault.root_copies, 'close', lambda: closed.append(True))
+    monkeypatch.setattr(vault.roots, 'close', lambda: closed.append(True))
     vault.remove([vault.toast_doer])
     assert not closed and vault.toast_doer not in vault.doers
     app.close_vault()

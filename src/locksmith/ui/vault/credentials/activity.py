@@ -6,7 +6,7 @@ from collections.abc import Mapping
 from PySide6.QtCore import QSignalBlocker, Qt, Signal
 from PySide6.QtGui import QColor, QPalette
 from PySide6.QtWidgets import (
-    QHBoxLayout, QHeaderView, QLabel, QScrollArea, QStackedWidget, QTabBar, QTextEdit,
+    QFileDialog, QHBoxLayout, QHeaderView, QLabel, QScrollArea, QStackedWidget, QTabBar, QTextEdit,
     QSizePolicy, QToolButton, QVBoxLayout, QWidget,
 )
 from keri.help import helping
@@ -15,6 +15,7 @@ from keri.core import SerderACDC
 from keri.peer import exchanging
 
 from locksmith.ui.vault.credentials.disclosure import DisclosureOptions
+from locksmith.ui.vault.credentials.registry_roots import RootCopiesSection
 from locksmith.ui.vault.credentials.registry_setup import RegistrySetupDialog, SETUP_PHASES
 from locksmith.ui.vault.credentials.state_openings import StateOpeningsDialog, OPENING_PHASES
 
@@ -149,9 +150,11 @@ class CredentialActivityPage(BaseListPage):
         self.setAutoFillBackground(True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.group_roots = LocksmithInvertedButton('Group registry roots…')
-        self.group_roots.clicked.connect(self._group_roots)
-        layout.addWidget(self.group_roots)
+        self.import_roots = LocksmithInvertedButton('Import registry root file…')
+        self.import_roots.clicked.connect(self._import_roots)
+        layout.addWidget(self.import_roots)
+        self.root_copies = RootCopiesSection(self)
+        layout.addWidget(self.root_copies)
         self.registry_requests = QWidget()
         self.registry_layout = QVBoxLayout(self.registry_requests)
         self.registry_layout.setContentsMargins(0, 0, 0, 0)
@@ -289,12 +292,12 @@ class CredentialActivityPage(BaseListPage):
         close.clicked.connect(self._detail_dialog.close)
         self._show_details(None)
 
-    def _group_roots(self):
+    def _import_roots(self):
         if not self._current_vault():
             return
-        from locksmith.ui.vault.credentials.root_copy import GroupRootCopyDialog
-        self._root_copy_dialog = GroupRootCopyDialog(self.app, self)
-        self._root_copy_dialog.open()
+        path, _ = QFileDialog.getOpenFileName(self, 'Import registry root copies', '', 'CESR (*.cesr)')
+        if path:
+            self.root_copies.import_file(path)
 
     @property
     def table(self):
@@ -408,8 +411,10 @@ class CredentialActivityPage(BaseListPage):
         rows = [[], []]
         requests = []
         group_proposals = []
+        copies = []
         if self._current_vault():
             requests = self.vault.auxiliary.pending()
+            copies = self.vault.roots.pending()
             group_proposals = grouping.pending_registry_proposals(self.vault)
             for exchange in ipexing.exchanges(self.vault):
                 chain = exchange['messages']
@@ -460,6 +465,7 @@ class CredentialActivityPage(BaseListPage):
         self._show_registry_requests([status for status in requests if status['kind'] == 'dh'], group_proposals)
         self._show_opening_requests([status for status in requests if status['kind'] == 'unblind'])
         self._show_presentation_requests([status for status in requests if status['kind'] == 'presentation'])
+        self.root_copies.show_copies(copies)
         self._rows = rows[0] + rows[1]
         for index, table in enumerate(self.tables):
             ordered = sorted(rows[index], key=lambda row: row['_updated'], reverse=True)
@@ -473,7 +479,7 @@ class CredentialActivityPage(BaseListPage):
             self.scope_labels[index].setVisible(bool(self._credential_filter))
             self.clear_buttons[index].setVisible(bool(self._credential_filter))
         attention = [any(row['_attention'] for row in direction) for direction in rows]
-        attention[1] = attention[1] or bool(group_proposals)
+        attention[1] = attention[1] or bool(group_proposals) or bool(copies)
         for status in requests:
             if status['actions'] or status['phase'] in ('refused', 'expired', 'interrupted'):
                 attention[int(status['recipient'] == status['aid'])] = True

@@ -22,7 +22,7 @@ from keri.app import (
 from keri.core import eventing, coring, kraming
 from keri.peer import exchanging
 
-from locksmith.core import indirecting, challenging, ipexing, registries, evidence, auxiliary, root_copying
+from locksmith.core import indirecting, challenging, ipexing, registries, evidence, auxiliary
 from locksmith.core.adjudication import Watchmen, KeyStateVarianceAuthority
 from locksmith.core.configing import ENABLE_TURRET_BROWSER_PLUGIN
 from locksmith.core.grouping import CounselingCompletionDoer
@@ -163,7 +163,8 @@ class Vault(doing.DoDoer):
         self.kramer.cues = self.kram_cues
         self.kvy.registerReplyRoutes(router=self.rvy.rtr)
         auxiliary.install(self)
-        self.root_copies = root_copying.RootCopies(self)
+        # Registry-root copies are an Auxiliary table member; the session closes them explicitly.
+        self.roots = self.auxiliary.roots
 
         watchmen = Watchmen(hby=hby, tock=15.0)
         kva = KeyStateVarianceAuthority(hby=hby, notifier=self.notifier, cues=watchmen.cues)

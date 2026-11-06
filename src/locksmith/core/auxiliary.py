@@ -100,6 +100,8 @@ class Auxiliary:
         self.openings = GroupOpenings(self)
         from locksmith.core.group_presenting import GroupPresenters
         self.presenters = GroupPresenters(self)
+        from locksmith.core.root_replicating import RootReplicas
+        self.roots = RootReplicas(self)
         vault.hby.rtr.addRoute(Dhke.Route, self)
         vault.hby.rtr.addRoute(Unblind.Route, self, blinders=True, attachments=True)
 
@@ -564,6 +566,10 @@ class Auxiliary:
     def _drain(self, operation):
         while operation.protocol.cues:
             cue = operation.protocol.cues.popleft()
+            if cue['kin'] == 'replicate':
+                # The group custodian retained new roots; every other current member is owed a copy.
+                self.roots.replicate(operation.hab, cue['registries'], self._hints(operation))
+                continue
             if operation.group is not None:
                 if cue['kin'] == 'sign':
                     adapter = self.openings if operation.kind == 'unblind' else self.holders
@@ -594,6 +600,14 @@ class Auxiliary:
                 operation.query = item
                 operation.query_retry_at = time.monotonic() + 1.0
             self.outgoing.append(item)
+
+    def _hints(self, operation):
+        """Map each registry of this Grant to its ACDC SAID, the copy's commitment hint."""
+        try:
+            nests = exchanging.loadParsedNestedSubstreams(self.vault.hby, operation.grant.said)
+        except (kering.KeriError, ValueError, KeyError):
+            return {}
+        return {nest.serder.sad['rd']: nest.serder.said for nest in nests if nest.serder.sad.get('rd')}
 
     def _publish(self, operation):
         """Deliver the accepted, anchored issued BUP so the issuee can finish its DH setup.
@@ -650,6 +664,7 @@ class Auxiliary:
         self.groups.scan()
         self.holders.reconcile()
         self.presenters.process()
+        self.roots.process()
         for key, query in list(self._queries.items()):
             if helping.nowUTC() >= query.expires:
                 self._queries.pop(key)

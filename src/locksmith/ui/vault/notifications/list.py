@@ -144,6 +144,13 @@ class NotificationsListPage(QWidget):
                 elif (route.rsplit('/', 1)[0] in ('/exn/ipex', '/xip/ipex')
                       and route.rsplit('/', 1)[-1] in ('apply', 'offer', 'agree', 'grant', 'admit', 'spurn')):
                     notification_row = self._format_ipex_notification(note, rid, timestamp_display)
+                elif route == '/exn/registry/root':
+                    notification_row = dict(
+                        self._format_generic_notification(note, rid, timestamp_display),
+                        Type='Registry root',
+                        Message='Encrypted registry root copy'
+                                + (' (waiting for local state)' if note.attrs.get('deferred') else '')
+                                + '; approve it in Credential Activity')
                 elif route.startswith('/challenge/response'):
                     notification_row = self._format_challenge_response_notification(note, rid, timestamp_display)
                 elif route.startswith('/keystate/update'):

@@ -5,7 +5,7 @@ from keri import kering
 from keri.acdc import regeventing
 from keri.acdc.dhking import Dhke
 from keri.app.grouping import multisigExn
-from keri.app.habbing import GroupHab, _groupWitnesserSelection
+from keri.app.habbing import GroupHab, groupElection
 from keri.core import Parser, SealSource, exchange, messagize
 from keri.help import helping
 from keri.peer import exchanging
@@ -18,7 +18,7 @@ def election(hab, coordinator=None):
     if not isinstance(hab, GroupHab) or not hab.accepted or hab.mhab is None:
         raise ValueError('Select an accepted local group signer')
     coordinator = coordinator or (hab.kever.sn, hab.kever.serder.said)
-    selected = _groupWitnesserSelection(hab, sn=coordinator[0], dig=coordinator[1])
+    selected = groupElection(hab, sn=coordinator[0], dig=coordinator[1])
     if selected is None:
         raise kering.ValidationError('Group coordinator requires accepted threshold evidence')
     establishment, index = selected
