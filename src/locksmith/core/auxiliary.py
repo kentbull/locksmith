@@ -269,8 +269,9 @@ class Auxiliary(doing.DoDoer):
     def _changed(self, operation, phase, error=''):
         if (operation.phase, operation.error) != (phase, error):
             operation.phase, operation.error = phase, error
-            self.vault.signals.emit_doer_event('Auxiliary', 'changed',
-                dict(aid=operation.hab.pre, grant=operation.grant.said))
+            if not self.vault.closed:  # Teardown records state; it does not fan out to views.
+                self.vault.signals.emit_doer_event('Auxiliary', 'changed',
+                    dict(aid=operation.hab.pre, grant=operation.grant.said))
 
     def begin_dh(self, hab, grant, attachment):
         """Explicitly approve and send one issuer's fresh, signed proofless Grant."""
@@ -735,16 +736,18 @@ class Auxiliary(doing.DoDoer):
         return True
 
     def _terminate(self, operation, phase, error=''):
-        """Drop ephemeral authority and queued work while retaining encrypted roots/history."""
+        """Drop ephemeral authority and queued work while retaining encrypted roots/history.
+
+        Ending an operation is a state transition only. An in-flight delivery
+        reads the terminal phase on its next tick, stops itself and releases its
+        transport; ``run`` then removes it from the scheduler.
+        """
         if operation.release_approved and (operation.group is None or operation.group.started):
             operation.protocol.abandon(operation.xid)
         self._changed(operation, phase, error)
         key = (operation.hab.pre, operation.grant.said)
         self.outgoing = deque(item for item in self.outgoing if item[0] != key)
         self._queries = {item: value for item, value in self._queries.items() if item[2] != operation.xid}
-        if self._delivery is not None and self._delivery.key == key:
-            delivery, self._delivery = self._delivery, None
-            self.remove([delivery])
 
     def abandon(self, aid, grant_said):
         operation = self.operations[(aid, grant_said)]
@@ -767,29 +770,28 @@ class Auxiliary(doing.DoDoer):
         self.openings.pending.clear()
         self.presenters.clear()
         self.outgoing.clear()
-        if self._delivery is not None:
-            delivery, self._delivery = self._delivery, None
-            self.remove([delivery])
-
-    def exit(self, deeds=None):
-        # HIO's remove() exits only the removed child deeds through this method;
-        # closing all live state belongs to this owner's own full exit.
-        if deeds is None:
-            self.close()
-        super().exit(deeds=deeds)
 
     def run(self, tymth=None, tock=0.0, **kwa):
+        """Own the delivery child: only this frame extends and removes it, as a pair.
+
+        Vault close reaches the operation table once, from this frame's
+        ``finally``, after HIO's exit cascade has already closed the delivery.
+        """
         self.wind(tymth)
-        yield self.tock
-        while not self.vault.closed:
-            self.process()
-            if self._delivery is not None and self._delivery.done:
-                self._delivery = None
-            if self._delivery is None and self.outgoing:
-                key, destination, wire, topic = self.outgoing.popleft()
-                self._delivery = _Delivery(self, key, destination, wire, topic)
-                self.extend([self._delivery])
-            yield .1
+        try:
+            yield self.tock
+            while not self.vault.closed:
+                self.process()
+                if self._delivery is not None and self._delivery.done:
+                    self.remove([self._delivery])
+                    self._delivery = None
+                if self._delivery is None and self.outgoing:
+                    key, destination, wire, topic = self.outgoing.popleft()
+                    self._delivery = _Delivery(self, key, destination, wire, topic)
+                    self.extend([self._delivery])
+                yield .1
+        finally:
+            self.close()
 
 
 class _Delivery(doing.DoDoer):

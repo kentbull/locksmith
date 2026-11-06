@@ -407,9 +407,9 @@ exact live Grant before the reply leaves, then independently verifies the same
 Grant at the recipient. State verification still does not add the credential.
 The verifier must choose **Review credential**, then **Add**.
 
-**Cancel request** removes the selected live operation's queued or inflight
-transport and abandons its proof-release authority. Vault close does the same
-for unfinished operations. Failures do not renew the original deadline or revive
+**Cancel request** removes the selected live operation's queued transport,
+stops its inflight transport at the next scheduler tick and abandons its
+proof-release authority. Vault close does the same for unfinished operations. Failures do not renew the original deadline or revive
 authority after restart.
 
 Regression disposition
