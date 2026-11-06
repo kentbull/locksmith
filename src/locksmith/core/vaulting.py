@@ -209,7 +209,7 @@ class Vault(doing.DoDoer):
             watchmen,
             kva,
             self.mbx,
-            self.auxiliary,
+            self.auxiliary_doer,
             self.registry_evidence,
             self.ipex_outbox,
             kraming.Pruner(self.kramer, tock=1.0),
