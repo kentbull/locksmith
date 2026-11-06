@@ -55,7 +55,8 @@ Start on macOS
 --------------
 
 The direct ``core/python/kf-registrar`` and ``core/python/kf-observer`` checkouts
-must be installed beside Locksmith. Their locked dependencies require Python
+must be installed beside Locksmith for their Python services; TypeScript services
+use ``core/typescript/keri-ts`` and the bootstrap helper from ``infra/kf-boot``. Their locked dependencies require Python
 3.14 and libsodium. ``KERI_WORKSPACE`` may select another workspace root.
 
 .. code-block:: bash
@@ -64,8 +65,10 @@ must be installed beside Locksmith. Their locked dependencies require Python
      "$HOME/.local/share/locksmith-local-registries" \
      /absolute/path/to/participants.json
 
-The launcher runs ``uv sync --locked --extra dev --python 3.14`` for kf-registrar,
-which hosts the bootstrap helper, and for kf-observer when its Python service is selected. It
+The launcher runs ``uv sync --locked --extra dev --python 3.14`` only for the
+selected Python services. Its bootstrap helper needs only KERIpy: it runs from the
+Python Registrar, else the Python Observer, else the ``infra/kf-boot`` install, so
+TypeScript Registrar and Observer need neither Python service checkout. It
 refuses occupied ports and waits at most 15 seconds for startup health. It binds
 both services to loopback: Registrar public HTTPS on port 19932 and private HTTP
 administration on port 19931; Observer public HTTPS on port 19942 and private HTTP
