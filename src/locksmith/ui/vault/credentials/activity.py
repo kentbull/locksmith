@@ -36,6 +36,16 @@ from locksmith.ui.vault.shared.base_list_page import BaseListPage
 from locksmith.ui.vault.remotes.add import AddRemoteIdentifierDialog
 
 
+PRESENTATION_PHASES = {
+    'approval_required': 'Review and approve',
+    'awaiting_threshold': 'Waiting for other members',
+    'complete': 'Signed by the group',
+    'submitted': 'Queued for delivery',
+    'expired': 'Expired',
+    'refused': 'Refused',
+}
+
+
 def action_dot(parent=None):
     dot = QLabel(parent)
     dot.setFixedSize(8, 8)
@@ -139,9 +149,6 @@ class CredentialActivityPage(BaseListPage):
         self.setAutoFillBackground(True)
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        self.endorse_file = LocksmithInvertedButton('Endorse presentation file…')
-        self.endorse_file.clicked.connect(self._endorse_file)
-        layout.addWidget(self.endorse_file)
         self.group_roots = LocksmithInvertedButton('Group registry roots…')
         self.group_roots.clicked.connect(self._group_roots)
         layout.addWidget(self.group_roots)
@@ -156,6 +163,12 @@ class CredentialActivityPage(BaseListPage):
         self.opening_layout.setContentsMargins(0, 0, 0, 0)
         self.opening_buttons = {}
         layout.addWidget(self.opening_requests)
+        self.presentation_requests = QWidget()
+        self.presentation_layout = QVBoxLayout(self.presentation_requests)
+        self.presentation_layout.setContentsMargins(0, 0, 0, 0)
+        self.presentation_buttons = {}
+        self.presentation_error = ''
+        layout.addWidget(self.presentation_requests)
         self.stack = QStackedWidget()
         layout.addWidget(self.stack)
         self.tables, self.tabs, self.dots = [], [], []
@@ -275,11 +288,6 @@ class CredentialActivityPage(BaseListPage):
         self._detail_dialog.register_collapsible_section(protocol)
         close.clicked.connect(self._detail_dialog.close)
         self._show_details(None)
-
-    def _endorse_file(self):
-        from locksmith.ui.vault.credentials.grant_files import GrantFilesDialog
-        self._grant_files_dialog = GrantFilesDialog(self.app, self)
-        self._grant_files_dialog.open()
 
     def _group_roots(self):
         if not self._current_vault():
@@ -451,6 +459,7 @@ class CredentialActivityPage(BaseListPage):
                     rows[index].append(row)
         self._show_registry_requests([status for status in requests if status['kind'] == 'dh'], group_proposals)
         self._show_opening_requests([status for status in requests if status['kind'] == 'unblind'])
+        self._show_presentation_requests([status for status in requests if status['kind'] == 'presentation'])
         self._rows = rows[0] + rows[1]
         for index, table in enumerate(self.tables):
             ordered = sorted(rows[index], key=lambda row: row['_updated'], reverse=True)
@@ -549,6 +558,53 @@ class CredentialActivityPage(BaseListPage):
             row.addWidget(button)
             self.opening_buttons[(status['aid'], status['grant'])] = button
             self.opening_layout.addWidget(card)
+
+    def _show_presentation_requests(self, requests):
+        """Show group presentation threshold state; one click signs only the reviewed Grant."""
+        while self.presentation_layout.count():
+            self.presentation_layout.takeAt(0).widget().deleteLater()
+        self.presentation_buttons.clear()
+        self.presentation_requests.setVisible(bool(requests))
+        if not requests:
+            return
+        self.presentation_layout.addWidget(QLabel('Group presentations'))
+        if self.presentation_error:
+            error = QLabel(self.presentation_error)
+            error.setTextFormat(Qt.TextFormat.PlainText)
+            error.setWordWrap(True)
+            error.setStyleSheet(f'color: {colors.DANGER};')
+            self.presentation_layout.addWidget(error)
+        for status in requests:
+            card = QWidget()
+            row = QHBoxLayout(card)
+            phase = PRESENTATION_PHASES.get(status['phase'], status['phase'])
+            deadline = f" · deadline {status['deadline']}" if status['deadline'] else ''
+            text = QLabel(f"{self._name(status['aid'])} → {self._name(status['recipient'])} · {phase}{deadline}")
+            text.setTextFormat(Qt.TextFormat.PlainText)
+            text.setWordWrap(True)
+            text.setToolTip(status['error'] or status['grant'])
+            row.addWidget(text)
+            if status['actions']:
+                button = LocksmithInvertedButton('Approve contribution')
+                button.clicked.connect(lambda checked=False, aid=status['aid'], grant=status['grant']:
+                                       self._approve_presentation(aid, grant))
+                row.addWidget(button)
+                self.presentation_buttons[(status['aid'], status['grant'])] = button
+            self.presentation_layout.addWidget(card)
+
+    def _approve_presentation(self, aid, grant):
+        """Contribute this member's signature to the exact displayed group Grant."""
+        if not self._current_vault():
+            return
+        hab = self.vault.hby.habByPre(aid)
+        self.presentation_error = ''
+        try:
+            if hab is None:
+                raise ValueError('The group is no longer available')
+            self.vault.auxiliary.presenters.contribute(hab, grant)
+        except (ValueError, kering.KeriError) as error:
+            self.presentation_error = str(error)
+        self.refresh()
 
     def _review_state_openings(self, aid, grant):
         """Open only the core-authenticated local presentation snapshot."""

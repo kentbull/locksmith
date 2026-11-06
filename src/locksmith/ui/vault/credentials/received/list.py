@@ -75,7 +75,7 @@ class ReceivedCredentialsListPage(BaseListPage):
             show_add_button=True,
             add_button_text="Apply for credential…",
             separate_toolbar=True,
-            row_actions=["View", "Offer", "Signed presentation files", "Import encrypted registry root", "View exchange history", "Delete"],
+            row_actions=["View", "Offer", "Present from group", "Import encrypted registry root", "View exchange history", "Delete"],
             row_action_icons={
                 "View": ":/assets/material-icons/view.svg",
                 "Offer": ":/assets/material-icons/share.svg",
@@ -126,16 +126,17 @@ class ReceivedCredentialsListPage(BaseListPage):
 
                 recipient_name = identifier_name(self.app.vault, credential['sender'])
                 status_text = status_label(status)
-                root_action = ('Group registry roots' if isinstance(
-                    self.app.vault.hby.habByPre(credential['recipient']), GroupHab) else
-                    'Import encrypted registry root')
+                group = isinstance(self.app.vault.hby.habByPre(credential['recipient']), GroupHab)
+                root_action = 'Group registry roots' if group else 'Import encrypted registry root'
+                present = ['Present from group'] if group else []
                 cred_dict = {
                     "Credential": credential_name(schemer),
                     "From": recipient_name,
                     "Status": status_text,
                     "Accepted": date_label(credential['accepted_at']),
                     "SAID": sad['d'],
-                    "_actions": (["View", "Offer", "Signed presentation files", root_action, "View exchange history", "Delete"]
+                    "_actions": (["View", "Offer", *present,
+                                  root_action, "View exchange history", "Delete"]
                                  if credential['held'] else ["View", "View exchange history", "Delete"]),
                 }
                 received_credentials_data.append(cred_dict)
@@ -171,10 +172,10 @@ class ReceivedCredentialsListPage(BaseListPage):
             from locksmith.ui.vault.credentials.root_copy import GroupRootCopyDialog
             self._root_copy_dialog = GroupRootCopyDialog(self.app, self.parent, said=credential_said, received=True)
             self._root_copy_dialog.open()
-        elif action == "Signed presentation files":
-            from locksmith.ui.vault.credentials.grant_files import GrantFilesDialog
-            self._grant_files_dialog = GrantFilesDialog(self.app, self.parent, credential_said)
-            self._grant_files_dialog.open()
+        elif action == "Present from group":
+            from locksmith.ui.vault.credentials.group_presentation import GroupPresentationDialog
+            self._group_presentation_dialog = GroupPresentationDialog(self.app, self.parent, credential_said)
+            self._group_presentation_dialog.open()
         elif action == "View":
             dialog = ViewIssuedCredentialDialog(icon_path=self.icon_path, app=self.app,
                                                 credential_said=credential_said,

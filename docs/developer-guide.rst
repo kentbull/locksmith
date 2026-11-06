@@ -376,92 +376,41 @@ encrypted Keeper retention under the group AID. A partial signature set retains
 no root. Closing discards inspected files and receive approval; existing
 credential admissions and public registry evidence remain unchanged.
 
-Signed presentation files
-~~~~~~~~~~~~~~~~~~~~~~~~~
+Group presentations
+~~~~~~~~~~~~~~~~~~~
 
-On a Received Credentials row, **Signed presentation files** prepares a new
-Grant from the selected exact admission, held disclosure, verifier and message.
-The file contains signed disclosed credential material, not encrypted custody.
-Preparation retains the authenticated native accepted/pending Grant and displays
-its original deadline. It neither registers a preliminary KRAM conversation nor
-authorizes delivery, state-opening responses or Admit. Newer accepted registry
-evidence may leave the selected held proof retryably unknown; preparation never
-refreshes that proof or hydrates it from another admission.
+On a Received Credentials row admitted by a local group, **Present from group**
+selects the group's exact admitted view, the verifier and a message, then signs
+this member's contribution to one Grant. ``core/group_presenting.py`` mirrors
+KERIpy's group presentation: the member wraps the Grant in an ordinary
+``/multisig/exn`` message, parses it through the vault's KRAM-enabled mailbox
+parser and sends it to the other signing members through their mailboxes.
 
-For a group discloser, preparation exports a v2 member-authenticated
-``/multisig/exn`` proposal. Each signer selects the same exact local admission,
-disclosure and verifier, chooses **Contribute to group proposal**, inspects the
-file and explicitly signs its unchanged Grant and proofs. Exported proposals
-carry the accumulated contributions. **Export prepared group Grant** requires
-the ordinary sender signature threshold; a partial proposal cannot substitute
-for a completed prepared Grant. No new live handler or operation ledger is used.
+A partial proposal has no deadline. Activity lists it under **Group
+presentations**; another member chooses **Approve contribution** only after
+KERIpy and the wallet confirm that the Grant body and proofs equal that member's
+own admitted view. Threshold intake assigns the accepted KRAM lifetime, which is
+then the presentation's only deadline. Only the elected lead member sends: an
+accepted Grant enters the outbox, while a Grant still awaiting current state
+openings is delivered through the vault's live Auxiliary owner. Delivery grants
+no state-opening release; each member approves openings separately.
 
-The independent issuer chooses **Endorse presentation file…** in Activity,
-inspects the claimed discloser/verifier and every disclosed node, then explicitly
-endorses and exports the same Grant. Every selected registry-backed node must
-belong to that local issuer. A group issuer's first approval exports a partial
-signature contribution. Other issuer members inspect the original prepared Grant
-and add the contribution files using **Inspect issuer contribution…**, then
-explicitly sign and export. Only complete ordinary issuer threshold authorization
-is reported as endorsed. Contributions cannot change the body, nested proofs or
-original authentication, or combine signatures across establishment events.
-Inspection authenticates nothing; KERIpy
-verification is required before exporting added issuer authentication. The
-temporary selected-file allowance does not authorize third-party mailbox Grants.
-KERIpy determines when issuer endorsement is required: an original issuee can
-present its held node without an extra issuer signature, whereas a separate
-discloser needs the issuer's authorization. This dialog also supports explicitly
-requested additional endorsement. Resume verifies every supplied authentication
-factor before intake, so a partial issuer contribution cannot be silently
-discarded as optional evidence.
-
-Back in the discloser's dialog, choose **Resume prepared presentation**, select
-the existing local preparation and its original admission/options, inspect the
-endorsed file, then register it locally. Resume permits authentication additions
-only: body, nested proofs, SAID and deadline remain unchanged. Ordinary enabled,
-nonexempt KRAM must actually accept the final conversation; a native presentation
-context alone is insufficient. Existing accepted registration is refused rather
-than retried. Sending that registered Grant is a separate action.
-
-The existing vault policy is selected before creation (pending lifetime 300
-seconds and default single-key KRAM lag five minutes); operator configuration
-remains authoritative. Nothing renews the original timestamp or deadline.
-Closing clears inspected files, not signatures already exported. File creation
-and registration never imply delivery, opening-release approval or Admit.
-
-Live delivery of an endorsed presentation
-~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
-After registration, **Deliver selected registered Grant** explicitly sends that
-same Grant through the vault's live Auxiliary owner. It preserves the exact
-signed body, proofs and original deadline; pending Grants never enter the
-accepted-message outbox. Mailbox HTTP success means submission, not recipient
-verification or acceptance. The Activity state-opening view shows progress and
-the original local deadline.
+Presenters are the credential issuee or original issuer by default. A separate
+discloser requires an explicit per-credential presenter policy at both the
+discloser and the verifier; root possession or custody is never presenter
+authority.
 
 The verifier separately chooses **Request state openings**. An authenticated
-request enables the discloser's **Approve state openings** action in Activity;
-delivery consent alone cannot release proofs. Native Unblind selects minimal
-event proofs, verifies and retains the sender's exact live Grant before the
-reply leaves, then independently verifies the same Grant at the recipient.
-Authenticated revocation replies are still delivered; protocol completion does
-not establish issued state. The verifier displays its refusal and cannot Add.
-Encrypted registry roots stay in the discloser's Keeper. Only complete native
-issuer-endorsed scope authorizes a separate discloser; root possession and local
-presenter policy are not substitutes for that authority.
+request enables the discloser's **Approve state openings** action in Activity.
+Native Unblind selects minimal event proofs, verifies and retains the sender's
+exact live Grant before the reply leaves, then independently verifies the same
+Grant at the recipient. State verification still does not add the credential.
+The verifier must choose **Review credential**, then **Add**.
 
-State verification still does not add the credential. The verifier must choose
-**Review credential**, then **Add**. Current issued-state policy is rechecked at
-that decision; revoked evidence refuses use. The sender reports recipient Admit
-only after actual native verification of the exact returned signed response.
-Prior admissions keep their original proofs.
-
-**Cancel request** removes the selected live operation's queued/inflight
+**Cancel request** removes the selected live operation's queued or inflight
 transport and abandons its proof-release authority. Vault close does the same
-for unfinished operations. Closing the file dialog leaves explicitly authorized
-delivery under Activity's control. Already delivered bytes and accepted history
-remain. Failures do not silently retry, renew the original deadline or revive
-authority after restart. Groups remain outside this wallet workflow.
+for unfinished operations. Failures do not renew the original deadline or revive
+authority after restart.
 
 Regression disposition
 ~~~~~~~~~~~~~~~~~~~~~~

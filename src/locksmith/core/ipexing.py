@@ -31,19 +31,14 @@ class IpexHandler(ipexing.IpexHandler):
     def __init__(self, *args, signals=None, **kwa):
         super().__init__(*args, **kwa)
         self.signals = signals
-        self.endorsement = None
 
     def verify(self, serder, attachments=None, nests=None, sscs=None, evidence=None):
-        selected = self.endorsement is not None and self.endorsement == (
-            serder.raw, tuple(exchanging.serializeParsedSubstream(node) for node in nests or []))
-        if serder.pvrsn.major != 2 or not (selected or {serder.pre, serder.ked.get('ri')} & self.hby.prefixes):
+        if serder.pvrsn.major != 2 or not {serder.pre, serder.ked.get('ri')} & self.hby.prefixes:
             return False
         return super().verify(serder, attachments=attachments, nests=nests,
                               sscs=sscs, evidence=evidence)
 
     def handle(self, serder, attachments=None, nests=None, sscs=None):
-        if not {serder.pre, serder.sad.get('ri')} & self.hby.prefixes:
-            return  # Explicit synchronous issuer endorsement is not an incoming wallet conversation.
         if serder.pre not in self.hby.prefixes:
             super().handle(serder, attachments=attachments, nests=nests, sscs=sscs)
         if self.signals is not None:
@@ -194,8 +189,11 @@ def _require_route(hab, recipient, reply=True):
     """Require routes for network delivery and any required reply."""
     if not _reachable(hab, recipient):
         raise MissingRouteError('There is no known way to reach this identifier. Import its introduction first.')
-    if reply and not any(hab.fetchUrls(eid=eid, scheme='http')
-                         or hab.fetchUrls(eid=eid, scheme='https') for eid in receiving_endpoints(hab)):
+    # Group members coordinate and receive through their own mailboxes, so a
+    # group sender needs the sending local member's receiving endpoints.
+    receiver = hab.mhab if isinstance(hab, GroupHab) else hab
+    if reply and not any(receiver.fetchUrls(eid=eid, scheme='http')
+                         or receiver.fetchUrls(eid=eid, scheme='https') for eid in receiving_endpoints(receiver)):
         raise kering.ConfigurationError('This identifier cannot receive replies. Configure a receiving mailbox.')
 
 
@@ -273,20 +271,9 @@ def _validate_outgoing_grant(vault, hab, grant):
 
 
 def _require_grant_presenter(vault, grant):
-    """Allow exact native issuer-endorsed scope, never custody as presenter authority."""
+    """Apply the default roles or explicit local presenter policy; custody is never authority."""
     credential = grant_credential(vault, grant.said)
-    try:
-        _require_presenter(credential, grant.pre, grant.sad['ri'], vault=vault)
-    except kering.ValidationError as policy_error:
-        if grant.pre in (credential.israid, credential.iseaid):
-            raise
-        _require_disclosed_issuee(credential)
-        from locksmith.core import grant_files
-        try:
-            item, _ = grant_files.retained(vault, grant.said)
-            grant_files._context(vault, item)
-        except (ValueError, kering.KeriError) as error:
-            raise policy_error from error
+    _require_presenter(credential, grant.pre, grant.sad['ri'], vault=vault)
 
 
 def _require_delivery_time(vault, serder):

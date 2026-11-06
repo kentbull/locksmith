@@ -72,6 +72,8 @@ class Auxiliary(doing.DoDoer):
         self.holders = GroupHolders(self)
         from locksmith.core.group_unblind import GroupOpenings
         self.openings = GroupOpenings(self)
+        from locksmith.core.group_presenting import GroupPresenters
+        self.presenters = GroupPresenters(self)
         vault.hby.rtr.addRoute(Dhke.Route, self)
         vault.hby.rtr.addRoute(Unblind.Route, self, blinders=True, attachments=True)
         super().__init__(doers=[doing.doify(self.run)])
@@ -157,32 +159,27 @@ class Auxiliary(doing.DoDoer):
                     credential=message.sad['a']['o'][0], sender=message.pre,
                     recipient=message.sad['ri'])
 
-    def deliver_prepared(self, hab, grant_said, **selection):
-        """Authorize only delivery of one registered exact preparation; proof release stays separate."""
-        from locksmith.core import grant_files
-        item, _ = grant_files.capture(self.vault, grant_said, aid=hab.pre, **selection)
-        grant_files._context(self.vault, item)
-        cache = self.vault.hby.db.kramTMSC.get((hab.pre, grant_said, grant_said))
-        if (hab is not self.vault.hby.habByPre(hab.pre) or cache is None or not cache.rdt
-                or cache.mdt != item.serder.stamp or cache.xdt != item.serder.stamp):
-            raise kering.ValidationError('Select an exact issuer-endorsed Grant already registered with KRAM')
-        key = (hab.pre, grant_said)
+    def deliver_presentation(self, hab, grant, raw):
+        """Send one threshold-authenticated pending group presentation as the elected lead.
+
+        Pending Grants never enter the accepted-message outbox. Delivery grants
+        no state-opening release; that remains a separate member approval.
+        """
+        key = (hab.pre, grant.said)
         if key in self.operations:
-            raise kering.ValidationError('This live delivery has already started or ended')
-        ipexing._require_route(hab, item.serder.sad['ri'])
-        owner = self._owner(hab, 'unblind')  # Creation grants no native proof-release approval.
-        raw = grant_files.wire(item)
-        operation = _Operation(hab, item.serder, grant_said, owner, raw,
+            return self.status(*key)
+        owner = self._owner(hab, 'unblind')
+        self.operations[key] = _Operation(hab, grant, grant.said, owner, raw,
             phase='sending', kind='unblind', release_approved=False)
-        self.operations[key] = operation
-        self.outgoing.append((key, item.serder.sad['ri'], raw, 'credential'))
-        self.vault.signals.emit_doer_event('Auxiliary', 'changed', dict(aid=hab.pre, grant=grant_said))
+        self.outgoing.append((key, grant.sad['ri'], raw, 'credential'))
+        self.vault.signals.emit_doer_event('Auxiliary', 'changed', dict(aid=hab.pre, grant=grant.said))
         return self.status(*key)
 
     def pending(self, hab=None):
         """Return authenticated pending requests, separately from accepted inventory."""
         result = {}
         self.groups.scan()
+        self.presenters.scan()
         for _, message in self.vault.hby.db.epse.getTopItemIter():
             for pre in (message.pre, message.sad.get('ri')):
                 local = self.vault.hby.habByPre(pre)
@@ -212,6 +209,10 @@ class Auxiliary(doing.DoDoer):
         for key, proposal in self.groups.proposals.items():
             if hab is None or proposal.hab is hab:
                 result[key] = self.groups.snapshot(proposal, self.operations.get(key))
+        # A live state-opening request on the same Grant stays the actionable row.
+        for key, entry in self.presenters.entries.items():
+            if (hab is None or entry.hab is hab) and key not in result:
+                result[key] = self.presenters.snapshot(entry)
         return list(result.values())
 
     def observe_pending(self):
@@ -229,6 +230,9 @@ class Auxiliary(doing.DoDoer):
             return self.groups.snapshot(proposal, self.operations.get((aid, grant_said)))
         if operation := self.operations.get((aid, grant_said)):
             return self._snapshot(operation.hab, operation.grant, operation.xid, operation)
+        self.presenters.scan()
+        if entry := self.presenters.entries.get((aid, grant_said)):
+            return self.presenters.snapshot(entry)
         hab = self.vault.hby.habByPre(aid)
         if hab is not None and (context := self._context(hab, grant_said)):
             return self._snapshot(hab, *context)
@@ -574,6 +578,7 @@ class Auxiliary(doing.DoDoer):
         """Retry approved operations from existing evidence, without another intake."""
         self.groups.scan()
         self.holders.reconcile()
+        self.presenters.process()
         for key, query in list(self._queries.items()):
             if helping.nowUTC() >= query.expires:
                 self._queries.pop(key)
@@ -705,6 +710,7 @@ class Auxiliary(doing.DoDoer):
         self.holders.noticed.clear()
         self.openings.entries.clear()
         self.openings.pending.clear()
+        self.presenters.clear()
         self.outgoing.clear()
         if self._delivery is not None:
             self.remove([self._delivery])
