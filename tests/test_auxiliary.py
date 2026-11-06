@@ -340,7 +340,17 @@ def test_issuance_worker_finishes_dh_and_cancellation_drops_live_authority(ipex_
         assert worker.done
         assert events[-1][1] == 'credential_issued', events
         assert io.status(ih.pre, grant_said)['phase'] == 'verified'
-        _deliver_ipex(holder.vault, evidence.clone(issuer.vault, regk))
+        # The issuer itself publishes the anchored issued BUP to the issuee, once.
+        publication, = [item for item in io.outgoing if item[3] == 'credential']
+        io.outgoing.remove(publication)
+        key, destination, wire, _ = publication
+        assert key == (ih.pre, grant_said) and destination == hh.pre
+        published = Parser(version=kering.Vrsn_2_0).parseOne(ims=bytearray(wire), processive=False).serder
+        assert published.ilk == 'bup' and published.said == issuer.vault.rgy.store.headEvent(regk).said
+        io.process()
+        assert not [item for item in io.outgoing if item[3] == 'credential']
+        assert ho.status(hh.pre, grant_said)['phase'] != 'verified'
+        _deliver_ipex(holder.vault, ih.replay(gvrsn=kering.Vrsn_2_0) + wire)
         ho.process()
         assert ho.status(hh.pre, grant_said)['phase'] == 'verified'
         assert holder.vault.db.accepted.get((said,)) is None
