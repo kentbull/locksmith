@@ -60,6 +60,7 @@ class _Operation:
     group: object = None
     query: tuple | None = None
     query_retry_at: float = 0.0
+    publication: bytes = b''
 
 
 @dataclass
@@ -588,6 +589,24 @@ class Auxiliary(doing.DoDoer):
                 operation.query_retry_at = time.monotonic() + 1.0
             self.outgoing.append(item)
 
+    def _publish(self, operation):
+        """Deliver the accepted, anchored issued BUP so the issuee can finish its DH setup.
+
+        The issuee completes only from the current issued registry head, which
+        the issuer authors and anchors. Like the group lead's publication and
+        the KERIpy reference issuer, deliver it once on the credential topic;
+        the delivery adds the issuer's public KEL and TEL support.
+        """
+        if operation.publication:
+            return
+        nest = exchanging.loadParsedNestedSubstreams(self.vault.hby, operation.grant.said)[0]
+        event = self.vault.rgy.store.headEvent(nest.serder.sad['rd'])
+        sn, said = regeventing.vetAnchor(event, db=operation.hab.db, issuer=operation.hab.pre)
+        operation.publication = bytes(messagize(event, bonds=[SealSource(s=f'{sn:x}', d=said)],
+                                                gvrsn=kering.Vrsn_2_0))
+        self.outgoing.append(((operation.hab.pre, operation.grant.said),
+                              operation.grant.sad['ri'], operation.publication, 'credential'))
+
     def _retry_query(self, operation):
         """Queue another delivery of the requester's query, signed fresh when it is sent.
 
@@ -672,6 +691,8 @@ class Auxiliary(doing.DoDoer):
                     ipexing._validate_grant_graph(self.vault, operation.grant.said)
                     if operation.group is not None:
                         adapter.publish(operation)
+                    elif operation.hab.pre == operation.grant.pre:
+                        self._publish(operation)
                     self._changed(operation, 'verified')
                 except kering.KeriError as error:
                     self._terminate(operation, 'refused', str(error))
@@ -691,6 +712,8 @@ class Auxiliary(doing.DoDoer):
                     ipexing._validate_grant_graph(self.vault, operation.grant.said)
                     if operation.group is not None:
                         adapter.publish(operation)
+                    elif operation.hab.pre == operation.grant.pre:
+                        self._publish(operation)
                     self._changed(operation, 'verified')
             except (kering.MissingChainError, kering.MissingAnchorError, kering.MissingSchemaError) as error:
                 self._changed(operation, 'waiting', str(error))
@@ -788,7 +811,9 @@ class _Delivery(doing.DoDoer):
         def check():
             ipexing._require_vault(vault, hab)
             deadline = vault.exc.exchangeDeadline(operation.grant)
-            publication = (operation.group is not None and operation.phase == 'verified'
+            publication = (operation.phase == 'verified' and operation.group is None
+                           and bool(operation.publication) and self.wire == operation.publication) or (
+                           operation.group is not None and operation.phase == 'verified'
                            and (self.wire == operation.group.publication
                                 or operation.kind == 'unblind' and self.topic == 'reply'
                                 and self.destination in hab.db.signingMembers(pre=hab.pre)))
