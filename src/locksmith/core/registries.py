@@ -242,11 +242,10 @@ class RegistryEvidenceDoer(doing.DoDoer):
         for (regk,), _ in self.vault.rgy.baser.heads.getTopItemIter():
             self._requests.setdefault(regk, default)
         grants = {record.grant for _, record in self.vault.db.accepted.getTopItemIter()}
-        grants.update(said for (said,), _ in self.vault.hby.db.epse.getTopItemIter())
+        grants.update(message.said for message in self.vault.exc.pendingIter())
         grants.update(proofs)
         for said in grants:
-            exn = (self.vault.hby.db.epse.get((said,))
-                   or self.vault.hby.db.exns.get((said,)))
+            exn = self.vault.hby.db.exns.get((said,)) or self.vault.exc.pending(said)
             if exn is None:
                 continue
             hab = self.vault.hby.habByPre(exn.sad.get('ri', '')) or default

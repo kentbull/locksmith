@@ -81,13 +81,13 @@ class GroupOpenings:
         if any(value for key, value in vars(child).items() if key not in allowed):
             raise kering.ValidationError('Opening proposal carries unexpected attachments')
         grants = {}
-        for store in (hab.db.exns, hab.db.epse):
-            for _, grant in store.getTopItemIter():
-                xid = grant.said if grant.ilk == 'xip' else grant.sad.get('x')
-                if (grant.route == '/ipex/grant' and xid == data.get('x')
-                        and hab.pre == (grant.sad['ri'] if kind == 'qry' else grant.pre)
-                        and self.owner._presentation(hab, grant.said)):
-                    grants[grant.said] = grant
+        accepted = (grant for _, grant in hab.db.exns.getTopItemIter())
+        for grant in (*accepted, *self.vault.exc.pendingIter()):
+            xid = grant.said if grant.ilk == 'xip' else grant.sad.get('x')
+            if (grant.route == '/ipex/grant' and xid == data.get('x')
+                    and hab.pre == (grant.sad['ri'] if kind == 'qry' else grant.pre)
+                    and self.owner._presentation(hab, grant.said)):
+                grants[grant.said] = grant
         if len(grants) != 1:
             raise kering.ValidationError('Opening proposal has no exact live group presentation')
         grant = next(iter(grants.values()))

@@ -132,7 +132,7 @@ class GroupIssuers:
         """
         # Pinned core exposes no public partial-escrow accessor; read epse directly.
         return (self.vault.exc.exchangeDeadline(grant) is None
-                and self.vault.hby.db.epse.get((grant.said,)) is not None)
+                and self.vault.exc.pending(grant.said) is not None)
 
     def snapshot(self, proposal, operation=None):
         grant, hab = proposal.grant, proposal.hab

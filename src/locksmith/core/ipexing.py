@@ -12,7 +12,6 @@ from keri import help, kering
 from keri.acdc import acdcmap, ipexing, chaining, regeventing
 from keri.app import agenting, forwarding
 from keri.app.habbing import GroupHab
-from keri.core.kraming import AuthTypes
 from keri.core import Compactor, Prefixer, Saider, SealSource, SerderACDC, SerderKERI, messagize, parsing
 from keri.help import helping
 from keri.peer import exchanging
@@ -294,9 +293,10 @@ def _require_delivery_time(vault, serder):
     """Reject a retained message already stale under this wallet's KRAM policy.
 
     This is a conservative local send gate, not a prediction of a remote
-    verifier's policy or network arrival time. Reuse KERIpy's authentication
-    classification against the exact retained attachments; never re-sign an
-    expired reply. Core KRAM remains authoritative at the receiver.
+    verifier's policy or network arrival time. KERIpy's ``Kramer.timely``
+    classifies the exact retained attachments under the route's KRAM window;
+    never re-sign an expired reply. Core KRAM remains authoritative at the
+    receiver.
     """
     kramer = vault.kvy.kramer
     if kramer is None or not kramer.enabled:
@@ -307,16 +307,11 @@ def _require_delivery_time(vault, serder):
     parsed = parsing.Parser().parse(ims=bytearray(stream), processive=False,
                                    version=kering.Vrsn_2_0)[0]
     attachments = parsed if isinstance(parsed, dict) else vars(parsed)
-    kever = vault.hby.kevers[serder.pre]
-    auth, _ = kramer._resolveAuthType(
-        serder, attachments, kever, kramer._hasSeals(serder.pre, attachments),
-        kramer._hasSigs(serder.pre, attachments), serder.pre)
-    if auth is None:
-        raise kering.ValidationError('Saved message has no usable authentication')
-    policy = vault.hby.db.kramCTYP.get('~')
-    lag = policy.ll if auth == AuthTypes.AttachedSignatureMultiKey else policy.sl
-    age = (helping.nowUTC() - helping.fromIso8601(serder.stamp)).total_seconds() * 1000
-    if age > policy.d + lag or age < -policy.d:
+    try:
+        timely = kramer.timely(serder, attachments)
+    except (kering.MissingAuthAttachmentError, kering.MissingSenderKeyStateError) as error:
+        raise kering.ValidationError('Saved message has no usable authentication') from error
+    if not timely:
         raise kering.ValidationError(
             'Saved message is outside the local KRAM timing window. Start a new negotiation.')
 
@@ -650,7 +645,7 @@ def expiry_error(vault, exn):
 def responses(vault, exn):
     """Return decisions available to the local recipient of a saved message."""
     if (exn is None or exn.sad['ri'] not in vault.hby.prefixes
-            or vault.hby.db.erpy.get((exn.said,)) is not None
+            or vault.exc.response(exn.said) is not None
             or expiry_error(vault, exn)):
         return []
     if exn.route in ('/ipex/apply', '/ipex/offer', '/ipex/agree', '/ipex/grant'):
@@ -810,13 +805,13 @@ def exchanges(vault):
         while tip.said not in visited:
             visited.add(tip.said)
             chain.append(tip)
-            reply = vault.hby.db.erpy.get((tip.said,))
+            reply = vault.exc.response(tip.said)
             if reply is None:
                 break
-            if reply.qb64 not in messages or reply.qb64 in visited:
+            if reply.said not in messages or reply.said in visited:
                 problem = 'Saved reply history is incomplete.'
                 break
-            tip = messages[reply.qb64]
+            tip = messages[reply.said]
         sender, recipient = root.pre, root.sad['ri']
         if root.route == '/ipex/apply':
             sender, recipient = recipient, sender
@@ -886,8 +881,7 @@ def _pending_anchors(vault, exn):
 def _finish_receipt(vault, pre, grant_said, receipt, restore=False):
     """Reconcile ACDC v2 IPEX evidence, the send permission and wallet membership."""
     grant = vault.hby.db.exns.get((grant_said,))
-    reply = vault.hby.db.erpy.get((grant_said,))
-    exn = vault.hby.db.exns.get((reply.qb64,)) if reply else None
+    exn = vault.exc.response(grant_said)
     hab = vault.hby.habByPre(pre)
     if exn is None and isinstance(hab, GroupHab) and receipt.admit:
         if grant is None or grant.route != '/ipex/grant' or grant.sad['ri'] != pre:
@@ -944,24 +938,23 @@ def admit(vault, hab, grant_said, message='', *, send=False, proposal=None):
     if isinstance(hab, GroupHab):
         from locksmith.core.group_holding import contribute_admit
         return contribute_admit(vault, hab, grant, message, send, proposal)
-    reply = vault.hby.db.erpy.get((grant_said,))
-    if reply:
-        saved = vault.hby.db.exns.get((reply.qb64,))
-        if saved is None or saved.route != '/ipex/admit':
+    reply = vault.exc.response(grant_said)
+    if reply is not None:
+        if reply.route != '/ipex/admit':
             raise kering.ValidationError('This Grant already has a terminal reply and cannot be accepted')
     receipt = vault.db.receipts.get((hab.pre, grant_said))
     if receipt is None:
         credential = grant_credential(vault, grant_said)
         if reply is None and (error := expiry_error(vault, grant)):
             raise kering.ValidationError(error)
-        if grant.sad['a'].get('ax', [False])[0] and vault.hby.db.erpy.get((grant_said,)) is None:
+        if grant.sad['a'].get('ax', [False])[0] and vault.exc.response(grant_said) is None:
             if error := anchor_error(hab):
                 raise kering.ValidationError(error)
         _validate_credential(vault, credential, grant_said)
         receipt = GrantReceipt(credential=credential.said, send=send)
         # Save consent before the ACDC v2 IPEX builder can create an AX anchor.
         vault.db.receipts.put((hab.pre, grant_said), receipt)
-        if vault.hby.db.erpy.get((grant_said,)) is None:
+        if vault.exc.response(grant_said) is None:
             exn, atc = ipexing.admit(hab, message, grant, kind=kering.Kinds.json)
             prepare(vault, hab, exn, atc)
     elif send and not receipt.send:

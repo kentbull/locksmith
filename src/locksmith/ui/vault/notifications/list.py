@@ -374,13 +374,10 @@ class NotificationsListPage(QWidget):
             return False, None
 
         try:
-            hby = self.app.vault.hby
-            response = hby.db.erpy.get(keys=(exn_said,))
-            if response is not None:
-                rexn, _ = exchanging.cloneMessage(hby, response.qb64)
-                if rexn:
-                    verb = os.path.basename(os.path.normpath(rexn.ked.get('r', '')))
-                    return True, verb.capitalize()
+            rexn = self.app.vault.exc.response(exn_said)
+            if rexn is not None:
+                verb = os.path.basename(os.path.normpath(rexn.ked.get('r', '')))
+                return True, verb.capitalize()
         except Exception as e:
             logger.warning(f"Error checking response status: {e}")
 

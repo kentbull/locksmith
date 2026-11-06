@@ -549,19 +549,8 @@ def delete_identifier(app, alias):
             except Exception as e:
                 logger.warning(f"Attempted to remove counseling completion doer for group identifier: {e}")
 
-            # 1. Group Partially Signed Escrow
-            app.vault.hby.db.gpse.rem(keys=(pre,))
-
-            # 2. Group Delegatee Escrow
-            app.vault.hby.db.gdee.rem(keys=(pre,))
-
-            # 3. Group Partial Witness Escrow
-            app.vault.hby.db.gpwe.rem(keys=(pre,))
-
-            # 4. Completed Group Multisig markers (if any partial completion exists)
-            #    This is keyed by (pre, seqner.qb64), so you may need to iterate:
-            for keys, saider in app.vault.hby.db.cgms.getTopItemIter(keys=(pre,)):
-                app.vault.hby.db.cgms.rem(keys=keys)
+            # Core drops every counseling escrow entry and completion marker.
+            app.vault.counselor.abandon(pre)
 
             try:
                 app.vault.hby.deleteHab(alias)
@@ -1168,11 +1157,7 @@ class ConfirmDoer(doing.DoDoer):
                             diger = coring.Diger(qb64b=serder.saidb)
                             self.counselor.start(ghab=hab, prefixer=prefixer, number=sner, diger=diger)
 
-                            while True:
-                                saider = self.hby.db.cgms.get(keys=(prefixer.qb64, sner.qb64))
-                                if saider is not None:
-                                    break
-
+                            while not self.counselor.complete(prefixer, sner):
                                 yield self.tock
 
                             logger.info(f"Delegate {eserder.pre} {typ} event committed.")
