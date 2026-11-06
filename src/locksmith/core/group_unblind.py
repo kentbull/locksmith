@@ -188,7 +188,7 @@ class GroupOpenings:
     def progress(self, operation):
         entry, protocol = operation.group, operation.protocol
         self.check(entry)
-        requested = protocol._operations[operation.xid]['requestedByPeer']
+        requested = protocol.requested(operation.xid)
         if not entry.requester and entry.author and requested and not entry.contributed:
             protocol.respond(operation.xid)
             self.owner._drain(operation)

@@ -18,16 +18,12 @@ def election(hab, coordinator=None):
     if not isinstance(hab, GroupHab) or not hab.accepted or hab.mhab is None:
         raise ValueError('Select an accepted local group signer')
     coordinator = coordinator or (hab.kever.sn, hab.kever.serder.said)
-    selected = groupElection(hab, sn=coordinator[0], dig=coordinator[1])
-    if selected is None:
+    if groupElection(hab, sn=coordinator[0], dig=coordinator[1]) is None:
         raise kering.ValidationError('Group coordinator requires accepted threshold evidence')
-    establishment, index = selected
-    for member in hab.db.signingMembers(pre=hab.pre):
-        kever = hab.db.kevers.get(member)
-        contribution = kever.fetchLatestContribTo(verfers=establishment.verfers) if kever else None
-        if contribution is not None and contribution[1] == index:
-            return coordinator, member
-    raise kering.ValidationError('The elected custodian is no longer a group signing member')
+    member = hab.elected(sn=coordinator[0], dig=coordinator[1])
+    if member is None:
+        raise kering.ValidationError('The elected custodian is no longer a group signing member')
+    return coordinator, member
 
 
 @dataclass
