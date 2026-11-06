@@ -7,8 +7,9 @@ from keri.help import helping
 from keri import kering
 from keri.acdc import Registrar, acdcmap, grant
 from keri.core import Parser, SealSource, SerderKERI, messagize, receipt
+from keri.peer import exchanging
 
-from locksmith.core import auxiliary, credentialing, evidence, grant_files, grouping, ipexing, root_copying
+from locksmith.core import auxiliary, credentialing, evidence, group_presenting, grouping, ipexing, root_copying
 from test_credentialing import _load_schema
 from test_keri_v2_compat import ipex_vaults as ipex_vaults, _deliver_ipex
 
@@ -597,61 +598,52 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
             assert app.vault.db.accepted.get((credential_said,)) == admission
             assert credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'] == proof
 
-        # Sign the same group presentation, then explicitly collect separate issuer endorsement.
-        options = dict(aid=hh.pre, said=credential_said, source=grant_said,
-                       recipient=gid, message='Exact group presentation')
-        presentation, partial, proposal, presentation_deadline = grant_files.prepare_group(holder.vault, **options)
-        original_presentation = grant_files.inspect(partial)
-        with pytest.raises((ValueError, kering.KeriError)):
-            grant_files.export_prepared(holder.vault, presentation, **options)
-        contributed, _, second_proposal, _ = grant_files.contribute_group(holder_peer.vault, proposal, **options)
-        assert contributed == presentation
-        grant_files.contribute_group(holder.vault, second_proposal, **options)
-        complete, exported_deadline = grant_files.export_prepared(holder.vault, presentation, **options)
-        assert exported_deadline == presentation_deadline
-        complete_sender = grant_files.inspect(complete)
-        assert complete_sender.serder.raw == original_presentation.serder.raw
-        assert grant_files.nodes(complete_sender) == grant_files.nodes(original_presentation)
+        # The holder group presents its exact admitted view at ordinary member threshold.
+        status = group_presenting.propose(holder.vault, hh, said=credential_said, source=grant_said,
+                                          recipient=gid, message='Exact group presentation')
+        presentation = status['grant']
+        assert status['phase'] == 'awaiting_threshold' and status['deadline'] == ''
+        original_presentation = holder.hby.db.epse.get((presentation,))
+        deliver_member(holder, holder_peer)
+        assert hpo.status(hph.pre, presentation)['actions'] == ('approve_presentation',)
+        assert holder.vault.db.outbox.get((presentation,)) is None
+        hpo.presenters.contribute(hph, presentation)
+        deliver_member(holder_peer, holder)
+        ho.process()
+        hpo.process()
+        # Threshold intake fixes the lifetime; the stale held proof keeps the Grant pending.
+        status = ho.presenters.snapshot(ho.presenters.entries[(hh.pre, presentation)])
+        assert status['phase'] == 'submitted' and status['deadline']
+        peer_status = hpo.presenters.snapshot(hpo.presenters.entries[(hph.pre, presentation)])
+        assert peer_status['phase'] == 'complete' and peer_status['deadline'] == status['deadline']
+        assert not holder.vault.exc.complete(presentation)
+        presentation_deadline = holder.vault.exc.exchangeDeadline(original_presentation)
+        # Only the elected lead delivers, through the live owner rather than the outbox.
+        delivery = ho.operations[(hh.pre, presentation)]
+        assert delivery.kind == 'unblind' and not delivery.release_approved
+        assert (hph.pre, presentation) not in hpo.operations
+        assert holder.vault.db.outbox.get((presentation,)) is None
+        registered = delivery.wire
+        complete_sender = Parser(version=kering.Vrsn_2_0).parseOneBare(
+            ims=bytearray(registered), processive=False)
+        assert complete_sender.serder.raw == original_presentation.raw
         assert {siger.index for pre, _, _, sigers in complete_sender.tsgs
                 if pre.qb64 == hh.pre for siger in sigers} == {0, 1}
-        preparation_path = tmp_path / 'group-presentation.cesr'
-        preparation_path.write_bytes(complete)
-        endorsement = dict(issuer=gid, grant=presentation, sender=hh.pre, recipient=gid)
-        first_issuer = grant_files.endorse(issuer.vault, preparation_path.read_bytes(), **endorsement)
-        assert not grant_files.endorsement_complete(issuer.vault, first_issuer)
-        with pytest.raises((ValueError, kering.KeriError)):
-            grant_files.resume(holder.vault, first_issuer, grant=presentation, **options)
-        final_file = grant_files.endorse(peer.vault, preparation_path.read_bytes(),
-            contributions=(first_issuer,), **endorsement)
-        assert grant_files.endorsement_complete(peer.vault, final_file)
-        final_item = grant_files.inspect(final_file)
-        assert final_item.serder.raw == original_presentation.serder.raw
-        assert grant_files.nodes(final_item) == grant_files.nodes(original_presentation)
-        assert {siger.index for pre, _, _, sigers in final_item.tsgs
-                if pre.qb64 == gid for siger in sigers} == {0, 1}
-        endorsed_path = tmp_path / 'group-presentation-endorsed.cesr'
-        endorsed_path.write_bytes(final_file)
-        registered, registered_deadline = grant_files.resume(holder.vault, endorsed_path.read_bytes(),
-            grant=presentation, **options)
-        assert registered_deadline == presentation_deadline
-        assert grant_files.inspect(registered).serder.raw == original_presentation.serder.raw
-        cache = holder.hby.db.kramTMSC.get((hh.pre, presentation, presentation))
-        assert cache.rdt and cache.mdt == cache.xdt == original_presentation.serder.stamp
+        assert holder_peer.vault.db.outbox.get((presentation,)) is None
         assert holder.hby.db.erpy.get((presentation,)) is None
-        assert (hh.pre, presentation) not in ho.operations
         assert issuer.hby.db.exns.get((presentation,)) is None
         for app, (admission, proof) in zip(holders, historical):
             assert app.vault.db.accepted.get((credential_said,)) == admission
             assert credentialing.credential(app.vault, credential_said, grant=grant_said)['proof'] == proof
 
         # Group Unblind starts with delivery, then separate requester and proof-release consent.
-        _deliver_ipex(issuer.vault, registered)
-        recipient_deadline = issuer.hby.db.epsd.get((presentation,)).dts
+        assert deliver_aux(holder, issuer, 'credential') == registered
+        recipient_deadline = issuer.vault.exc.exchangeDeadline(original_presentation)
         io.request_openings(groups[0], presentation, proposer=members[0].pre)
         assert not any(destination == hh.pre and topic == 'reply'
                        for _, destination, _, topic in io.outgoing)
         deliver_aux(issuer, peer, 'credential')
-        verifier_peer_deadline = peer.hby.db.epsd.get((presentation,)).dts
+        verifier_peer_deadline = peer.vault.exc.exchangeDeadline(original_presentation)
         deliver_aux(issuer, peer, 'multisig')
         assert po.openings.pending[(gid, presentation)]
         assert (gid, presentation) not in po.operations and not po.outgoing
@@ -667,7 +659,8 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         query_indices.update(siger.index for pre, _, _, sigers in query_item.tsgs
                              if pre.qb64 == gid for siger in sigers)
         assert query_indices == {0, 1}
-        assert (hh.pre, presentation) not in ho.operations
+        # Delivery alone never approved proof release.
+        assert ho.operations[(hh.pre, presentation)].group is None and not delivery.release_approved
         assert not ho.outgoing and (hph.pre, presentation) not in hpo.operations
         ho.approve_openings(hh, presentation, proposer=holder_members[0].pre)
         deliver_aux(holder, holder_peer, 'credential')
@@ -691,12 +684,12 @@ def test_group_derived_worker_requires_member_consent_and_keeps_custody_local(ip
         deliver_aux(issuer, peer, 'reply')
         advance(lambda: all(app.vault.exc.complete(presentation) for app in issuers))
         for app, cutoff in zip(issuers, (recipient_deadline, verifier_peer_deadline)):
-            assert app.hby.db.exns.get((presentation,)).raw == original_presentation.serder.raw
-            assert app.hby.db.epsd.get((presentation,)).dts == cutoff
+            assert app.hby.db.exns.get((presentation,)).raw == original_presentation.raw
+            assert app.vault.exc.exchangeDeadline(original_presentation) == cutoff
             assert app.vault.auxiliary.status(gid, presentation)['phase'] == 'verified'
             assert app.vault.db.receipts.get((gid, presentation)) is None
             assert app.vault.db.accepted.get((credential_said,)) is None
-        assert holder.hby.db.epsd.get((presentation,)).dts == presentation_deadline
+        assert holder.vault.exc.exchangeDeadline(original_presentation) == presentation_deadline
         assert all(root.qb64b not in wire for wire in wires)
         for app, (admission, proof) in zip(holders, historical):
             assert app.vault.db.accepted.get((credential_said,)) == admission
