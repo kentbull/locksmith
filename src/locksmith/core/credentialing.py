@@ -229,7 +229,7 @@ def authentication(vault, nest):
     except KeyError:
         pass
     handler = vault.exc.routes['/ipex/grant']
-    verdict = handler._verifyIssuerAuthNode(acdc, nest)
+    verdict = handler.verifyIssuerAuthNode(acdc, nest)
     if verdict.verdict == chaining.Verdicts.unknown and verdict.retryable:
         raise kering.MissingChainError(verdict.reason)
     if verdict.verdict != chaining.Verdicts.valid:

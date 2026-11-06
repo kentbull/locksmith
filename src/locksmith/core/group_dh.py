@@ -51,7 +51,7 @@ class _Proposal:
 
 
 class GroupIssuers:
-    """One shared query route; ordinary Multiplexor retains Grant proposals."""
+    """Core /multisig/qry delegate for DH children; ordinary Multiplexor retains Grant proposals."""
 
     resource = '/multisig/qry'
 
@@ -59,7 +59,7 @@ class GroupIssuers:
         self.owner, self.vault = owner, owner.vault
         self.proposals = {}
         self.seen = set()
-        self.vault.exc.addHandler(self)
+        self.vault.mux.addChildHandler(self.resource, Dhke.Route, self)
 
     def _read(self, wrapper, *, authored=False):
         if (wrapper.pvrsn != V2 or wrapper.route != '/multisig/exn'

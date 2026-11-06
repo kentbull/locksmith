@@ -37,21 +37,11 @@ class _Opening:
 
 
 class _Wrappers:
-    """Compose with existing DH and ordinary reply handlers without registering twice."""
-    def __init__(self, owner, previous):
-        self.owner, self.previous = owner, previous
-
-    @staticmethod
-    def matches(nests):
-        try:
-            child = nests[0]['serder'] if isinstance(nests[0], dict) else nests[0].serder
-            return child.route == Unblind.Route
-        except (IndexError, KeyError, TypeError, AttributeError):
-            return False
+    """Core Multiplexor delegate for Unblind children of /multisig/qry and /multisig/rpy."""
+    def __init__(self, owner):
+        self.owner = owner
 
     def verify(self, serder, attachments=None, nests=None):
-        if not self.matches(nests):
-            return self.previous.verify(serder, attachments=attachments, nests=nests)
         try:
             self.owner.scope(serder, nests)
             return not attachments
@@ -59,8 +49,6 @@ class _Wrappers:
             return False
 
     def handle(self, serder, attachments=None, nests=None):
-        if not self.matches(nests):
-            return self.previous.handle(serder, attachments=attachments, nests=nests)
         hab, grant, child = self.owner.scope(serder, nests)
         # Intake records public member proposals only. No Unblind approval or signature.
         self.owner.pending.setdefault((hab.pre, grant.said), {})[serder.said] = (serder, child)
@@ -70,8 +58,9 @@ class GroupOpenings:
     def __init__(self, owner):
         self.owner, self.vault = owner, owner.vault
         self.entries, self.pending = {}, {}
+        delegate = _Wrappers(self)
         for route in ('/multisig/qry', '/multisig/rpy'):
-            self.vault.exc.routes[route] = _Wrappers(self, self.vault.exc.routes[route])
+            self.vault.mux.addChildHandler(route, Unblind.Route, delegate)
 
     def scope(self, wrapper, nests):
         if wrapper.pvrsn != V2 or len(nests or []) != 1:

@@ -43,23 +43,12 @@ class _Holder:
 
 
 class _Replies:
-    """Keep other multisig replies on their existing handler; DH uses its live owner."""
-    resource = '/multisig/rpy'
+    """Core Multiplexor delegate for DH children of /multisig/rpy; it uses the live owner."""
 
-    def __init__(self, holders, previous):
-        self.holders, self.previous = holders, previous
-
-    @staticmethod
-    def is_dh(nests):
-        try:
-            return bool(nests) and (nests[0]['serder'] if isinstance(nests[0], dict)
-                                   else nests[0].serder).route == Dhke.Route
-        except (KeyError, TypeError, AttributeError, IndexError):
-            return False
+    def __init__(self, holders):
+        self.holders = holders
 
     def verify(self, serder, attachments=None, nests=None):
-        if not self.is_dh(nests):
-            return self.previous.verify(serder, attachments=attachments, nests=nests)
         try:
             self.holders.reply_scope(serder, nests)
             return not attachments
@@ -67,8 +56,6 @@ class _Replies:
             return False
 
     def handle(self, serder, attachments=None, nests=None):
-        if not self.is_dh(nests):
-            return self.previous.handle(serder, attachments=attachments, nests=nests)
         entry, child = self.holders.reply_scope(serder, nests)
         if entry.reply is None:
             entry.reply = child
@@ -84,10 +71,9 @@ class GroupHolders:
         self.owner, self.vault = owner, owner.vault
         self.entries = {}
         self.noticed = set()
-        previous = self.vault.exc.routes['/multisig/rpy']
-        # Compose the already registered route once; addHandler rejects replacement.
-        self.vault.exc.routes[_Replies.resource] = _Replies(self, previous)
-        self.vault.exc.addHandler(self)
+        # Core registers both wrapper routes; delegate only the children this owner verifies.
+        self.vault.mux.addChildHandler('/multisig/rpy', Dhke.Route, _Replies(self))
+        self.vault.mux.addChildHandler(ProofRoute, '/ipex/grant', self)
 
     def candidate(self, hab, grant):
         key = (hab.pre, grant.said)
