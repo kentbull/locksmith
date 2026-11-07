@@ -13,6 +13,7 @@ import time
 from dataclasses import dataclass
 
 from keri import help, kering
+from keri.acdc import salting
 from keri.acdc.salting import RegistryRoot, RootDeferred, RootRefused, RootUnverified
 from keri.app.habbing import GroupHab
 from keri.core import Blinder, BlindState, BoundState, Parser, SerderACDC
@@ -96,8 +97,9 @@ class RootReplicas:
     def __init__(self, owner):
         self.owner = owner
         self.vault = owner.vault
-        self.core = RegistryRoot(self.vault.hby, self.vault.rgy, self.vault.notifier)
-        self.vault.exc.addHandler(self.core)
+        # Reuse the vault's handler when one is already registered for the route.
+        self.core = salting.loadHandlers(self.vault.hby, self.vault.exc, self.vault.notifier,
+                                         self.vault.rgy)
         self._rotations = set()  # (gid, rotation) decided in this session.
         self._reported = set()  # rotations and owed copies whose wait is already logged.
         self._retried = {}  # escrowed copy SAID -> monotonic time of its last held-opening retry
@@ -293,24 +295,13 @@ class RootReplicas:
         """Escrow again every stored copy that is neither escrowed nor retained.
 
         Core escrows a copy without a timeout and re-escrows an identical
-        resend, but a copy a previous core dropped from escrow (it timed out)
-        stays stored and would wait for a resend. Each vault session therefore
-        hands such copies back to core once; core refuses and drops any that
-        can never be retained. Returns the re-escrowed SAIDs.
+        resend, but a copy stored by a session without the handler, or one a
+        previous core dropped from escrow, stays stored and would wait for a
+        resend. Each vault session therefore has core reconcile such copies
+        once; core refuses and drops any that can never be retained. Returns
+        the re-escrowed SAIDs.
         """
-        restored = []
-        db = self.vault.hby.db
-        for (said,), serder in list(db.exns.getTopItemIter()):
-            if serder.ked.get('r') != RegistryRoot.Route or db.rrpe.get(keys=(said,)) is not None:
-                continue
-            data = serder.ked.get('a') if isinstance(serder.ked.get('a'), dict) else {}
-            recipient = self.vault.hby.habs.get(serder.ked.get('ri'))
-            if (recipient is None or isinstance(recipient, GroupHab)
-                    or self.vault.hby.ks.rroots.get(keys=(data.get('gid', ''), data.get('rd', '')))
-                    is not None):
-                continue
-            self.core.handle(serder)
-            restored.append(said)
+        restored = self.core.reconcile()
         if restored:
             logger.info('Re-escrowed %d stored registry root copies', len(restored))
         return restored

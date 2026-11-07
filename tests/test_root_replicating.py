@@ -228,14 +228,15 @@ def test_stored_copy_dropped_from_escrow_is_restored_on_reopen(ipex_vaults):
     event, = _sent(alice)
     _deliver_ipex(carol.vault, event['serder'].raw + event['attachment'])
     said = event['serder'].said
-    # A previous core timed the copy out of escrow; the stored exchange remains.
+    # A previous core timed the copy out of escrow, or a session without the
+    # handler stored it unescrowed; either way the stored exchange remains.
     carol.hby.db.rrpe.rem(keys=(said,))
     _deliver_ipex(carol.vault, w.tel)
     carol.vault.mbx.exchanger.processEscrow()
     assert carol.vault.roots.pending() == []
     assert carol.hby.mgr.getRegistryRoot(w.gid, w.registry) is None
 
-    # The next session hands the stored copy back to core, which now retains it.
+    # The next session has core reconcile the stored copy, which it now retains.
     carol.close_vault()
     carol = ipex_vaults('roots-carol', bran=BRAN)
     assert carol.hby.mgr.getRegistryRoot(w.gid, w.registry).qb64 == w.root.qb64
