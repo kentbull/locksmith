@@ -330,7 +330,7 @@ def link_preflight(vault, far_said, *, issuer, issuee=None, operators=None, sche
                               reducers=inner.reducers)
     nodes[draft.said] = {'serder': draft}
     try:
-        verdict = evaluator.evaluate(draft.said, nodes=nodes, records={}, closed=True)
+        verdict = evaluator.evaluate(draft.said, nodes=nodes, records={}, walkPolicy=handler.walkPolicy)
     except (kering.MissingSchemaError, kering.MissingChainError) as error:
         return dict(verdict='unknown', reason=str(error))
     if verdict is None:
