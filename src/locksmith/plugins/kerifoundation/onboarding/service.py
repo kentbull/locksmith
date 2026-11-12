@@ -376,6 +376,30 @@ class KFBootClient:
         )
         return self._normalize_watcher_rows(reply.payload)
 
+    def request_delegate_mailbox(
+        self,
+        account: Any,
+        delegate: Any,
+        *,
+        destination: str = "",
+    ) -> CesrReply:
+        """Ask for a hosted mailbox bound to ``delegate``, an identifier ``account`` delegated.
+
+        The boot service verifies the delegation from accepted key state, so the
+        account's current KEL (with its anchor) and the delegate's KEL go first.
+        """
+        dest = destination or self._destination(surface="account")
+        self._ensure_surface_keystate(surface="account", hab=account, destination=dest)
+        for msg in self._iter_surface_keystate_messages(hab=delegate, start_sn=0, end_sn=delegate.kever.sn):
+            self._post_cesr(url=self._surface_url("account"), ims=msg, destination=dest, require_reply=False)
+        return self.send_exn(
+            surface="account",
+            hab=account,
+            route="/account/mailboxes",
+            payload={"account_aid": account.pre, "aid": delegate.pre},
+            destination=dest,
+        )
+
     def delete_account(
         self,
         hab: Any,
@@ -684,6 +708,40 @@ class KFBootClient:
             "KF onboarding surface URL is not configured. "
             "Set KF_DEV_ONBOARDING_URL or KF_PROD_ONBOARDING_URL."
         )
+
+
+async def await_account_operation(client, account, operation, *, kind, subject, opened,
+                                  timeout=120.0, pending="The provider is still working; try again"):
+    """Poll one account operation until it succeeds and return its result.
+
+    ``opened`` raises when the vault that owns ``account`` has closed; it runs
+    around every blocking request so a closed vault never takes a late result.
+    """
+    if not isinstance(operation, dict) or not isinstance(operation.get('operation_id'), str):
+        raise KFBootError('The provider did not return an operation')
+    operation_id = operation['operation_id']
+    deadline = asyncio.get_running_loop().time() + timeout
+    while True:
+        if (operation.get('operation_id') != operation_id or operation.get('requester') != account.pre
+                or operation.get('kind') != kind or operation.get('subject') != subject):
+            raise KFBootError('The provider returned a different operation than the one requested')
+        if operation.get('state') == 'succeeded':
+            return operation.get('result')
+        if operation.get('state') not in ('pending', 'running'):
+            detail = str(operation.get('last_error') or '').strip()
+            raise KFBootError(f"The provider could not finish: {detail}" if detail else
+                              'The provider could not finish; try again')
+        if asyncio.get_running_loop().time() >= deadline:
+            raise KFBootError(pending)
+        await asyncio.sleep(0.5)
+        opened()
+        reply = await KFOnboardingService._await_blocking_result(
+            client.send_exn, surface='account', hab=account, route='/operations/status',
+            payload={'operation_id': operation_id})
+        opened()
+        operation = reply.payload.get('operation')
+        if not isinstance(operation, dict):
+            raise KFBootError('The provider operation status is missing')
 
 
 class KFOnboardingService:

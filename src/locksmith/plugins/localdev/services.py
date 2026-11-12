@@ -1,12 +1,15 @@
 """Activate provider-account service access and retain its authenticated public capabilities."""
 import asyncio
-from time import monotonic
 from urllib.parse import urlsplit
 
 from PySide6.QtNetwork import QSslCertificate
 from keri.core import Prefixer
 
-from locksmith.plugins.kerifoundation.onboarding.service import KFBootError, KFOnboardingService
+from locksmith.plugins.kerifoundation.onboarding.service import (
+    KFBootError,
+    KFOnboardingService,
+    await_account_operation,
+)
 
 
 def service_settings(payload, *, account):
@@ -52,32 +55,13 @@ async def activate_services(vault, account, client):
     opened()
     if reply.payload.get('account_aid') != account.pre:
         raise KFBootError('Service activation returned another account')
-    operation = reply.payload.get('operation')
-    if not isinstance(operation, dict) or not isinstance(operation.get('operation_id'), str):
-        raise KFBootError('Service activation did not return an operation')
-    operation_id = operation['operation_id']
-    deadline = monotonic() + 120
-    while True:
-        if (operation.get('operation_id') != operation_id or operation.get('requester') != account.pre
-                or operation.get('kind') != 'account_services' or operation.get('subject') != f'account:{account.pre}'):
-            raise KFBootError('Service operation differs from the selected account activation')
-        if operation.get('state') == 'succeeded':
-            settings = service_settings(operation.get('result'), account=account.pre)
-            opened()
-            config = vault.hby.cf.get() or {}
-            config['registries'] = settings
-            vault.hby.cf.put(config)
-            return settings
-        if operation.get('state') not in ('pending', 'running'):
-            raise KFBootError('Service access could not be activated; try again')
-        if monotonic() >= deadline:
-            raise KFBootError('Service access is still pending; try again')
-        await asyncio.sleep(0.5)
-        opened()
-        reply = await KFOnboardingService._await_blocking_result(
-            client.send_exn, surface='account', hab=account, route='/operations/status',
-            payload={'operation_id': operation_id})
-        opened()
-        operation = reply.payload.get('operation')
-        if not isinstance(operation, dict):
-            raise KFBootError('Service operation status is missing')
+    result = await await_account_operation(
+        client, account, reply.payload.get('operation'), kind='account_services',
+        subject=f'account:{account.pre}', opened=opened,
+        pending='Service access is still pending; try again')
+    settings = service_settings(result, account=account.pre)
+    opened()
+    config = vault.hby.cf.get() or {}
+    config['registries'] = settings
+    vault.hby.cf.put(config)
+    return settings

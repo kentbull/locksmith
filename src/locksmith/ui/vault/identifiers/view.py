@@ -4,6 +4,8 @@ locksmith.ui.vault.identifiers.view module
 
 Dialog for viewing identifier details
 """
+import asyncio
+
 from PySide6.QtGui import QIcon
 from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import (
@@ -18,6 +20,7 @@ from locksmith.ui.toolkit.widgets import (
     LocksmithDialog,
     LocksmithInvertedButton
 )
+from locksmith.ui.vault.identifiers import mailbox
 from locksmith.ui.vault.identifiers.identifier_sections import IdentifierViewSectionsMixin
 from locksmith.ui.vault.shared.export import export_identifier_to_cesr
 
@@ -71,6 +74,11 @@ class ViewIdentifierDialog(IdentifierViewSectionsMixin, LocksmithDialog):
         self.receiving_status = QLabel()
         self.receiving_status.setWordWrap(True)
         layout.addWidget(self.receiving_status)
+        self.mailbox_button = LocksmithInvertedButton('Set up mailbox')
+        self.mailbox_button.hide()
+        layout.addWidget(self.mailbox_button)
+        self._mailbox_task = None
+        self._mailbox_message = ''
         self.share_button = LocksmithInvertedButton('Share introduction')
         layout.addWidget(self.share_button)
 
@@ -128,6 +136,7 @@ class ViewIdentifierDialog(IdentifierViewSectionsMixin, LocksmithDialog):
         # Connect buttons
         self.close_button.clicked.connect(self.close)
         self.share_button.clicked.connect(self._share_introduction)
+        self.mailbox_button.clicked.connect(self._set_up_mailbox)
         self.status_timer = QTimer(self)
         self.status_timer.timeout.connect(self._refresh_receiving)
         self.status_timer.start(1000)
@@ -151,8 +160,36 @@ class ViewIdentifierDialog(IdentifierViewSectionsMixin, LocksmithDialog):
         errors = [poller.error for poller in pollers if poller.error]
         text = ('Receiving is not configured' if not endpoints else
                 'Receiving needs attention: ' + errors[0] if errors else
-                f'Receiving through {len(endpoints)} configured mailbox endpoints')
+                f'Receiving through {len(endpoints)} configured mailbox endpoint{"" if len(endpoints) == 1 else "s"}')
+        working = self._mailbox_task is not None and not self._mailbox_task.done()
+        found = mailbox.mailbox_provider(self.app, self.hab) if mailbox.needs_mailbox(self.hab) else None
+        if mailbox.needs_mailbox(self.hab):
+            text = self._mailbox_message or (text if found else mailbox.no_provider_text(self.app, self.hab))
         self.receiving_status.setText(text)
+        self.mailbox_button.setVisible(found is not None)
+        self.mailbox_button.setEnabled(not working)
+
+    def _set_up_mailbox(self):
+        """Ask the provider for this delegate's own mailbox."""
+        found = mailbox.mailbox_provider(self.app, self.hab)
+        if found is None or self._mailbox_task is not None and not self._mailbox_task.done():
+            return
+        self._mailbox_message = mailbox.working_text(self.hab, found[1])
+        self._mailbox_task = asyncio.ensure_future(self._run_mailbox_setup(found[1]))
+        self._refresh_receiving()
+
+    async def _run_mailbox_setup(self, provider):
+        try:
+            await mailbox.set_up_mailbox(self.app, self.hab)
+        except asyncio.CancelledError:
+            raise
+        except Exception as ex:
+            logger.exception(f"Mailbox setup failed for {self.hab.name}")
+            self._mailbox_message = mailbox.failed_text(self.hab, provider, ex)
+        else:
+            self._mailbox_message = ''
+        if self.app.vault is self.vault and not getattr(self.vault, 'closed', False):
+            self._refresh_receiving()
 
     def _refresh_delegation(self):
         """Show who delegated this identifier and where the approval is anchored."""

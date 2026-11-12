@@ -115,6 +115,24 @@ class PluginBase(ABC):
         """
         pass
 
+    def mailbox_provider_name(self, vault: Any, hab: Any) -> str | None:
+        """Optional: name this provider when it can give ``hab`` a hosted mailbox.
+
+        Every identifier that exchanges credentials needs its own receiving
+        route. Return the provider name shown to the person, or None (default)
+        when this plugin cannot serve ``hab`` in ``vault``.
+        """
+        return None
+
+    async def provide_mailbox(self, vault: Any, hab: Any) -> str:
+        """Optional: allocate and authorize a hosted mailbox for ``hab``.
+
+        Called only when :meth:`mailbox_provider_name` named this plugin.
+        Return the authorized mailbox prefix; raise with a sentence the person
+        can act on when it cannot be set up.
+        """
+        raise NotImplementedError
+
     async def after_identifier_authenticated(self, vault: Any, hab: Any) -> None:
         """Optional: hook called after an identifier's witnesses are authenticated.
 

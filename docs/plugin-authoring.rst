@@ -229,6 +229,16 @@ The following optional hooks have host call sites:
 ``after_identifier_authenticated(vault, hab)``
    Run provider work after Locksmith authenticates an identifier or group.
 
+``mailbox_provider_name(vault, hab)`` and ``provide_mailbox(vault, hab)``
+   Host a mailbox for a local identifier that has no other receiving route.
+   Every identifier that exchanges credentials needs its own witnesses or its
+   own mailbox; Locksmith never routes one identifier's replies through
+   another's endpoints. Return the provider name shown to the person, or
+   ``None`` when the plugin cannot serve ``hab``. Create Identifier calls
+   ``provide_mailbox`` for a new local delegate, and the identifier view offers
+   Set up mailbox for one that still has no route. Return the authorized
+   mailbox prefix, or raise with a sentence the person can act on.
+
 ``get_witness_state`` is defined on ``PluginBase`` and ``on_account_created`` is
 defined on ``AccountProviderPlugin``. Neither has a current host call site, so a
 plugin cannot depend on either one being called.
@@ -498,6 +508,17 @@ Watchers page can then list hosted watchers for that account.
 
 ``WatcherRegisterPage`` is currently a placeholder. Manual watcher
 registration is not part of the working example yet.
+
+Delegate Mailboxes
+~~~~~~~~~~~~~~~~~~
+
+A local delegate of the onboarded account has no witnesses. The KF plugin
+serves ``provide_mailbox`` for such a delegate: it gives ``kf-boot`` the
+account's current KEL and the delegate's KEL, asks for ``/account/mailboxes``,
+waits for the operation, resolves the returned mailbox OOBI, sends the mailbox
+the delegate's KEL with its delegation chain and authorizes it in the
+delegate's ``mailbox`` end role. ``kf-boot`` checks the delegation itself and
+refuses a mailbox for any identifier the account did not delegate.
 
 Transport Boundary
 ~~~~~~~~~~~~~~~~~~

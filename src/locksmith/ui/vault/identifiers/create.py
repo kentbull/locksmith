@@ -4,7 +4,10 @@ locksmith.ui.vaults.create module
 
 Dialog for creating new vaults
 """
-from PySide6.QtCore import Qt, Signal
+import asyncio
+from types import SimpleNamespace
+
+from PySide6.QtCore import Qt, QTimer, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QWidget, QVBoxLayout, QLabel, QHBoxLayout, QButtonGroup
 from keri import help
@@ -21,6 +24,7 @@ from locksmith.ui.toolkit.widgets import (
 from locksmith.ui.toolkit.widgets.buttons import LocksmithRadioButton, LocksmithCheckbox
 from locksmith.ui.toolkit.widgets.collapsible import CollapsibleSection
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, LocksmithLineEdit
+from locksmith.ui.vault.identifiers import mailbox
 from locksmith.ui.vault.shared.delegation_mixin import DelegationMixin
 from locksmith.ui.vault.shared.witness_auth_mixin import (
     WitnessAuthenticationPanel,
@@ -48,6 +52,9 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
         self.app = app
         self._auth_panel = None
         self._pending_params = None
+        self._mailbox_hab = None
+        self._mailbox_step = None  # None, 'working', 'retry' or 'done'
+        self._mailbox_task = None
 
         # Create content widget
         content_widget = QWidget()
@@ -284,23 +291,39 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
             self.delegation_help.hide()
         else:
             wits = len(delegator.kever.wits)
-            self.delegation_help.setText(
-                f"{delegator.name} anchors this identifier in its KEL"
-                + (f" and collects receipts from its {wits} witness{'es' if wits != 1 else ''}; "
-                   "you will enter their codes next." if wits else ".")
-            )
+            text = f"{delegator.name} anchors this identifier in its KEL"
+            if wits:
+                text += (f" and collects receipts from its {wits} witness{'es' if wits != 1 else ''}; "
+                         "you will enter their codes next.")
+            else:
+                text += "."
+            # Providers decide from the delegator alone, before the delegate exists.
+            delegate = SimpleNamespace(name='this identifier', kever=SimpleNamespace(delpre=delegator.pre))
+            found = mailbox.mailbox_provider(self.app, delegate) if self.app.vault else None
+            text += (f" {found[1]} then hosts this identifier's own mailbox, so it can send credentials"
+                     " and receive replies." if found else
+                     f" No provider hosts a mailbox for {delegator.name}'s delegates, so this identifier"
+                     f" cannot send credentials or receive replies until {delegator.name} is onboarded"
+                     " with one.")
+            self.delegation_help.setText(text)
             self.delegation_help.show()
         if hasattr(self, 'advanced_config'):
             self.advanced_config.update_content_height()
 
     def _on_create_clicked(self):
-        if self._auth_panel is not None:
+        if self._mailbox_step == 'retry':
+            self._start_mailbox_setup(self._mailbox_hab)
+        elif self._mailbox_step == 'done':
+            self._finish_created(self._mailbox_hab)
+        elif self._auth_panel is not None:
             self._submit_auth_step()
         else:
             self.create_identifier()
 
     def _on_cancel_clicked(self):
-        if self._auth_panel is not None:
+        if self._mailbox_step is not None:
+            self._finish_created(self._mailbox_hab)
+        elif self._auth_panel is not None:
             self._show_form_step()
         else:
             self.close()
@@ -450,6 +473,15 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
         # Handle identifier creation completion
         if event_type == "identifier_created":
             logger.info(f"Identifier created successfully: {data.get('alias')} ({data.get('pre')})")
+            if data.get('alias') != self.name_field.text().strip() or self._mailbox_step is not None:
+                return
+            hab = self.app.vault.hby.habByPre(data.get('pre', ''))
+            if hab is not None and mailbox.needs_mailbox(hab):
+                # This event arrives inside the vault's running task; start the
+                # provider task from the Qt loop instead.
+                self._mailbox_step = 'working'
+                QTimer.singleShot(0, lambda: self._start_mailbox_setup(hab))
+                return
             self.identifier_created.emit(data.get('alias', ''), data.get('pre', ''))
             self.close()
         elif event_type == "identifier_creation_failed":
@@ -459,6 +491,65 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
             self.create_button.setEnabled(True)
             self.create_button.setText("Authenticate" if self._auth_panel is not None else "Create")
             # Keep dialog open so user can try again
+
+    def _show_mailbox_panel(self):
+        """Replace the form or witness codes with the mailbox step."""
+        self.clear_error(resize_dialog=False)
+        for widget in (self._auth_panel, getattr(self, '_auth_heading', None)):
+            if widget is not None:
+                self._outer_layout.removeWidget(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+        self._auth_panel = self._auth_heading = None
+        self._form_widget.hide()
+        if getattr(self, 'mailbox_status', None) is None:
+            self.mailbox_status = QLabel()
+            self.mailbox_status.setObjectName('mailbox_status')
+            self.mailbox_status.setWordWrap(True)
+            self.mailbox_status.setFixedWidth(380)
+            self.mailbox_status.setStyleSheet(f"font-size: 13px; color: {colors.TEXT_DARK};")
+            self._outer_layout.addWidget(self.mailbox_status)
+        self.cancel_button.setText("Close")
+        self.setFixedSize(420, 260)
+
+    def _start_mailbox_setup(self, hab):
+        """Give a new delegate its own mailbox, or say plainly why it cannot have one yet."""
+        self._mailbox_hab = hab
+        self._show_mailbox_panel()
+        found = mailbox.mailbox_provider(self.app, hab)
+        if found is None:
+            self._mailbox_step = 'done'
+            self.mailbox_status.setText(mailbox.no_provider_text(self.app, hab))
+            self.create_button.setText("Done")
+            self.create_button.setEnabled(True)
+            return
+        plugin, provider = found
+        self._mailbox_step = 'working'
+        self.mailbox_status.setText(mailbox.working_text(hab, provider))
+        self.create_button.setText("Setting up mailbox...")
+        self.create_button.setEnabled(False)
+        self._mailbox_task = asyncio.ensure_future(self._run_mailbox_setup(plugin, hab, provider))
+
+    async def _run_mailbox_setup(self, plugin, hab, provider):
+        try:
+            await plugin.provide_mailbox(self.app.vault, hab)
+        except asyncio.CancelledError:
+            raise
+        except Exception as ex:
+            logger.exception(f"Mailbox setup failed for {hab.name}")
+            self._mailbox_step = 'retry'
+            self.mailbox_status.setText(mailbox.failed_text(hab, provider, ex))
+            self.create_button.setText("Try again")
+            self.create_button.setEnabled(True)
+            return
+        self._finish_created(hab)
+
+    def _finish_created(self, hab):
+        if self._mailbox_task is not None and not self._mailbox_task.done():
+            self._mailbox_task.cancel()
+        self._mailbox_step = None
+        self.identifier_created.emit(hab.name, hab.pre)
+        self.close()
 
     def _on_key_type_radio_changed(self):
         """Handle key type radio button selection changes."""

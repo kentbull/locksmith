@@ -107,6 +107,18 @@ class PluginManager:
                     f"Plugin '{plugin.plugin_id}' failed after_identifier_authenticated"
                 )
 
+    def mailbox_provider(self, vault: Any, hab: Any) -> tuple[PluginBase, str] | None:
+        """Return the first plugin, with its display name, that can give ``hab`` a mailbox."""
+        for plugin in self._plugins.values():
+            try:
+                name = plugin.mailbox_provider_name(vault, hab)
+            except Exception:
+                logger.exception(f"Plugin '{plugin.plugin_id}' failed mailbox_provider_name")
+                continue
+            if name:
+                return plugin, name
+        return None
+
     def get_witness_batches(self, vault: Any, hab_pre: str) -> Any | None:
         """Query all plugins for witness batch data and merge distinct groups."""
         merged = []

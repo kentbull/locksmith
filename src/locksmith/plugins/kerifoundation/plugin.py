@@ -406,6 +406,25 @@ class KeriFoundationPlugin(PluginBase, WitnessProviderPlugin, AccountProviderPlu
             pages[self._page_key("provision")] = self._witness_provision
         return pages
 
+    def mailbox_provider_name(self, vault: Any, hab: Any) -> str | None:
+        """Serve identifiers that this vault's onboarded provider account delegated."""
+        record = self._get_account_record()
+        if (self._closing_vault or getattr(self._app, 'vault', None) is not vault
+                or not self._has_onboarded_account() or not record.boot_server_aid
+                or hab.kever.delpre != record.account_aid
+                or vault.hby.habByPre(record.account_aid) is None):
+            return None
+        return self.provider_name
+
+    async def provide_mailbox(self, vault: Any, hab: Any) -> str:
+        """Allocate the delegate's hosted mailbox through the provider account."""
+        from locksmith.plugins.kerifoundation.core.mailboxes import provide_delegate_mailbox
+        if self.mailbox_provider_name(vault, hab) is None:
+            raise KFBootError(f'{self.provider_name} cannot provide a mailbox for {hab.name}')
+        account = vault.hby.habByPre(self._get_account_record().account_aid)
+        self._sync_boot_client_destination()
+        return await provide_delegate_mailbox(self._app, vault, account, hab, self._boot_client.clone())
+
     def get_witness_batches(self, vault: Any, hab_pre: str) -> Any | None:
         """Return batch groupings for KF witnesses belonging to this hab."""
         if not self._db:
