@@ -520,9 +520,77 @@ def test_issue_form_authors_issuer_identity_edges_with_preflight(wallet, qapp, i
     assert agent['sad']['e']['orgUnit']['o'] == operator
     if verdict == 'valid':
         ipexing.grant(app.vault, issuer, agent['sad']['d'], sue.pre)
-    else:
-        with pytest.raises(kering.ValidationError):
-            ipexing.grant(app.vault, issuer, agent['sad']['d'], sue.pre)
+        return
+    with pytest.raises(kering.ValidationError):
+        ipexing.grant(app.vault, issuer, agent['sad']['d'], sue.pre)
+    # The badge and the Grant dialog explain the refusal by name; the raw reason stays in the tooltip.
+    sentence = {
+        'I1I': 'was issued by a different issuer (state), but the link requires the same issuer (I1I).',
+        'DI1I': "This credential's issuer (rogue) is neither the issuer of its linked SEDI Organizational Unit",
+    }[operator]
+    assert sentence in edge.link_badge.text() and issuer.pre not in edge.link_badge.text()
+    assert edge.link_badge.toolTip() == edge.link_verdict['reason']
+    app.vault.org.update(sue.pre, {'alias': 'sue'})
+    grant = GrantCredentialDialog(app, QWidget(), agent['sad']['d'], 'SEDI Issuing Agent', issuer.pre)
+    grant.recipient_dropdown.setCurrentIndex(grant.recipient_dropdown.combo_box.findData(sue.pre))
+    grant.action_button.click()
+    assert grant.error_label.text().startswith('This credential cannot be sent. ')
+    assert sentence in grant.error_label.text()
+
+
+def test_refusal_text_names_credentials_and_identifiers(wallet):
+    from locksmith.ui.vault.credentials.presentation import refusal_text
+
+    app = wallet('refusal-text')
+    near, far = app.hby.makeHab(name='program'), app.hby.makeHab(name='state')
+    node, _, _ = issue(app, far, near.pre)
+    cases = {
+        f'I1I edge to node {node.said} requires equal issuers; near issuer {near.pre} != far issuer {far.pre}':
+            'was issued by a different issuer (state), but the link requires the same issuer (I1I).',
+        f'DI1I edge to node {node.said} fails because near issuer {near.pre} is not delegated from far issuer {far.pre}':
+            "This credential's issuer (program) is neither the issuer of its linked",
+        (f'DI1I edge to node {node.said} is missing KEL or delegation-anchor evidence between near issuer '
+         f'{near.pre} and far issuer {far.pre}'):
+            'The wallet cannot yet confirm that program is a delegate of state, the issuer of the linked',
+        f'DI2I edge to node {node.said} fails because near issuer {near.pre} is not delegated from far issuee {far.pre}':
+            'nor an anchored delegate of it, but the link requires one of them (DI2I).',
+        f'I2I edge to node {node.said} requires the near issuer to be the far issuee; issuer {near.pre} != far issuee {far.pre}':
+            'was issued to state, but the link requires it to be issued to this credential\'s issuer, program (I2I).',
+        f'I2I edge to node {node.said} requires a targeted far node, which has no issuee':
+            'has no issuee, but the link requires its issuee to be this credential\'s issuer (I2I).',
+        f'E1E edge to node {node.said} requires equal issuees; near issuee {near.pre} != far issuee {far.pre}':
+            'has a different issuee (state), but the link requires the same issuee (E1E).',
+        f"unrecognized unary Operator(s) ['XYZ'] on edge to node {node.said}; treated as unknown":
+            "uses operator ['XYZ'], which verifiers cannot evaluate.",
+        f'edge is missing far node {node.said}':
+            f'The linked credential {node.said[:12]}… is not part of this selection.',
+    }
+    for reason, sentence in cases.items():
+        text = refusal_text(app.vault, 'Dolly refused this presentation: ' + reason)
+        assert sentence in text, (reason, text)
+        assert near.pre not in text and far.pre not in text
+    assert refusal_text(app.vault, 'Registry state is not yet available') == 'Registry state is not yet available'
+    assert refusal_text(app.vault, '') == ''
+
+
+def test_activity_shows_the_verifier_refusal_carried_by_a_spurn(wallet):
+    app = wallet('remote-spurn')
+    issuer, verifier = app.hby.makeHab(name='holder'), app.hby.makeHab(name='dolly')
+    acdc, _, _ = issue(app, issuer, verifier.pre)
+    grant, _ = ipexing.grant(app.vault, issuer, acdc.said, verifier.pre)
+    reason = f'I1I edge to node {acdc.said} requires equal issuers; near issuer {issuer.pre} != far issuer {verifier.pre}'
+    spurn, _ = acdc_v2_ipexing.spurn(verifier, f'Dolly refused this presentation: {reason}', grant)
+    parent = QWidget()
+    parent.app = app
+    page = CredentialActivityPage(parent)
+    page.set_vault_name('remote-spurn')
+    row = dict(messages=[grant, spurn], sender=issuer.pre, recipient=verifier.pre, _key=(grant.said, 0),
+               submissions={}, receipts=[], _interrupted=False, expired=False, problem='')
+    outcome = page._outcome(row)
+    assert outcome.startswith('Declined by dolly: ')
+    assert 'was issued by a different issuer (dolly), but the link requires the same issuer (I1I).' in outcome
+    unexplained, _ = acdc_v2_ipexing.spurn(verifier, '', grant)
+    assert page._outcome(dict(row, messages=[grant, unexplained])) == 'Declined by dolly.'
 
 
 def test_edge_operator_picker_honours_array_enum_and_group_conflicts(qapp):

@@ -11,7 +11,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QLabel, QHBoxLayout,
     QButtonGroup, QFileDialog
 )
-from keri import help
+from keri import help, kering
 
 from locksmith.core import credentialing, ipexing
 from locksmith.ui import colors
@@ -22,7 +22,8 @@ from locksmith.ui.toolkit.widgets import (
 )
 from locksmith.ui.toolkit.widgets.buttons import LocksmithRadioButton, LocksmithIconButton
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, FloatingLabelLineEdit
-from locksmith.ui.vault.credentials.presentation import credential_details, disclosed_credentials, identifier_name
+from locksmith.ui.vault.credentials.presentation import (
+    credential_details, disclosed_credentials, identifier_name, refusal_text)
 from locksmith.ui.toolkit.widgets.collapsible import CollapsibleSection
 
 if TYPE_CHECKING:
@@ -316,7 +317,10 @@ class GrantCredentialDialog(LocksmithDialog):
                 self._save_grant(stream)
         except Exception as error:
             logger.exception("Failed to create credential grant")
-            self.show_error(f"Failed to create grant: {error}")
+            if isinstance(error, kering.ValidationError):
+                self.show_error(f"This credential cannot be sent. {refusal_text(self.vault, str(error))}")
+            else:
+                self.show_error(f"Failed to create grant: {error}")
             self._reset_button()
 
     def _send_grant(self, hab, serder, attachment):

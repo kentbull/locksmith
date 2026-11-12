@@ -30,7 +30,7 @@ from locksmith.ui.vault.credentials.received.accept_grant import AcceptGrantDial
 from locksmith.ui.vault.credentials.issued.issue import IssueCredentialDialog
 from locksmith.ui.vault.credentials.issued.view import ViewIssuedCredentialDialog
 from locksmith.ui.vault.credentials.presentation import (
-    attribute_view, credential_name, identifier_name, rules_text,
+    attribute_view, credential_name, identifier_name, refusal_text, rules_text,
     credential_details, disclosed_credentials,
 )
 from locksmith.ui.vault.shared.base_list_page import BaseListPage
@@ -655,7 +655,11 @@ class CredentialActivityPage(BaseListPage):
             return ('Accepted; acknowledgment submitted.' if record else
                     'Accepted; acknowledgment saved. Choose Send acknowledgment to notify the sender.')
         if tip.route == '/ipex/spurn':
-            return 'Declined by you.' if local else f'Declined by {self._name(tip.pre)}.'
+            if local:
+                return 'Declined by you.'
+            reason = tip.sad.get('a', {}).get('m', '') if isinstance(tip.sad.get('a'), dict) else ''
+            return (f'Declined by {self._name(tip.pre)}: {refusal_text(self.vault, reason)}' if reason
+                    else f'Declined by {self._name(tip.pre)}.')
         if local and not record:
             return 'Saved locally. Sending has not been authorized.'
         return 'Awaiting your decision.' if row['_actions'] else f'Waiting for {self._name(tip.sad["ri"])}.'
@@ -989,6 +993,8 @@ class ExchangeResponseDialog(LocksmithDialog):
         return True
 
     def show_error(self, message):
+        """Show ``message``, with core chain refusals rewritten as readable sentences."""
+        message = refusal_text(self.vault, message)
         previous_height = self._current_banner_height if self._base_height is not None else 0
         super().show_error(message)
         self._base_content_height += self._current_banner_height - previous_height
