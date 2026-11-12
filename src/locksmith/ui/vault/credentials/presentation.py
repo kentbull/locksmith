@@ -1,12 +1,13 @@
 """Credential labels and read-only attributes shared by wallet views."""
 from collections.abc import Mapping
+import re
 
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import QLabel, QVBoxLayout, QWidget
 from keri.help import helping
 from keri.core import Saider
 
-from locksmith.core import ipexing
+from locksmith.core import credentialing, ipexing
 from locksmith.ui import colors
 
 
@@ -33,6 +34,70 @@ def identifier_name(vault, pre):
     peers = {h.pre for h in vault.hby.habs.values() if h.name == name}
     peers.update(c['id'] for c in vault.org.list() if c.get('alias') == name)
     return f'{name} ({pre[:8]}…)' if len(peers) > 1 else name
+
+
+# Core chain-refusal reasons name AIDs and SAIDs; these patterns turn each into one sentence.
+_AID = r'(?P<{}>[A-Za-z0-9_-]{{20,}})'
+_REFUSALS = (
+    (re.compile(r'I1I edge to node (?P<node>\S+) requires equal issuers; near issuer '
+                + _AID.format('near') + r' != far issuer ' + _AID.format('far')),
+     "This credential's linked {title} was issued by a different issuer ({far}), but the link "
+     "requires the same issuer (I1I)."),
+    (re.compile(r'DI1I edge to node (?P<node>\S+) fails because near issuer ' + _AID.format('near')
+                + r' is not delegated from far issuer ' + _AID.format('far')),
+     "This credential's issuer ({near}) is neither the issuer of its linked {title} ({far}) nor an "
+     "anchored delegate of it, but the link requires one of them (DI1I)."),
+    (re.compile(r'(?P<op>DI1I|DI2I) edge to node (?P<node>\S+) is missing KEL or delegation-anchor evidence '
+                r'between near issuer ' + _AID.format('near') + r' and far (?P<role>issuer|issuee) '
+                + _AID.format('far')),
+     "The wallet cannot yet confirm that {near} is a delegate of {far}, the {role} of the linked "
+     "{title}, because that delegation's KEL or anchor has not arrived ({op}). Try again after it arrives."),
+    (re.compile(r'DI2I edge to node (?P<node>\S+) fails because near issuer ' + _AID.format('near')
+                + r' is not delegated from far issuee ' + _AID.format('far')),
+     "This credential's issuer ({near}) is neither the issuee of its linked {title} ({far}) nor an "
+     "anchored delegate of it, but the link requires one of them (DI2I)."),
+    (re.compile(r'I2I edge to node (?P<node>\S+) requires the near issuer to be the far issuee; issuer '
+                + _AID.format('near') + r' != far issuee ' + _AID.format('far')),
+     "This credential's linked {title} was issued to {far}, but the link requires it to be issued to "
+     "this credential's issuer, {near} (I2I)."),
+    (re.compile(r'I2I edge to node (?P<node>\S+) requires a targeted far node, which has no issuee'),
+     "This credential's linked {title} has no issuee, but the link requires its issuee to be this "
+     "credential's issuer (I2I)."),
+    (re.compile(r'E1E edge to node (?P<node>\S+) requires equal issuees; near issuee (?P<near>\S+) != far '
+                r'issuee (?P<far>\S+)'),
+     "This credential's linked {title} has a different issuee ({far}), but the link requires the same "
+     "issuee (E1E)."),
+    (re.compile(r'unrecognized unary Operator\(s\) (?P<ops>\[[^\]]*\]) on edge to node (?P<node>\S+?);'),
+     "The link to {title} uses operator {ops}, which verifiers cannot evaluate."),
+    (re.compile(r'edge is missing far node (?P<node>\S+)'),
+     "The linked credential {node} is not part of this selection."),
+)
+
+
+def refusal_text(vault, reason):
+    """Explain core chain-refusal ``reason`` in sentences, keeping text it does not recognize.
+
+    Each recognized relation refusal becomes one sentence naming the linked
+    credential's title and the identifiers involved; the original reason stays
+    available to callers for diagnostics.
+    """
+    sentences = []
+    for pattern, template in _REFUSALS:
+        for match in pattern.finditer(reason or ''):
+            values = match.groupdict()
+            node = values.get('node', '').rstrip(';,')
+            try:
+                title = credential_name(credentialing.credential(vault, node)['schema'])
+            except Exception:
+                title = 'credential'
+            values.update(title=title, node=node[:12] + '…')
+            for key in ('near', 'far'):
+                if values.get(key) and values[key] != 'None':
+                    values[key] = identifier_name(vault, values[key])
+            sentence = template.format(**values)
+            if sentence not in sentences:
+                sentences.append(sentence)
+    return ' '.join(sentences) if sentences else reason
 
 
 def date_label(stamp):

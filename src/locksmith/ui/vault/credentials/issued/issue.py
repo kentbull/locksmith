@@ -30,7 +30,8 @@ from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, FloatingL
 from locksmith.ui.vault.credentials.issued.edge_operators import EdgeOperatorPicker, VERDICT_BADGES
 from locksmith.ui.vault.credentials.issued.grant import GrantCredentialDialog
 from locksmith.ui.vault.credentials.issued.state_options import StatePublicationOptions
-from locksmith.ui.vault.credentials.presentation import attribute_label, attribute_view, credential_name, identifier_name
+from locksmith.ui.vault.credentials.presentation import (
+    attribute_label, attribute_view, credential_name, identifier_name, refusal_text)
 from locksmith.ui.vault.shared.witness_auth_mixin import (
     WitnessAuthenticationPanel,
     witness_auth_dialog_height
@@ -935,7 +936,9 @@ class IssueCredentialDialog(LocksmithDialog):
                 badge.hide()
                 return
             text, color = VERDICT_BADGES[selected['verdict']]
-            badge.setText(text if selected['verdict'] == 'valid' else f"{text}: {selected['reason']}")
+            badge.setText(text if selected['verdict'] == 'valid'
+                          else f"{text}: {refusal_text(self.vault, selected['reason'])}")
+            badge.setToolTip(selected['reason'])
             badge.setStyleSheet(f'font-size: 12px; font-weight: 600; color: {color};')
             badge.show()
             container.link_verdict = selected
