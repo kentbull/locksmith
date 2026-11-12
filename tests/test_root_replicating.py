@@ -1,17 +1,20 @@
 """Registry roots reach group newcomers as ESSR copies that are retained automatically."""
 from types import SimpleNamespace
 
+import pytest
 from keri import kering
 from keri.acdc import Registrar, acdcmap
-from keri.acdc.salting import RootRefused, RootUnverified
+from keri.acdc.salting import RegistryRoot, RootRefused, RootUnverified
 from keri.core import Parser, Salter
 
-from locksmith.core import evidence
+from locksmith.core import evidence, root_replicating
 from test_ipex_policy import _introduce
 from test_keri_v2_compat import _deliver_ipex, ipex_vaults as ipex_vaults
 
 V2 = kering.Vrsn_2_0
 BRAN = '0123456789abcdefghijk'
+needs_reseal = pytest.mark.skipif(not hasattr(RegistryRoot, 'resealed'),
+                                  reason='KERIpy without RegistryRoot.resealed')
 
 
 def _local(app, raw):
@@ -108,15 +111,23 @@ def _sent(app):
     return events
 
 
+def _to(app, dest):
+    """Return the one copy ``app`` sent to ``dest``; other recipients' copies are discarded."""
+    event, = [event for event in _sent(app) if event['dest'] == dest]
+    return event
+
+
 def _notes(app):
     return [note for _, note in app.vault.notifier.noter.notes.getTopItemIter()
             if note.attrs.get('r') == '/exn/registry/root']
 
 
-def test_rotation_witnesser_catches_a_newcomer_up_and_arrival_retains_the_root(ipex_vaults):
+def test_without_reseal_the_witnesser_catches_a_newcomer_up_and_arrival_retains_the_root(
+        ipex_vaults, monkeypatch):
     w = _rotated_group(ipex_vaults)
     alice, bob, carol = w.alice, w.bob, w.carol
-    # Only the rotation's elected witnesser sends, exactly once per rotation.
+    # A KERIpy without ``resealed``: only the rotation's elected witnesser sends, once per rotation.
+    monkeypatch.delattr(RegistryRoot, 'resealed', raising=False)
     bob.vault.auxiliary.process()
     assert not _sent(bob)
     alice.vault.auxiliary.process()
@@ -148,7 +159,7 @@ def test_copy_escrows_until_the_newcomer_has_the_registry(ipex_vaults):
     w = _rotated_group(ipex_vaults, newcomer_has_tel=False)
     alice, carol = w.alice, w.carol
     alice.vault.auxiliary.process()
-    event, = _sent(alice)
+    event = _to(alice, w.ch.pre)
     _deliver_ipex(carol.vault, event['serder'].raw + event['attachment'])
     copy, = carol.vault.roots.pending()
     assert copy.said == event['serder'].said and 'registry' in copy.waiting and copy.escrowed
@@ -172,8 +183,9 @@ def test_rotation_catch_up_waits_for_local_state_instead_of_being_skipped(ipex_v
     w = _rotated_group(ipex_vaults)
     alice = w.alice
     roots = alice.vault.roots
-    elect = roots.core.witnesser
-    monkeypatch.setattr(roots.core, 'witnesser', lambda hab, rotation: (_ for _ in ()).throw(
+    decide = 'resealed' if hasattr(roots.core, 'resealed') else 'witnesser'
+    elect = getattr(roots.core, decide)
+    monkeypatch.setattr(roots.core, decide, lambda hab, rotation: (_ for _ in ()).throw(
         kering.ValidationError('member key state is not yet local')))
     alice.vault.auxiliary.process()
     alice.vault.auxiliary.process()
@@ -182,10 +194,9 @@ def test_rotation_catch_up_waits_for_local_state_instead_of_being_skipped(ipex_v
     assert not list(alice.vault.db.rootSends.getTopItemIter())
 
     # The missing state arrives in the same session; the next pass owes and sends the copy.
-    monkeypatch.setattr(roots.core, 'witnesser', elect)
+    monkeypatch.setattr(roots.core, decide, elect)
     alice.vault.auxiliary.process()
-    event, = _sent(alice)
-    assert event['dest'] == w.ch.pre
+    assert _to(alice, w.ch.pre)
     assert alice.vault.db.rootRotations.get(keys=(w.gid, w.rotation)) == w.ah.pre
 
 
@@ -204,8 +215,7 @@ def test_owed_copy_survives_transient_prepare_errors_and_drops_only_on_refusal(i
         assert alice.vault.db.rootSends.get(keys=keys) is not None
     monkeypatch.setattr(roots.core, 'prepare', prepare)
     alice.vault.auxiliary.process()
-    event, = _sent(alice)
-    assert event['dest'] == w.ch.pre
+    assert _to(alice, w.ch.pre)
     assert alice.vault.db.rootSends.get(keys=keys) is None
 
     # A recipient that is not a current member is a hard refusal: the row is dropped.
@@ -225,7 +235,7 @@ def test_stored_copy_dropped_from_escrow_is_restored_on_reopen(ipex_vaults):
     w = _rotated_group(ipex_vaults, newcomer_has_tel=False)
     alice, carol = w.alice, w.carol
     alice.vault.auxiliary.process()
-    event, = _sent(alice)
+    event = _to(alice, w.ch.pre)
     _deliver_ipex(carol.vault, event['serder'].raw + event['attachment'])
     said = event['serder'].said
     # A previous core timed the copy out of escrow, or a session without the
@@ -242,3 +252,54 @@ def test_stored_copy_dropped_from_escrow_is_restored_on_reopen(ipex_vaults):
     assert carol.hby.mgr.getRegistryRoot(w.gid, w.registry).qb64 == w.root.qb64
     assert carol.vault.roots.pending() == []
     assert carol.vault.roots.restore() == []
+
+
+@needs_reseal
+def test_rotation_reseal_has_a_non_witnesser_signer_owe_new_and_rekeyed_members(ipex_vaults):
+    w = _rotated_group(ipex_vaults)
+    bob, group = w.bob, w.bob.hby.habs[w.gid]
+    # Bob signed the rotation, held a prior key and holds a received copy of the root.
+    assert not bob.vault.roots.core.witnesser(group, w.rotation)
+    bob.vault.auxiliary.process()
+    sent = _sent(bob)
+    # Carol is new; Alice continues under a rotated key, so she is re-sealed to as well.
+    assert sorted(event['dest'] for event in sent) == sorted([w.ah.pre, w.ch.pre])
+    assert {event['hab'].pre for event in sent} == {w.bh.pre}
+    assert bob.vault.db.rootRotations.get(keys=(w.gid, w.rotation)) == w.bh.pre
+    assert not list(bob.vault.db.rootSends.getTopItemIter())
+    bob.vault.auxiliary.process()
+    assert not _sent(bob)
+
+    # Bob holds no Grant or opening naming the ACDC, so his copy carries no hint
+    # and Carol escrows it until opening evidence is local.
+    event, = [event for event in sent if event['dest'] == w.ch.pre]
+    _deliver_ipex(w.carol.vault, event['serder'].raw + event['attachment'])
+    assert [(copy.said, copy.waiting) for copy in w.carol.vault.roots.pending()] == [
+        (event['serder'].said, 'opening evidence')]
+
+
+@needs_reseal
+def test_rotation_reseal_owes_a_rekeyed_continuing_member_a_copy(ipex_vaults):
+    w = _rotated_group(ipex_vaults)
+    alice, bob = w.alice, w.bob
+    alice.vault.auxiliary.process()
+    # Bob was already a member; his contributing key changed, so he is owed a copy.
+    event = _to(alice, w.bh.pre)
+    assert event['hab'].pre == w.ah.pre
+    _deliver_ipex(bob.vault, event['serder'].raw + event['attachment'])
+    assert bob.hby.mgr.getRegistryRoot(w.gid, w.registry).qb64 == w.root.qb64
+    assert bob.vault.roots.pending() == []
+
+
+@needs_reseal
+def test_stored_hint_failing_the_self_check_is_logged_and_replaced(ipex_vaults, monkeypatch):
+    w = _rotated_group(ipex_vaults)
+    alice = w.alice
+    warnings = []
+    monkeypatch.setattr(root_replicating.logger, 'warning', lambda *args: warnings.append(args))
+    # A stale stored hint: no ACDC of this SAID reproduces the registry's head update.
+    alice.vault.db.rootHints.pin(keys=(w.gid, w.registry), val=w.registry)
+    alice.vault.auxiliary.process()
+    assert _to(alice, w.ch.pre)
+    assert not list(alice.vault.db.rootSends.getTopItemIter())
+    assert any('fails the KERIpy self-check' in args[0] and w.registry in args for args in warnings)
