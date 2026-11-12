@@ -383,6 +383,29 @@ def delete_credential(vault, said, received=False):
     return store.rem(keys=(said,))
 
 
+def signing_issuer(vault, pre):
+    """Return ``pre``'s local hab when this wallet can sign issuance for it, else ``None``."""
+    hab = vault.hby.habByPre(pre) if pre else None
+    if (hab is None or not hab.accepted
+            or isinstance(hab, GroupHab) and (hab.mhab is None or hab.mhab.pre not in
+                                               vault.hby.db.signingMembers(pre=hab.pre))):
+        return None
+    return hab
+
+
+def issuer_choices(vault, schema_said):
+    """List local identifiers able to issue ``schema_said``, the schema's selected issuer first.
+
+    The schema's saved issuer is the default; any other local signing identifier
+    may also issue it, so one schema can be issued by a delegator and its delegate.
+    """
+    default = vault.db.issuers.get(keys=(schema_said,))
+    named = sorted((alias, pre) for (ns, alias), pre in vault.hby.db.names.getTopItemIter(keys=())
+                   if ns == '' and pre != default)
+    ordered = [default] + [pre for _, pre in named]
+    return [pre for pre in ordered if signing_issuer(vault, pre) is not None]
+
+
 class LoadSchemaDoer(doing.DoDoer):
     """Load a schema and optionally select its local issuer."""
 
@@ -575,7 +598,7 @@ class IssueCredentialDoer(CredentialUpdateDoer):
 
     def __init__(self, app, schema_said, recipient_pre, attributes, edges=None, rules=None,
                  codes=None, signal_bridge=None, authentication='registry', nonce=None,
-                 registry_mode='blinded', discloser=None, auths=None, bound_event=None):
+                 registry_mode='blinded', discloser=None, auths=None, bound_event=None, issuer=None):
         """Configure issuance without opening optional custody.
 
         app owns the vault; schema_said/recipient_pre select issuer policy and
@@ -587,9 +610,11 @@ class IssueCredentialDoer(CredentialUpdateDoer):
         credential entropy. registry_mode explicitly selects public, per-event
         blinded, or derived state; discloser binds newly provisioned derivation
         custody in derived mode only. bound_event selects an exact current issuee
-        KEL event for blinded state. No salt is shared by issuance itself.
+        KEL event for blinded state. issuer selects a local signing identifier;
+        omitted, the schema's saved issuer issues. No salt is shared by issuance itself.
         """
         self.vault = app.vault
+        self.issuer = issuer
         self.schema_said, self.recipient_pre = schema_said, recipient_pre
         self.issuance_id = uuid.uuid4().hex
         self.attributes, self.edges, self.rules = attributes, edges or {}, rules
@@ -626,9 +651,9 @@ class IssueCredentialDoer(CredentialUpdateDoer):
         receiptor = None
         agreement = None
         try:
-            issuer = self.vault.db.issuers.get(keys=(self.schema_said,))
+            issuer = self.issuer or self.vault.db.issuers.get(keys=(self.schema_said,))
             hab = self.vault.hby.habByPre(issuer)
-            if hab is None:
+            if hab is None or self.issuer and signing_issuer(self.vault, issuer) is None:
                 raise ValueError('Select a local identifier for this schema')
             if isinstance(hab, GroupHab):
                 if self.authentication != 'registry':

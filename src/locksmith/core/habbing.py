@@ -198,10 +198,12 @@ def load_potential_delegators(app, delegation_type='local'):
 
     if delegation_type == 'local':
         # Load local identifiers that can be delegators
-        for name, pre in app.vault.hby.habs.items():
+        for pre, hab in app.vault.hby.habs.items():
+            if isinstance(hab, habbing.GroupHab) or not hab.kever.transferable:
+                continue
             delegators.append({
-                'id': pre.pre,
-                'alias': name
+                'id': pre,
+                'alias': hab.name
             })
     else:  # remote
         # Load remote identifiers that can be delegators
@@ -494,25 +496,18 @@ def create_identifier(app, alias, key_type='salty', **kwargs):
             }
 
         elif delegation_type == 'local':
-            # Local delegation - synchronous creation
-            from keri.db import dbing
-
-            hab = app.vault.hby.makeHab(name=alias, **creation_kwargs)
-            serder, _, _ = hab.getOwnEvent(sn=0)
-
-            if creation_kwargs.get('delpre'):
-                delegator_hab = app.vault.hby.habByPre(creation_kwargs['delpre'])
-                anchor = dict(i=hab.pre, s="0", d=hab.pre)
-                delegator_hab.interact(data=[anchor])
-                number = coring.Number(sn=delegator_hab.kever.serder.sn, code=coring.NumDex.Huge)
-                diger = coring.Diger(qb64b=delegator_hab.kever.serder.saidb)
-                dgkey = dbing.dgKey(anchor['i'], anchor['d'])
-                app.vault.hby.db.aess.pin(keys=dgkey, val=(number, diger))
-
+            # Local delegation anchors in the delegator's witnessed KEL. The
+            # doer waits for the delegator's receipt threshold so remote
+            # verifiers can first-see the anchor before the delegate is used.
+            if not creation_kwargs.get('delpre'):
+                return {'success': False, 'message': 'Choose the local delegator for this identifier'}
+            doer = LocalDelegateInceptDoer(app=app, alias=alias, codes=kwargs.get('codes'),
+                                           signal_bridge=app.vault.signals, **creation_kwargs)
+            app.vault.extend([doer])
             return {
                 'success': True,
-                'message': f'Identifier {hab.pre} created successfully',
-                'pre': hab.pre
+                'message': 'Creating delegated identifier...',
+                'async': True
             }
 
     except Exception as e:
@@ -706,6 +701,174 @@ class InceptDoer(doing.DoDoer):
                 )
             self.app.vault.remove([self])
             return
+
+
+def delegation_anchor(hby, pre):
+    """Return the delegator event that approved ``pre``'s inception, if recorded.
+
+    Args:
+        hby: Habery holding the delegate's KEL and its authorizing seal source.
+        pre: Delegated identifier prefix.
+
+    Returns:
+        SerderKERI | None: The delegator's anchoring event, or ``None`` while
+        the inception has no recorded approval.
+    """
+    dip = hby.db.kels.getLast(keys=pre, on=0)
+    couple = hby.db.aess.get(keys=(pre, dip)) if dip else None
+    if couple is None:
+        return None
+    kever = hby.kevers.get(pre)
+    _, diger = couple
+    return hby.db.evts.get(keys=(kever.delpre, diger.qb64)) if kever else None
+
+
+def delegation_status(app, hab):
+    """Describe a delegated identifier's approval for display.
+
+    Args:
+        app: Application instance with an open vault.
+        hab: Local identifier to describe.
+
+    Returns:
+        dict | None: ``None`` for an identifier that is not delegated, else the
+        delegator AID and display name, the anchoring sequence number (``None``
+        while pending), the delegator's receipts and threshold for that anchor,
+        and a sentence for the identifier view.
+    """
+    hby = app.vault.hby
+    delpre = hab.kever.delpre
+    if not delpre:
+        return None
+    local = hby.habByPre(delpre)
+    contact = None if local else next(
+        (entry for entry in app.vault.org.list() if entry.get('id') == delpre), None)
+    name = local.name if local else (contact or {}).get('alias') or ''
+    who = f"{name} ({delpre[:12]}\u2026)" if name else delpre
+    anchor = delegation_anchor(hby, hab.pre)
+    status = dict(delegator=delpre, delegator_name=name, sn=None, receipts=0, threshold=0)
+    if anchor is None:
+        status['text'] = f"Delegated by {who} \u00b7 waiting for the delegator's approval"
+        return status
+    threshold = hby.kvy.fetchEstEvent(delpre, anchor.sn).bner.num
+    receipts = len(hby.db.wigs.get(keys=(delpre, anchor.said)))
+    status.update(sn=anchor.sn, receipts=receipts, threshold=threshold)
+    text = f"Delegated by {who} \u00b7 anchored at sn {anchor.sn}"
+    if receipts < threshold:
+        text += f" \u00b7 waiting for delegator witness receipts ({receipts} of {threshold})"
+    status['text'] = text
+    return status
+
+
+class LocalDelegateInceptDoer(doing.DoDoer):
+    """Incept an identifier delegated by a local single-signature identifier.
+
+    The delegator anchors the delegate's inception in its own KEL and collects
+    that anchor's witness receipts before completion. Remote verifiers accept a
+    delegated inception only after first-seeing the delegator's fully witnessed
+    anchor, so an unreceipted anchor would leave the delegate unusable remotely.
+    A retry with the same alias resumes the saved delegate and anchor.
+    """
+
+    Timeout = 30.0
+
+    def __init__(self, app, alias, codes=None, signal_bridge=None, **kwargs):
+        """
+        Args:
+            app: Application instance with vault.
+            alias: Alias for the delegate; an existing delegate of the same
+                delegator under this alias is resumed instead of recreated.
+            codes: ``witness:passcode`` strings for the delegator's witnesses.
+            signal_bridge: DoerSignalBridge receiving ``InceptDoer`` events.
+            **kwargs: ``makeHab`` arguments, including the required ``delpre``.
+        """
+        self.app, self.vault, self.alias = app, app.vault, alias
+        self.codes = list(codes or [])
+        self.signal_bridge = signal_bridge
+        self.creation_kwargs = kwargs
+        super().__init__(doers=[doing.doify(self.incept_do)])
+
+    def incept_do(self, tymth, tock=0.0, **opts):
+        """Create or resume the delegate, anchor it, and wait for witness receipts."""
+        from keri.core import Diger, Number
+        from keri.help import helping
+        from locksmith.core.receipting import LocksmithReceiptor
+
+        self.wind(tymth)
+        self.tock = tock
+        yield self.tock
+        hby = self.vault.hby
+        receiptor = None
+        try:
+            delpre = self.creation_kwargs['delpre']
+            delegator = hby.habByPre(delpre)
+            if delegator is None or isinstance(delegator, habbing.GroupHab):
+                raise ValueError('Choose a local single-signature identifier as the delegator')
+            if not delegator.kever.transferable:
+                raise ValueError('A non-transferable identifier cannot delegate')
+            hab = hby.habByName(self.alias)
+            if hab is None:
+                hab = hby.makeHab(name=self.alias, **self.creation_kwargs)
+            elif hab.kever.delpre != delpre:
+                raise ValueError(f"An identifier named '{self.alias}' already exists")
+            dip = hby.db.evts.get(keys=(hab.pre, hby.db.kels.getLast(keys=hab.pre, on=0)))
+            seal = dict(i=hab.pre, s=dip.snh, d=dip.said)
+            anchor = delegation_anchor(hby, hab.pre)
+            if anchor is None:
+                for sn in range(delegator.kever.sn + 1):
+                    digest = hby.db.kels.getLast(keys=delpre, on=sn)
+                    event = hby.db.evts.get(keys=(delpre, digest)) if digest else None
+                    if event is not None and seal in event.sad.get('a', []):
+                        anchor = event
+                        break
+                if anchor is None:
+                    author = delegator.rotate if delegator.kever.estOnly else delegator.interact
+                    anchor = SerderKERI(raw=author(data=[seal]))
+                hby.db.aess.pin(keys=(hab.pre, dip.said),
+                                val=(Number(num=anchor.sn, code=coring.NumDex.Huge),
+                                     Diger(qb64=anchor.said)))
+            threshold = hby.kvy.fetchEstEvent(delpre, anchor.sn).bner.num
+            if len(hby.db.wigs.get(keys=(delpre, anchor.said))) < threshold:
+                auths = {}
+                for entry in self.codes:
+                    wit, code = entry.split(':', 1)
+                    auths[wit] = f'{code}#{helping.nowIso8601()}'
+                receiptor = LocksmithReceiptor(hby=hby)
+                self.extend([receiptor])
+                receipt = receiptor.receipt(delpre, sn=anchor.sn, auths=auths)
+                deadline = self.tyme + self.Timeout
+                try:
+                    for _ in receipt:
+                        if len(hby.db.wigs.get(keys=(delpre, anchor.said))) >= threshold:
+                            break
+                        if self.tyme >= deadline:
+                            break
+                        yield self.tock
+                finally:
+                    receipt.close()
+                receipts = len(hby.db.wigs.get(keys=(delpre, anchor.said)))
+                if receipts < threshold:
+                    raise TimeoutError(
+                        f"The delegation is anchored at {delegator.name} sn {anchor.sn}, but its witnesses "
+                        f"have returned {receipts} of {threshold} receipts. Check the witness codes and "
+                        "try again; the same anchor will be reused.")
+            if self.signal_bridge:
+                self.signal_bridge.emit_doer_event(
+                    doer_name="InceptDoer", event_type="identifier_created",
+                    data={'alias': self.alias, 'pre': hab.pre, 'delegator': delpre,
+                          'anchor_sn': anchor.sn, 'success': True})
+            logger.info(f"Delegated identifier {self.alias} ({hab.pre}) anchored at {delpre} sn {anchor.sn}")
+        except Exception as e:
+            logger.exception(f"LocalDelegateInceptDoer failed: {e}")
+            if self.signal_bridge:
+                self.signal_bridge.emit_doer_event(
+                    doer_name="InceptDoer", event_type="identifier_creation_failed",
+                    data={'alias': self.alias, 'error': str(e), 'success': False})
+        finally:
+            if receiptor is not None:
+                self.remove([receiptor])
+            if self in self.vault.doers:
+                self.vault.remove([self])
 
 
 def get_identifier_details(app, hab):

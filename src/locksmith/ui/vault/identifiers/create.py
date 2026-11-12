@@ -22,6 +22,10 @@ from locksmith.ui.toolkit.widgets.buttons import LocksmithRadioButton, Locksmith
 from locksmith.ui.toolkit.widgets.collapsible import CollapsibleSection
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, LocksmithLineEdit
 from locksmith.ui.vault.shared.delegation_mixin import DelegationMixin
+from locksmith.ui.vault.shared.witness_auth_mixin import (
+    WitnessAuthenticationPanel,
+    witness_auth_dialog_height
+)
 
 logger = help.ogler.getLogger(__name__)
 
@@ -42,11 +46,18 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
         """
         self.config = config
         self.app = app
+        self._auth_panel = None
+        self._pending_params = None
 
         # Create content widget
         content_widget = QWidget()
         content_widget.setStyleSheet(f"background-color: {colors.BACKGROUND_CONTENT};")
-        layout = QVBoxLayout(content_widget)
+        self._form_widget = QWidget()
+        outer_layout = QVBoxLayout(content_widget)
+        outer_layout.setContentsMargins(0, 0, 0, 0)
+        outer_layout.addWidget(self._form_widget)
+        self._outer_layout = outer_layout
+        layout = QVBoxLayout(self._form_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(8)
 
@@ -94,8 +105,8 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
         self.setFixedSize(420, 320)
 
         # Connect buttons
-        self.cancel_button.clicked.connect(self.close)
-        self.create_button.clicked.connect(self.create_identifier)
+        self.cancel_button.clicked.connect(self._on_cancel_clicked)
+        self.create_button.clicked.connect(self._on_create_clicked)
 
         # Add collapsible advanced configuration section
         self.advanced_config = CollapsibleSection(title="Advanced Configuration", parent=self)
@@ -210,6 +221,13 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
         self.delegator_dropdown.addItem("None")
         advanced_config_layout.addWidget(self.delegator_dropdown)
         self.delegator_dropdown.hide()
+        self.delegator_dropdown.currentIndexChanged.connect(self._update_delegation_help)
+        self.delegation_help = QLabel()
+        self.delegation_help.setWordWrap(True)
+        self.delegation_help.setFixedWidth(360)
+        self.delegation_help.setStyleSheet(f"font-size: 12px; color: {colors.TEXT_SECONDARY};")
+        advanced_config_layout.addWidget(self.delegation_help)
+        self.delegation_help.hide()
 
         self.delegate_proxy_dropdown = FloatingLabelComboBox("Delegate Proxy")
         self.delegate_proxy_dropdown.setFixedWidth(360)
@@ -221,6 +239,7 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
         self.no_delegation_radio.toggled.connect(self._on_delegation_radio_changed)
         self.local_delegation_radio.toggled.connect(self._on_delegation_radio_changed)
         self.remote_delegation_radio.toggled.connect(self._on_delegation_radio_changed)
+        self.local_delegation_radio.toggled.connect(self._update_delegation_help)
 
         advanced_config_layout.addSpacing(10)
 
@@ -250,6 +269,87 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
         if self.app and hasattr(self.app, 'vault') and self.app.vault and hasattr(self.app.vault, 'signals'):
             self.app.vault.signals.doer_event.connect(self._on_doer_event)
             logger.info("CreateIdentifierDialog: Connected to vault signal bridge")
+
+    def _local_delegator(self):
+        """Return the selected local delegator hab, or ``None``."""
+        if not self.local_delegation_radio.isChecked():
+            return None
+        delpre = self.delegator_dropdown.currentData()
+        return self.app.vault.hby.habByPre(delpre) if delpre else None
+
+    def _update_delegation_help(self, *_):
+        """Explain how a local delegator approves the new identifier."""
+        delegator = self._local_delegator()
+        if delegator is None:
+            self.delegation_help.hide()
+        else:
+            wits = len(delegator.kever.wits)
+            self.delegation_help.setText(
+                f"{delegator.name} anchors this identifier in its KEL"
+                + (f" and collects receipts from its {wits} witness{'es' if wits != 1 else ''}; "
+                   "you will enter their codes next." if wits else ".")
+            )
+            self.delegation_help.show()
+        if hasattr(self, 'advanced_config'):
+            self.advanced_config.update_content_height()
+
+    def _on_create_clicked(self):
+        if self._auth_panel is not None:
+            self._submit_auth_step()
+        else:
+            self.create_identifier()
+
+    def _on_cancel_clicked(self):
+        if self._auth_panel is not None:
+            self._show_form_step()
+        else:
+            self.close()
+
+    def _show_auth_step(self, delegator):
+        """Collect the delegator's witness codes before anchoring the delegation."""
+        self.clear_error(resize_dialog=False)
+        self._base_height = None
+        self._form_widget.hide()
+        self._auth_panel = WitnessAuthenticationPanel(
+            app=self.app, hab=delegator, witness_ids=list(delegator.kever.wits), parent=self)
+        heading = QLabel(f"Authenticate {delegator.name}'s witnesses to anchor the delegation")
+        heading.setWordWrap(True)
+        heading.setStyleSheet("font-weight: 600; font-size: 14px;")
+        self._auth_heading = heading
+        self._outer_layout.addWidget(heading)
+        self._outer_layout.addWidget(self._auth_panel)
+        self.cancel_button.setText("Back")
+        self.create_button.setText("Authenticate")
+        self.setFixedSize(700, witness_auth_dialog_height(
+            self._auth_panel.individual_witnesses, self._auth_panel.batch_groups) + 40)
+        self.center_on_parent()
+
+    def _show_form_step(self):
+        self.clear_error(resize_dialog=False)
+        self._base_height = None
+        for widget in (self._auth_panel, getattr(self, '_auth_heading', None)):
+            if widget is not None:
+                self._outer_layout.removeWidget(widget)
+                widget.setParent(None)
+                widget.deleteLater()
+        self._auth_panel = self._auth_heading = None
+        self._form_widget.show()
+        self.cancel_button.setText("Cancel")
+        self.create_button.setText("Create")
+        self.create_button.setEnabled(True)
+        self.setFixedSize(420, 320)
+        self.advanced_config.update_content_height()
+        self.center_on_parent()
+
+    def _submit_auth_step(self):
+        self.clear_error()
+        valid, codes, error_message = self._auth_panel.validate_authentication_codes()
+        if not valid:
+            self.show_error(error_message)
+            return
+        self.create_button.setEnabled(False)
+        self.create_button.setText("Anchoring...")
+        self._launch(dict(self._pending_params, codes=codes))
 
     def create_identifier(self):
         """Create a new identifier using the form values."""
@@ -291,40 +391,46 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
             params['delegation_type'] = 'none'
         elif self.local_delegation_radio.isChecked():
             params['delegation_type'] = 'local'
-            # Get delegator if selected
-            delegator = self.delegator_dropdown.currentText()
-            if delegator and delegator != "None":
-                params['delpre'] = delegator.split('|')[0].strip() if '|' in delegator else delegator
+            delegator = self._local_delegator()
+            if delegator is None:
+                self.show_error("Choose the local identifier that delegates this one")
+                return
+            params['delpre'] = delegator.pre
         elif self.remote_delegation_radio.isChecked():
             params['delegation_type'] = 'remote'
             # Get delegator and proxy if selected
-            delegator = self.delegator_dropdown.currentText()
-            if delegator and delegator != "None":
-                params['delpre'] = delegator.split('|')[0].strip() if '|' in delegator else delegator
+            if self.delegator_dropdown.currentData():
+                params['delpre'] = self.delegator_dropdown.currentData()
             proxy = self.delegate_proxy_dropdown.currentText()
             if proxy and proxy != "None":
                 params['proxy_alias'] = proxy.split('|')[0].strip() if '|' in proxy else proxy
 
-        # Call the identifier creation function
-        result = habbing.create_identifier(
-            app=self.app,
-            alias=alias,
-            key_type=key_type,
-            **params
-        )
+        params.update(alias=alias, key_type=key_type)
+        delegator = self._local_delegator()
+        if delegator is not None and delegator.kever.wits:
+            self._pending_params = params
+            self._show_auth_step(delegator)
+            return
+        self._launch(params)
+
+    def _launch(self, params):
+        """Start identifier creation with the reviewed ``params``."""
+        result = habbing.create_identifier(app=self.app, **params)
 
         # Handle result
         if result['success']:
             logger.info(f"Identifier creation initiated: {result['message']}")
             # Keep dialog open if async operation, it will close when InceptDoer signals completion
             if not result.get('async'):
-                self.identifier_created.emit(alias, result.get('pre', ''))
+                self.identifier_created.emit(params['alias'], result.get('pre', ''))
                 # Synchronous creation succeeded, close dialog
                 self.close()
         else:
             logger.error(f"Identifier creation failed: {result['message']}")
             self.identifier_creation_failed.emit(result['message'])
-            # TODO: Show error message to user
+            self.show_error(result['message'])
+            self.create_button.setEnabled(True)
+            self.create_button.setText("Authenticate" if self._auth_panel is not None else "Create")
 
     def _on_doer_event(self, doer_name: str, event_type: str, data: dict):
         """
@@ -350,6 +456,8 @@ class CreateIdentifierDialog(DelegationMixin, LocksmithDialog):
             logger.error(f"Identifier creation failed: {data.get('error')}")
             self.identifier_creation_failed.emit(data.get('error', ''))
             self.show_error(f"Identifier creation failed: {data.get('error')}")
+            self.create_button.setEnabled(True)
+            self.create_button.setText("Authenticate" if self._auth_panel is not None else "Create")
             # Keep dialog open so user can try again
 
     def _on_key_type_radio_changed(self):
