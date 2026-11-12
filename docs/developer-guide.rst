@@ -206,6 +206,27 @@ The deletion dialog retains the vault while remote cleanup is pending and
 clears it after a successful retry. These are automated host UI checks; manual
 acceptance and the complete credential/disclosure workflow remain open.
 
+Local Delegation
+----------------
+
+**Add a Local Identifier → Advanced Configuration → Local delegation** creates
+an identifier delegated by a local single-signature identifier. The delegator
+anchors the delegate's inception in its own KEL. When the delegator has
+witnesses, the dialog first asks for their codes and completes only after the
+delegator's receipt threshold for that anchor is met; a remote verifier accepts
+the delegate only after first-seeing that fully witnessed anchor. A failed
+attempt keeps the delegate and its anchor, and retrying with the same alias
+resumes them instead of authoring another anchor.
+
+The delegate is created without witnesses. Its KEL reaches verifiers in the
+IPEX Grants it signs, which carry the delegator's receipted anchor. The
+identifier view shows ``Delegated by <name> · anchored at sn N`` and, while
+receipts are missing, how many the delegator's witnesses have returned.
+
+A schema's saved issuer is the default in **Issue**; any other local signing
+identifier, such as a delegator's delegate, may be chosen to issue the same
+schema.
+
 ACDC Graph Policy
 -----------------
 

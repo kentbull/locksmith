@@ -62,6 +62,12 @@ class ViewIdentifierDialog(IdentifierViewSectionsMixin, LocksmithDialog):
 
         # AID Section
         self._build_aid_section(layout)
+        self.delegation_status = QLabel()
+        self.delegation_status.setObjectName('delegation_status')
+        self.delegation_status.setWordWrap(True)
+        self.delegation_status.setStyleSheet(f"font-size: 13px; color: {colors.TEXT_DARK};")
+        layout.addWidget(self.delegation_status)
+        self._refresh_delegation()
         self.receiving_status = QLabel()
         self.receiving_status.setWordWrap(True)
         layout.addWidget(self.receiving_status)
@@ -139,6 +145,7 @@ class ViewIdentifierDialog(IdentifierViewSectionsMixin, LocksmithDialog):
             self.receiving_status.setText('Vault closed')
             self.share_button.setEnabled(False)
             return
+        self._refresh_delegation()
         endpoints = receiving_endpoints(self.hab)
         pollers = [poller for poller in self.vault.mbx.pollers if poller.pre == self.hab.pre]
         errors = [poller.error for poller in pollers if poller.error]
@@ -146,6 +153,14 @@ class ViewIdentifierDialog(IdentifierViewSectionsMixin, LocksmithDialog):
                 'Receiving needs attention: ' + errors[0] if errors else
                 f'Receiving through {len(endpoints)} configured mailbox endpoints')
         self.receiving_status.setText(text)
+
+    def _refresh_delegation(self):
+        """Show who delegated this identifier and where the approval is anchored."""
+        status = habbing.delegation_status(self.app, self.hab)
+        self.delegation_status.setVisible(status is not None)
+        if status is not None:
+            self.delegation_status.setText(status['text'])
+            self.delegation_status.setToolTip(status['delegator'])
 
     def _share_introduction(self):
         if self.app.vault is self.vault and not getattr(self.vault, 'closed', False):

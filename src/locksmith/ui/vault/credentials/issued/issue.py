@@ -87,6 +87,10 @@ class IssueCredentialDialog(LocksmithDialog):
         self._populate_schema_dropdown()
         layout.addWidget(self.schema_dropdown)
 
+        self.issuer_dropdown = FloatingLabelComboBox("Issuer *")
+        self.issuer_dropdown.setFixedWidth(340)
+        layout.addWidget(self.issuer_dropdown)
+
         self.authentication_dropdown = FloatingLabelComboBox("Issuer authentication")
         self.authentication_dropdown.addItem("Registry", userData='registry')
         self.authentication_dropdown.addItem("Issuer KEL anchor", userData='anchor')
@@ -184,6 +188,7 @@ class IssueCredentialDialog(LocksmithDialog):
         self.local_radio.toggled.connect(self._on_recipient_type_changed)
         self.remote_radio.toggled.connect(self._on_recipient_type_changed)
         self.schema_dropdown.currentIndexChanged.connect(self._on_schema_changed)
+        self.issuer_dropdown.currentIndexChanged.connect(self._on_issuer_changed)
         self.issue_button.clicked.connect(self._on_primary_clicked)
 
         # Connect to vault signal bridge for doer events
@@ -208,6 +213,8 @@ class IssueCredentialDialog(LocksmithDialog):
             self.recipient_dropdown.setEnabled(False)
             self.local_radio.setEnabled(False)
             self.remote_radio.setEnabled(False)
+            self.issuer_dropdown.setCurrentIndex(self.issuer_dropdown.combo_box.findData(request.sad['ri']))
+            self.issuer_dropdown.setEnabled(False)
 
     def _disconnect_doer_event_signal(self):
         if not getattr(self, '_doer_event_connected', False):
@@ -827,11 +834,34 @@ class IssueCredentialDialog(LocksmithDialog):
             logger.warning("No SAID found for selected schema")
             return
 
+        self._populate_issuer_dropdown(schema_said)
+
+        # Generate fields for this schema
+        self._generate_dynamic_fields(schema_said)
+
+    def _selected_issuer(self):
+        """Return the hab selected to issue, or ``None``."""
+        return credentialing.signing_issuer(self.vault, self.issuer_dropdown.currentData())
+
+    def _populate_issuer_dropdown(self, schema_said):
+        """List local identifiers able to issue this schema, its saved issuer first."""
+        self.issuer_dropdown.blockSignals(True)
+        self.issuer_dropdown.clear()
+        for pre in credentialing.issuer_choices(self.vault, schema_said):
+            self.issuer_dropdown.addItem(identifier_name(self.vault, pre), userData=pre)
+        self.issuer_dropdown.blockSignals(False)
+        self._on_issuer_changed()
+
+    def _on_issuer_changed(self, *_):
+        """Enable the authentication modes the selected issuer and schema permit."""
+        schema_said = self.schema_dropdown.currentData()
+        if not schema_said or not self._current_vault():
+            return
         schemer = self.vault.hby.db.schema.get(keys=(schema_said,))
         properties = schemer.sed.get('properties', {})
         requires_registry = 'rd' in schemer.sed.get('required', [])
         permits_registry = 'rd' in properties or schemer.sed.get('additionalProperties', True)
-        issuer = self.vault.hby.habByPre(self.vault.db.issuers.get(keys=(schema_said,)))
+        issuer = self._selected_issuer()
         group = isinstance(issuer, GroupHab)
         modes = self.authentication_dropdown.combo_box
         for index in range(modes.count()):
@@ -845,9 +875,6 @@ class IssueCredentialDialog(LocksmithDialog):
             preferred = ('registry' if requires_registry or group and permits_registry else
                          'anchor' if modes.model().item(modes.findData('anchor')).isEnabled() else 'signature')
             modes.setCurrentIndex(modes.findData(preferred))
-
-        # Generate fields for this schema
-        self._generate_dynamic_fields(schema_said)
 
     @staticmethod
     def _get_field_value(widget: QWidget, field_def: dict):
@@ -995,8 +1022,7 @@ class IssueCredentialDialog(LocksmithDialog):
         schema_index = self.schema_dropdown.currentIndex()
         schema_said = self.schema_dropdown.itemData(schema_index)
 
-        issuer_pre = self.vault.db.issuers.get(keys=(schema_said,))
-        hab = self.vault.hby.habByPre(issuer_pre) if issuer_pre else None
+        hab = self._selected_issuer()
         if hab is None:
             self.show_error("Select a local issuer for this schema first")
             return
@@ -1193,6 +1219,7 @@ class IssueCredentialDialog(LocksmithDialog):
                 edges=edges,
                 rules=rules,
                 codes=codes,
+                issuer=self.issuer_dropdown.currentData(),
                 authentication=self.authentication_dropdown.currentData(),
                 signal_bridge=self.vault.signals if hasattr(self.vault, 'signals') else None,
                 **self.state_options.selection()
