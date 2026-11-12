@@ -416,9 +416,14 @@ of the Auxiliary operation table; it adds no doer.
   in the vault database. The run loop sends each copy through the vault's
   mailbox ``postman`` (topic ``credential``) once the registry update that the
   root opens is accepted locally, so owed copies survive a restart.
-- **After a group rotation.** When an accepted rotation adds members, the
-  rotation's elected witnesser owes every held root to each newcomer
-  (``RegistryRoot.newcomers``). Other members can send manually.
+- **After a group rotation.** Every member that signed an accepted rotation
+  and held a key in the prior establishment owes every held root to each
+  current member that is new or whose contributing key changed
+  (``RegistryRoot.resealed``). Copies are idempotent, so no sender is elected.
+  With a KERIpy that lacks ``resealed``, only the rotation's elected witnesser
+  owes each newcomer (``RegistryRoot.newcomers``). Other members can send
+  manually. A stored hint that fails KERIpy's sender self-check is logged and
+  replaced by the hint KERIpy derives.
 - **Manual send.** Issued and group Received credential rows offer **Send
   registry root**. Choose the holder AID; recipients are its current members
   (or the holder itself). Mailbox delivery is the default; **Save to file** is

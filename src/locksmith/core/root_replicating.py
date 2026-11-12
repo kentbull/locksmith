@@ -124,10 +124,11 @@ class RootReplicas:
                 if member != hab.mhab.pre:
                     self.owe(hab.pre, registry, member, hints.get(registry, ''))
 
-    def catch_up(self, hab, rotation):
-        """Owe every held root to each newcomer of one accepted group rotation."""
+    def catch_up(self, hab, rotation, members=None):
+        """Owe every held root to ``members``, by default each newcomer of one accepted rotation."""
         held = self.core.held(hab.pre)
-        for member in self.core.newcomers(hab, rotation):
+        members = self.core.newcomers(hab, rotation) if members is None else members
+        for member in members:
             for registry in held:
                 self.owe(hab.pre, registry, member, self._hint(registry, hab.pre))
         self.vault.db.rootRotations.pin(keys=(hab.pre, rotation), val=hab.mhab.pre)
@@ -136,6 +137,8 @@ class RootReplicas:
         """Return a local ACDC SAID in ``registry`` for commitment reproduction, or ''."""
         if gid is not None and (said := self.vault.db.rootHints.get(keys=(gid, registry))):
             return said
+        if hasattr(self.core, 'hint'):
+            return ''  # KERIpy derives and self-checks a hint per registry from local evidence.
         for (said,), record in self.vault.db.issued.getTopItemIter():
             if SerderACDC(raw=record.raw.encode()).sad.get('rd') == registry:
                 return said
@@ -167,8 +170,11 @@ class RootReplicas:
                 self._rotations.add(key)
                 continue
             try:
-                # Only the rotation's elected witnesser catches newcomers up automatically.
-                if self.core.witnesser(hab, est.d):
+                if hasattr(self.core, 'resealed'):
+                    # Blunt re-seal: every prior-key signer owes new and rekeyed members.
+                    self.catch_up(hab, est.d, self.core.resealed(hab, est.d))
+                elif self.core.witnesser(hab, est.d):
+                    # Older KERIpy: only the elected witnesser catches newcomers up.
                     self.catch_up(hab, est.d)
             except kering.KeriError as error:
                 # Usually a member KEL that is not yet local; examine it again next pass.
@@ -188,7 +194,7 @@ class RootReplicas:
             self.vault.db.rootSends.rem(keys=keys)
             return
         try:
-            wire = self.core.prepare(hab.mhab, recipient, gid, registry, td=td or None)
+            wire = self._prepare(hab.mhab, recipient, gid, registry, td)
         except RootUnverified as error:  # Includes RootDeferred.
             self._report(keys, 'Registry root copy to %s for %s waits: %s', recipient, registry, error)
             return  # The registry update, its anchor or member state is not yet accepted here.
@@ -206,6 +212,25 @@ class RootReplicas:
         self.post(hab.mhab, recipient, wire)
         self.vault.db.rootSends.rem(keys=keys)
         self._reported.discard(keys)
+
+    def _prepare(self, sender, recipient, gid, registry, td):
+        """Prepare one copy with a stored hint, else let KERIpy derive one.
+
+        KERIpy refuses a hint its sender self-check cannot reproduce. When only
+        the stored hint stands in the way, it is logged and replaced by
+        KERIpy's derived hint instead of keeping the copy waiting forever.
+        """
+        try:
+            return self.core.prepare(sender, recipient, gid, registry, td=td or None)
+        except RootUnverified:
+            raise
+        except kering.ValidationError as error:
+            if not td or isinstance(error, RootRefused):
+                raise
+            wire = self.core.prepare(sender, recipient, gid, registry, td=None)
+            logger.warning('Stored registry root hint %s for %s fails the KERIpy self-check (%s); '
+                           'the copy uses the hint KERIpy derives, if any', td, registry, error)
+            return wire
 
     def _authorized(self, hab, recipient, gid, registry):
         """True unless core authorization refuses this copy outright."""
@@ -252,8 +277,11 @@ class RootReplicas:
         recipients = self.recipients(hab, gid)
         if not recipients:
             raise ValueError('No current member can receive this registry root')
-        return [(recipient, self.core.prepare(sender, recipient, gid, registry,
-                                              td=td or self._hint(registry, gid) or None))
+        if td:  # An explicit hint is an override; KERIpy refuses it when it cannot verify.
+            return [(recipient, self.core.prepare(sender, recipient, gid, registry, td=td))
+                    for recipient in recipients]
+        hint = self._hint(registry, gid)
+        return [(recipient, self._prepare(sender, recipient, gid, registry, hint))
                 for recipient in recipients]
 
     def send(self, hab, gid, registry, *, td=None):
