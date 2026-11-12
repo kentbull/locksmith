@@ -9,7 +9,7 @@ from itertools import islice
 from hio.base import doing
 from hio.core.http import httping
 from keri import help, kering
-from keri.acdc import acdcmap, ipexing, chaining, regeventing
+from keri.acdc import EdgeEvaluator, acdcmap, ipexing, chaining, regeventing
 from keri.app import agenting, forwarding
 from keri.app.habbing import GroupHab
 from keri.core import Compactor, Prefixer, Saider, SealSource, SerderACDC, SerderKERI, messagize, parsing
@@ -253,6 +253,89 @@ def _validate_selected(vault, origin, artifacts):
         raise
     except (kering.MissingSchemaError, kering.MissingChainError) as error:
         raise credentialing.RegistryEvidencePending(str(error)) from error
+
+
+class _DraftSchemas:
+    """Schema evaluator that leaves an unsigned draft node's own schema undecided by policy.
+
+    The draft exists only to evaluate its edge relations; its attributes are not
+    yet complete, so its own-schema verdict is valid and every other check,
+    including edge schema pins on far nodes, uses the wallet's schemas.
+    """
+
+    def __init__(self, inner, draft):
+        self.inner, self.draft = inner, draft
+
+    def evaluate(self, acdc, *, schema=None, context="ACDC"):
+        if acdc.said == self.draft and schema is None:
+            return chaining.valid("draft credential schema is checked at issuance")
+        return self.inner.evaluate(acdc, schema=schema, context=context)
+
+    def __getattr__(self, name):
+        return getattr(self.inner, name)
+
+
+def link_preflight(vault, far_said, *, issuer, issuee=None, operators=None, schema=None):
+    """Advise whether a new credential may link to ``far_said`` through one edge.
+
+    The far credential's own selected graph is checked with the Grant preflight
+    (``verifySelection`` plus issued state). The edge relation is then evaluated
+    by the core ``EdgeEvaluator`` on an unsigned draft near node naming
+    ``issuer``, ``issuee`` and the selected unary ``operators``. The result is
+    advisory: final Grant verification remains authoritative.
+
+    Args:
+        vault: Open wallet holding the far credential.
+        far_said: Candidate far-node credential SAID.
+        issuer: Prefix of the identifier that will issue the near credential.
+        issuee: Near credential issuee, when it has one.
+        operators: Unary operator token, list of tokens, or ``None`` for the default.
+        schema: Optional edge schema pin (SAID) for the far node.
+
+    Returns:
+        dict: ``verdict`` (``'valid'``, ``'invalid'`` or ``'unknown'``) and the
+        core ``reason``.
+    """
+    try:
+        view, artifacts, _, _ = _credential_evidence(vault, far_said)
+        _validate_selected(vault, view['proof'], artifacts)
+    except credentialing.RegistryEvidencePending as error:
+        return dict(verdict='unknown', reason=str(error))
+    except (kering.KeriError, ValueError) as error:
+        return dict(verdict='invalid', reason=str(error))
+    if not issuer:
+        return dict(verdict='unknown', reason='Choose an issuer to check this link')
+    nodes = {}
+    for stream in [view['proof'], *artifacts]:
+        nest, = parsing.Parser(version=kering.Vrsn_2_0).parse(ims=bytearray(stream), processive=False)
+        nodes[nest.serder.said] = nest
+    leaf = {'d': '', 'n': far_said}
+    if schema:
+        leaf['s'] = schema
+    if operators:
+        leaf['o'] = operators
+    far_schema = view['sad']['s'] if isinstance(view['sad']['s'], str) else view['sad']['s']['$id']
+    draft = acdcmap(israid=issuer, schema=far_schema, attribute={'d': '', **({'i': issuee} if issuee else {})},
+                    edge={'d': '', 'link': leaf})
+    handler = vault.exc.routes['/ipex/grant']
+    inner = handler.edgeEvaluator
+
+    def verify_node(serder, nest, records=None):
+        if serder.said == draft.said:
+            return chaining.valid('draft credential is signed at issuance')
+        return inner.verifyNode(serder=serder, nest=nest, records=records)
+
+    evaluator = EdgeEvaluator(schemaEvaluator=_DraftSchemas(inner.schemaEvaluator, draft.said),
+                              verifyNode=verify_node, isDelegated=inner.isDelegated,
+                              reducers=inner.reducers)
+    nodes[draft.said] = {'serder': draft}
+    try:
+        verdict = evaluator.evaluate(draft.said, nodes=nodes, records={}, closed=True)
+    except (kering.MissingSchemaError, kering.MissingChainError) as error:
+        return dict(verdict='unknown', reason=str(error))
+    if verdict is None:
+        return dict(verdict='invalid', reason='The edge operators are not valid for this link')
+    return dict(verdict=verdict.verdict, reason=verdict.reason)
 
 
 def _validate_grant_graph(vault, said):

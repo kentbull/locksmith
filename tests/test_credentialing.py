@@ -1075,6 +1075,46 @@ def test_witnessed_five_stage_exchange_over_http_and_reopen(ipex_vaults, anchore
             server.exit()
 
 
+@pytest.mark.parametrize(('near', 'operator', 'refusal'), [
+    ('state', 'I1I', None),
+    ('program', 'DI1I', None),
+    ('program', 'I1I', 'requires equal issuers'),
+    ('rogue', 'DI1I', 'is not delegated from far issuer'),
+    ('program', ['E1E', 'DI1I', 'NI2I'], None),
+])
+def test_grant_preparation_applies_issuer_identity_operators(ipex_vaults, near, operator, refusal):
+    """Grant preparation refuses an I1I link to another issuer and a DI1I link from an unrelated one."""
+    from keri.core import Diger, Number
+
+    app = ipex_vaults(f'issuer-identity-{near}-{len(str(operator))}')
+    state = app.hby.makeHab(name='state')
+    program = app.hby.makeHab(name='program', delpre=state.pre)
+    state.interact(data=[{'i': program.pre, 's': '0', 'd': program.kever.serder.said}])
+    app.hby.db.aess.pin((program.pre, program.kever.serder.said),
+                        (Number(num=state.kever.sn), Diger(qb64=state.kever.serder.said)))
+    issuers = dict(state=state, program=program, rogue=app.hby.makeHab(name='rogue'))
+    holder = app.hby.makeHab(name='holder')
+    schema = _load_schema(app, state)
+    source = _issue(app, schema, holder, authentication='signature')
+    events = []
+    app.vault.signals.doer_event.connect(lambda name, event, data: events.append((event, data)))
+    doer = credentialing.IssueCredentialDoer(
+        app, schema.said, holder.pre, {'LEI': '254900OPPU84GM83MG36'}, authentication='signature',
+        edges={'unit': {'n': source, 's': schema.said, 'o': operator}}, issuer=issuers[near].pre)
+    doing.Doist(doers=[doer], tock=0.03125, limit=1.0).do()
+    assert events[-1][0] == 'credential_issued', events
+    origin = events[-1][1]['credential_said']
+    preflight = ipexing.link_preflight(app.vault, source, issuer=issuers[near].pre, issuee=holder.pre,
+                                       operators=operator, schema=schema.said)
+    assert preflight['verdict'] == ('valid' if refusal is None else 'invalid'), preflight
+    if refusal is None:
+        grant, _ = ipexing.grant(app.vault, issuers[near], origin, holder.pre)
+        assert grant.route == '/ipex/grant'
+    else:
+        with pytest.raises(kering.ValidationError, match=refusal):
+            ipexing.grant(app.vault, issuers[near], origin, holder.pre)
+
+
 def test_issuance_rejects_schema_mismatch(ipex_vaults):
     app = ipex_vaults('schema-mismatch')
     hab = app.hby.makeHab(name='issuer')
