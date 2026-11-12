@@ -413,8 +413,9 @@ def test_full_reply_requires_exact_scope_and_complete_verified_proof(wallets, fa
         stream = b''.join(raw + Counter(Codens.AttachmentGroup, count=0,
                          version=kering.Vrsn_2_0).qb64b
                          for raw in sender.rgy.store.cloneTelIter(registry.regk))
-    else:
-        stream = stream[:-4]
+    else:  # Cut into the head BUP body; its trailing empty AttachmentGroup carries no evidence.
+        head = sender.rgy.store.headEvent(registry.regk).raw
+        stream = stream[:stream.rindex(head) + len(head) // 2]
     with pytest.raises(kering.ValidationError):
         evidence.receive(receiver, regk, stream, headers)
     assert receiver.rgy.store.head(regk) is None

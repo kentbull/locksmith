@@ -346,7 +346,7 @@ def test_issuer_root_copy_is_retained_automatically(ipex_vaults, qapp, tmp_path)
     from PySide6.QtTest import QTest
     from PySide6.QtWidgets import QWidget
     from keri.acdc.salting import rootExn
-    from keri.core import Dater, Salter
+    from keri.core import Salter
     from locksmith.core import root_replicating
     from locksmith.ui.vault.credentials.activity import CredentialActivityPage
     from locksmith.ui.vault.credentials.registry_roots import RootSendDialog
@@ -411,21 +411,17 @@ def test_issuer_root_copy_is_retained_automatically(ipex_vaults, qapp, tmp_path)
     page = CredentialActivityPage(receiver)
     page.set_vault_name(target.name)
 
-    # A correctly signed wrong root, imported from a file, never verifies: it waits in
-    # escrow with no timeout and never replaces the retained root.
+    # A correctly signed copy of a different root conflicts with the immutable retained
+    # root: it is refused on arrival, never escrowed, and never replaces the retained root.
     bad = tmp_path / 'wrong.cesr'
     bad.write_bytes(rootExn(issuer, holder.pre, holder.pre, registry.regk, Salter(),
                             event=head.said, td=acdc.said))
     page.root_copies.import_file(bad)
-    assert not page.root_copies.error, page.root_copies.error
-    wrong, = target.vault.roots.pending()
-    assert page.root_copies.items == [wrong]
+    assert 'a different root is already retained' in page.root_copies.error, page.root_copies.error
+    assert target.vault.roots.pending() == [] and page.root_copies.items == []
     target.vault.auxiliary.process()
     target.vault.mbx.exchanger.processEscrow()
-    assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
-    target.hby.db.rrpe.pin(keys=(wrong.said,), val=Dater(dts='2020-01-01T00:00:00.000000+00:00'))
-    target.vault.mbx.exchanger.processEscrow()
-    assert [item.said for item in target.vault.roots.pending()] == [wrong.said]
+    assert target.vault.roots.pending() == []
     assert target.hby.mgr.getRegistryRoot(holder.pre, registry.regk).qb64 == root.qb64
     # The Activity list is informational: no approve or dismiss control exists.
     assert not hasattr(page.root_copies, 'approve') and not hasattr(page.root_copies, 'dismiss')
