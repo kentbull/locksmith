@@ -43,6 +43,10 @@ def identifier_introduction(hab) -> bytes:
     # the first event. Never include private keys or unrelated contacts.
     for message in hab.db.clonePreIter(pre=hab.pre, gvrsn=version):
         stream.extend(message)
+    # A delegate is verifiable only with its delegator's anchoring events; the
+    # importer escrows the delegated inception until they follow.
+    for message in hab.db.cloneDelegation(hab.kever, gvrsn=version):
+        stream.extend(message)
     roles = [(role, eid) for (_, role, eid), end in hab.db.ends.getTopItemIter(keys=(hab.pre,))
              if end.allowed or end.enabled]
     endpoints = dict.fromkeys([*hab.kever.wits, *(eid for _, eid in roles)])
@@ -758,7 +762,10 @@ class ImportDoer(doing.DoDoer):
                     local=False,
                     version=message_version(ims),
                 ).parse(ims)
+                # A delegate's inception settles once its delegator's events
+                # are in; its routes, signed by it, settle after that.
                 self.hby.kvy.processEscrows()
+                self.hby.rvy.processEscrowReply()
 
                 serder = SerderKERI(raw=ims)
                 pre = serder.pre
@@ -1040,6 +1047,89 @@ class ChallengeVerificationDoer(doing.DoDoer):
             return
 
 
+def authorize_endpoint(owner, hby, hab, eid, role, timeout=None):
+    """Give ``eid`` this identifier's KEL, then authorize it in ``role``.
+
+    The endpoint receives the KEL with its delegation chain first, so it can
+    verify the identifier's signed requests (a mailbox query, for instance).
+    The signed end-role reply is then accepted locally, where introductions
+    export it and the mailbox director polls it. A retry after a failed
+    delivery therefore sends the KEL again.
+
+    Args:
+        owner: DoDoer that runs the delivery doers.
+        hby: Habery holding ``hab``.
+        hab: Local identifier authorizing the endpoint.
+        eid: Endpoint provider prefix with a known controller route.
+        role: Endpoint role, for example ``kering.Roles.mailbox``.
+        timeout: Seconds to wait for delivery, or ``None`` to wait forever.
+
+    Raises:
+        TimeoutError: When the endpoint does not take the KEL in time.
+    """
+    postman = forwarding.StreamPoster(hby=hby, hab=hab, recp=eid, topic="reply")
+    for msg in [*hab.db.cloneDelegation(hab.kever, gvrsn=kering.Version),
+                *hab.db.clonePreIter(pre=hab.pre, gvrsn=kering.Version)]:
+        serder = serdering.SerderKERI(raw=msg)
+        postman.send(serder=serder, attachment=msg[serder.size:])
+    doer = doing.DoDoer(doers=postman.deliver())
+    owner.extend([doer])
+    deadline = None if timeout is None else time.monotonic() + timeout
+    try:
+        while not doer.done:
+            if deadline is not None and time.monotonic() >= deadline:
+                raise TimeoutError(f"{eid} did not accept the key event log of {hab.name}")
+            yield owner.tock
+    finally:
+        if doer in owner.doers:
+            owner.remove([doer])
+
+    ender = hab.db.ends.get(keys=(hab.pre, role, eid))
+    if not ender or not ender.allowed:
+        hab.psr.parseOne(ims=hab.reply(route="/end/role/add", data=dict(cid=hab.pre, role=role, eid=eid)))
+    if not hab.loadEndRole(cid=hab.pre, role=role, eid=eid):
+        raise kering.ValidationError(f"{hab.name} could not authorize {eid} as its {role}")
+
+
+class EndpointRoleDoer(doing.DoDoer):
+    """Run :func:`authorize_endpoint` once in the vault and keep its outcome."""
+
+    def __init__(self, hby, hab, eid, role, timeout=30.0):
+        self.hby, self.hab, self.eid, self.role, self.timeout = hby, hab, eid, role, timeout
+        self.error = None
+        self.finished = False
+        super().__init__(doers=[doing.doify(self.authorize_do)])
+
+    def authorize_do(self, tymth, tock=0.0, **opts):
+        self.wind(tymth)
+        self.tock = tock
+        yield self.tock
+        try:
+            yield from authorize_endpoint(self, self.hby, self.hab, self.eid, self.role, timeout=self.timeout)
+        except Exception as ex:
+            self.error = ex
+        finally:
+            self.finished = True
+        return True
+
+
+async def authorize_endpoint_async(app, hab, eid, role, timeout=30.0):
+    """Authorize ``eid`` in ``role`` for ``hab`` from asyncio code; raise its failure."""
+    vault = app.vault
+    doer = EndpointRoleDoer(vault.hby, hab, eid, role, timeout=timeout)
+    vault.extend([doer])
+    try:
+        while not doer.finished:
+            await asyncio.sleep(0.05)
+    finally:
+        try:
+            vault.remove([doer])
+        except Exception:
+            logger.warning("Failed removing endpoint role doer for %s", eid, exc_info=True)
+    if doer.error is not None:
+        raise doer.error
+
+
 class SetRoleDoer(doing.DoDoer):
     """
     Doer for setting roles on remote identifiers.
@@ -1127,41 +1217,7 @@ class SetRoleDoer(doing.DoDoer):
                     )
                 return
 
-            # Create role assignment message
-            if not ender or not ender.allowed:
-                msg = hab.reply(
-                    route="/end/role/add",
-                    data=dict(cid=hab.pre, role=self.role, eid=self.remote_id_pre)
-                )
-                hab.psr.parseOne(ims=msg)
-
-            while not hab.loadEndRole(cid=hab.pre, role=self.role, eid=self.remote_id_pre):
-                yield self.tock
-
-            # Create postman for sending messages
-            postman = forwarding.StreamPoster(
-                hby=self.hby,
-                hab=hab,
-                recp=self.remote_id_pre,
-                topic="reply"
-            )
-
-            # Send delegation messages
-            for msg in hab.db.cloneDelegation(hab.kever, gvrsn=kering.Version):
-                serder = serdering.SerderKERI(raw=msg)
-                postman.send(serder=serder, attachment=msg[serder.size:])
-
-            # Send identifier messages
-            for msg in hab.db.clonePreIter(pre=hab.pre, gvrsn=kering.Version):
-                serder = serdering.SerderKERI(raw=msg)
-                postman.send(serder=serder, attachment=msg[serder.size:])
-
-            # Deliver messages
-            doer = doing.DoDoer(doers=postman.deliver())
-            self.extend([doer])
-
-            while not doer.done:
-                yield self.tock
+            yield from authorize_endpoint(self, self.hby, hab, self.remote_id_pre, self.role)
 
             logger.info(f"Role '{self.role}' set for remote ID {self.remote_id_pre}")
 
