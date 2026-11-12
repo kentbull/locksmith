@@ -27,6 +27,7 @@ from locksmith.ui.toolkit.widgets import (
 )
 from locksmith.ui.toolkit.widgets.buttons import LocksmithRadioButton
 from locksmith.ui.toolkit.widgets.fields import FloatingLabelComboBox, FloatingLabelLineEdit
+from locksmith.ui.vault.credentials.issued.edge_operators import EdgeOperatorPicker, VERDICT_BADGES
 from locksmith.ui.vault.credentials.issued.grant import GrantCredentialDialog
 from locksmith.ui.vault.credentials.issued.state_options import StatePublicationOptions
 from locksmith.ui.vault.credentials.presentation import attribute_label, attribute_view, credential_name, identifier_name
@@ -61,6 +62,7 @@ class IssueCredentialDialog(LocksmithDialog):
         self._dynamic_fields_start_index = None
         self._const_fields_values = {}
         self._edge_dropdowns = {}  # Store edge credential dropdowns
+        self._link_refreshers = []  # Recompute far-node link verdicts
         self._auth_panel = None
         self._workflow_mode = "issue"
 
@@ -189,6 +191,7 @@ class IssueCredentialDialog(LocksmithDialog):
         self.remote_radio.toggled.connect(self._on_recipient_type_changed)
         self.schema_dropdown.currentIndexChanged.connect(self._on_schema_changed)
         self.issuer_dropdown.currentIndexChanged.connect(self._on_issuer_changed)
+        self.recipient_dropdown.currentIndexChanged.connect(self._refresh_links)
         self.issue_button.clicked.connect(self._on_primary_clicked)
 
         # Connect to vault signal bridge for doer events
@@ -539,13 +542,18 @@ class IssueCredentialDialog(LocksmithDialog):
                 child['section'] = field_def.get('section')
                 if child['section'] == 'e' and name == 'n':
                     widget = FloatingLabelComboBox(child['description'])
+                    widget.setFixedWidth(400)
                     widget.addItem('Choose a credential', '')
                     schema_pin = definition.get('properties', {}).get('s', {}).get('const')
                     for view in credentialing.credentials(self.vault):
                         schema = view['sad']['s']
                         schema = schema if isinstance(schema, str) else schema['$id']
                         if view['status']['et'] in ('issued', 'authenticated') and (not schema_pin or schema_pin == schema):
-                            widget.addItem(credential_name(view['schema']) + ' · ' + view['sad']['d'][:8], view['sad']['d'])
+                            widget.addItem(self._far_node_label(view), view['sad']['d'])
+                            widget.combo_box.setItemData(widget.count() - 1, view, Qt.ItemDataRole.UserRole + 1)
+                elif (child['section'] == 'e' and name == 'o' and 'n' in definition.get('properties', {})
+                      and 'const' not in prop):
+                    widget = EdgeOperatorPicker(child['description'], child['schema'], child['required'])
                 else:
                     widget = (attribute_view(child['description'], prop['const'], prop) if 'const' in prop
                               else self._create_field_widget(child))
@@ -567,6 +575,8 @@ class IssueCredentialDialog(LocksmithDialog):
                         else:
                             schema_widget.setText('')
                     selector.currentIndexChanged.connect(selected)
+            if field_def.get('section') == 'e' and 'n' in container.fields:
+                self._attach_link_badge(container, definition)
             return container
 
         if field_def['schema'].get('enum'):
@@ -802,6 +812,7 @@ class IssueCredentialDialog(LocksmithDialog):
         self._dynamic_field_widgets = {}
         self._const_fields_values = {}
         self._edge_dropdowns = {}
+        self._link_refreshers = []
         self._edge_widget = self._rules_widget = None
         self.control_layout.setSpacing(0)
 
@@ -875,6 +886,70 @@ class IssueCredentialDialog(LocksmithDialog):
             preferred = ('registry' if requires_registry or group and permits_registry else
                          'anchor' if modes.model().item(modes.findData('anchor')).isEnabled() else 'signature')
             modes.setCurrentIndex(modes.findData(preferred))
+        self._refresh_links()
+
+    def _far_node_label(self, view, verdict=None):
+        """Name a candidate far credential by title, issuer and optional link verdict."""
+        text = (f"{credential_name(view['schema'])} \u00b7 {identifier_name(self.vault, view['sad']['i'])}"
+                f" \u00b7 {view['sad']['d'][:8]}")
+        if verdict is not None:
+            text += f" \u00b7 {VERDICT_BADGES[verdict['verdict']][0]}"
+        return text
+
+    def _attach_link_badge(self, container, definition):
+        """Show the Grant-preflight verdict for each candidate far credential of one leaf edge."""
+        selector = container.fields['n'][0]
+        picker = container.fields.get('o', (None,))[0]
+        pin = definition.get('properties', {}).get('s', {}).get('const')
+        badge = QLabel()
+        badge.setObjectName('link_verdict')
+        badge.setWordWrap(True)
+        badge.setFixedWidth(400)
+        index = container.layout().indexOf(selector)
+        container.layout().insertWidget(index + 1, badge)
+        container.link_badge = badge
+
+        def refresh(*_):
+            if not self._current_vault():
+                return
+            operators = None
+            if isinstance(picker, EdgeOperatorPicker):
+                try:
+                    operators = picker.value()
+                except ValueError:
+                    pass
+            elif picker is not None:
+                operators = container.fields['o'][1]['schema'].get('const')
+            issuer = self.issuer_dropdown.currentData()
+            issuee = self.recipient_dropdown.currentData() or None
+            selected = None
+            for row in range(1, selector.count()):
+                view = selector.combo_box.itemData(row, Qt.ItemDataRole.UserRole + 1)
+                verdict = ipexing.link_preflight(self.vault, view['sad']['d'], issuer=issuer, issuee=issuee,
+                                                 operators=operators, schema=pin)
+                selector.combo_box.setItemText(row, self._far_node_label(view, verdict))
+                selector.combo_box.setItemData(row, verdict['reason'], Qt.ItemDataRole.ToolTipRole)
+                if row == selector.currentIndex():
+                    selected = verdict
+            if selected is None:
+                badge.hide()
+                return
+            text, color = VERDICT_BADGES[selected['verdict']]
+            badge.setText(text if selected['verdict'] == 'valid' else f"{text}: {selected['reason']}")
+            badge.setStyleSheet(f'font-size: 12px; font-weight: 600; color: {color};')
+            badge.show()
+            container.link_verdict = selected
+
+        container.refresh_link = refresh
+        selector.currentIndexChanged.connect(refresh)
+        if isinstance(picker, EdgeOperatorPicker):
+            picker.on_change(refresh)
+        self._link_refreshers.append(refresh)
+        refresh()
+
+    def _refresh_links(self, *_):
+        for refresh in list(self._link_refreshers):
+            refresh()
 
     @staticmethod
     def _get_field_value(widget: QWidget, field_def: dict):
@@ -893,6 +968,8 @@ class IssueCredentialDialog(LocksmithDialog):
 
         if isinstance(widget, FloatingLabelComboBox):
             return widget.currentData()
+        if isinstance(widget, EdgeOperatorPicker):
+            return widget.value()
 
         if field_type == 'object':
             if widget.include is not None and not widget.include.isChecked():

@@ -257,6 +257,23 @@ attribute block** choice. Select it explicitly when the schema requires the
 attribute object. Send remains disabled while the exact preview violates the
 schema; the wallet never expands the disclosure automatically to satisfy it.
 
+Edge authoring
+~~~~~~~~~~~~~~
+
+In **Issue**, a leaf edge's operator is chosen from KERIpy's unary operators
+(``keri.acdc.evaluating``): I2I, NI2I, DI2I, E1E, I1I and DI1I, each with a
+short explanation. A schema whose ``o`` is an array allows several operators;
+the conflicting members of the I2I/NI2I/DI2I group and of the I1I/DI1I group
+are mutually exclusive. ``enum`` and ``const`` restrict the choices, and an
+optional ``o`` offers the verifier default. NOT is not offered.
+
+Each candidate linked credential is listed with its title, issuer and a link
+verdict. ``ipexing.link_preflight`` checks the candidate's own graph with the
+Grant preflight, then evaluates the selected operators with the core
+``EdgeEvaluator`` on an unsigned draft of the new credential naming the
+selected issuer and recipient. The verdict is advisory; final Grant
+verification still decides.
+
 Registry Evidence and Existing Roots
 ------------------------------------
 

@@ -368,7 +368,7 @@ def test_issue_form_issues_aggregate_blocks_with_selected_subject(wallet, qapp, 
     core = edges.fields['coreIdentity'][0]
     selector = core.fields['n'][0]
     selector.setCurrentIndex(selector.combo_box.findData(source))
-    core.fields['o'][0].input_widget.set_items(['I2I'])
+    core.fields['o'][0].select(['I2I'])
     errors = []
     dialog.show_error = errors.append
     assert dialog._validate_fields(), errors
@@ -421,6 +421,125 @@ def test_issue_form_issues_aggregate_blocks_with_selected_subject(wallet, qapp, 
     assert received.recipient_field.text() == recipient.name
     assert_claims(received)
     assert credentialing.credential(app.vault, acdc.said, received=True)['held']
+
+
+def _sedi_agency(app):
+    """State issues an Organizational Unit to its anchored delegate program; rogue is unrelated."""
+    from pathlib import Path
+    from keri.core import Diger, Number
+    from locksmith.core import credentialing
+
+    state = app.hby.makeHab(name='state')
+    program = app.hby.makeHab(name='program', delpre=state.pre)
+    state.interact(data=[{'i': program.pre, 's': '0', 'd': program.kever.serder.said}])
+    app.hby.db.aess.pin((program.pre, program.kever.serder.said),
+                        (Number(num=state.kever.sn), Diger(qb64=state.kever.serder.said)))
+    rogue, sue = app.hby.makeHab(name='rogue'), app.hby.makeHab(name='sue')
+    schemas = {}
+    for name in ('organizational-unit', 'issuing-agent'):
+        schemer = scheming.Schemer(raw=(Path(__file__).parents[1] / f'assets/schemas/sedi/{name}.json').read_bytes())
+        app.hby.db.schema.pin((schemer.said,), schemer)
+        app.vault.db.issuers.pin((schemer.said,), state.pre)
+        schemas[name] = schemer
+    events = []
+    app.vault.signals.doer_event.connect(lambda name, event, data: events.append((event, data)))
+    doer = IssueCredentialDoer(app, schemas['organizational-unit'].said, program.pre,
+                               {'issuedDate': '2026-11-11T00:00:00.000000+00:00', 'unit': 'Program'},
+                               rules={'l': 'Unit terms'})
+    doing.Doist(doers=[doer], limit=1.0, tock=0.03125).do()
+    assert events[-1][0] == 'credential_issued', events
+    unit = events[-1][1]['credential_said']
+    assert credentialing.credential(app.vault, unit)['status']['et'] == 'issued'
+    return state, program, rogue, sue, schemas, unit
+
+
+def _agent_form(app, schemer, issuer, recipient):
+    dialog = IssueCredentialDialog(app)
+    dialog.schema_dropdown.setCurrentIndex(dialog.schema_dropdown.combo_box.findData(schemer.said))
+    dialog.issuer_dropdown.setCurrentIndex(dialog.issuer_dropdown.combo_box.findData(issuer.pre))
+    dialog.local_radio.setChecked(True)
+    dialog.recipient_dropdown.setCurrentIndex(dialog.recipient_dropdown.combo_box.findData(recipient.pre))
+    values = {'issuedDate': '2026-11-11', 'role': 'Issuing agent', 'value': 'Sue', 'l': 'Agent terms'}
+
+    def fill(widget):
+        for name, (child, _) in getattr(widget, 'fields', {}).items():
+            if name in values:
+                child.setText(values[name])
+            fill(child)
+        if getattr(widget, 'include', None) is not None:
+            widget.include.setChecked(True)
+    for info in dialog._dynamic_field_widgets.values():
+        fill(info['widget'])
+    fill(dialog._rules_widget[0])
+    edge = dialog._edge_widget[0].fields['orgUnit'][0]
+    return dialog, edge
+
+
+@pytest.mark.parametrize(('issuer_name', 'operator', 'verdict'), [
+    ('state', 'I1I', 'valid'),
+    ('program', 'DI1I', 'valid'),
+    ('program', 'I1I', 'invalid'),
+    ('rogue', 'DI1I', 'invalid'),
+])
+def test_issue_form_authors_issuer_identity_edges_with_preflight(wallet, qapp, issuer_name, operator, verdict):
+    from locksmith.core import credentialing
+    from locksmith.ui.vault.credentials.issued.edge_operators import EdgeOperatorPicker, OPERATOR_LABELS
+
+    app = wallet(f'sedi-{issuer_name}-{operator}')
+    state, program, rogue, sue, schemas, unit = _sedi_agency(app)
+    issuer = {'state': state, 'program': program, 'rogue': rogue}[issuer_name]
+    dialog, edge = _agent_form(app, schemas['issuing-agent'], issuer, sue)
+
+    picker = edge.fields['o'][0]
+    assert isinstance(picker, EdgeOperatorPicker) and not picker.multiple
+    labels = [picker.combo.itemText(row) for row in range(picker.combo.count())]
+    assert labels == list(OPERATOR_LABELS.values())  # required o: no verifier default
+    selector = edge.fields['n'][0]
+    selector.setCurrentIndex(selector.combo_box.findData(unit))
+    assert selector.currentText().startswith('SEDI Organizational Unit')
+    picker.select(operator)
+    assert picker.help.text() == {
+        'I1I': 'Both credentials must have the same issuer.',
+        'DI1I': "This credential's issuer must be the linked credential's issuer or its anchored delegate.",
+    }[operator]
+    assert edge.link_verdict['verdict'] == verdict, edge.link_verdict
+    assert edge.link_badge.text().startswith('\u2713 Valid link' if verdict == 'valid' else '\u2717 Invalid link')
+    assert selector.currentText().endswith('Valid link' if verdict == 'valid' else 'Invalid link')
+
+    errors = []
+    dialog.show_error = errors.append
+    assert dialog._validate_fields(), errors
+    events = []
+    app.vault.signals.doer_event.connect(lambda name, event, data: events.append((event, data)))
+    dialog._on_issue()
+    doing.Doist(doers=app.queued, limit=1.0, tock=0.03125).do()
+    assert events[-1][0] == 'credential_issued', events
+    agent = credentialing.credential(app.vault, events[-1][1]['credential_said'])
+    assert agent['sad']['i'] == issuer.pre
+    assert agent['sad']['e']['orgUnit']['n'] == unit
+    assert agent['sad']['e']['orgUnit']['o'] == operator
+    if verdict == 'valid':
+        ipexing.grant(app.vault, issuer, agent['sad']['d'], sue.pre)
+    else:
+        with pytest.raises(kering.ValidationError):
+            ipexing.grant(app.vault, issuer, agent['sad']['d'], sue.pre)
+
+
+def test_edge_operator_picker_honours_array_enum_and_group_conflicts(qapp):
+    from locksmith.ui.vault.credentials.issued.edge_operators import EdgeOperatorPicker
+
+    picker = EdgeOperatorPicker('Operators', {'type': 'array', 'items': {'type': 'string'}, 'minItems': 1}, True)
+    assert picker.multiple and list(picker.checks) == ['I2I', 'NI2I', 'DI2I', 'E1E', 'I1I', 'DI1I']
+    picker.select(['E1E', 'I1I'])
+    picker.checks['DI1I'].setChecked(True)
+    picker.checks['NI2I'].setChecked(True)
+    assert picker.value() == ['NI2I', 'E1E', 'DI1I']
+    picker.select([])
+    with pytest.raises(ValueError, match='at least one'):
+        picker.value()
+    limited = EdgeOperatorPicker('Operator', {'type': 'string', 'enum': ['I1I', 'DI1I']}, False)
+    assert [limited.combo.itemData(row) for row in range(limited.combo.count())] == [None, 'I1I', 'DI1I']
+    assert limited.value() is None and 'I2I when the linked credential has an issuee' in limited.help.text()
 
 
 def test_issuance_respects_schema_constants_and_selected_subject(wallet):
