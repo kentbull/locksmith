@@ -337,7 +337,9 @@ class RegistryEvidenceDoer(doing.DoDoer):
                     self._active[key] = worker
                     self.extend([worker])
                     self._launch_cursor = key
-                yield 1.0
+                # Each turn reaps workers and consumes proof cues; remote launches stay
+                # gated by PollInterval and the Retry backoff above.
+                yield self.vault.hby.tocks["registrarEscrow"]
         finally:
             self.remove(list(self._active.values()))
             self._active.clear()

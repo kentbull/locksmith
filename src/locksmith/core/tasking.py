@@ -9,6 +9,7 @@ from time import monotonic
 from PySide6.QtCore import QTimer
 from hio.base import tyming, doing
 from keri import help
+from keri.app.tocking import resolveTocks
 
 logger = help.ogler.getLogger(__name__)
 
@@ -134,19 +135,21 @@ class QtTask:
             raise
 
 
-def run_qt_task(doers, expire=0.0, tock=0.03125):
+def run_qt_task(doers, expire=0.0, tock=None):
     """
     Helper function to create and start a QtTask with a Doist.
 
     Parameters:
         doers (list): List of Doer instances to run
         expire (float): Time limit for running (0.0 means no limit)
-        tock (float): Time interval between ticks in seconds
+        tock (float | None): Time interval between ticks in seconds; None uses the
+            KERIpy registry doist tock (KERI_DOIST_TOCK)
 
     Returns:
         QtTask: The running QtTask instance
     """
     logger.info(f'Running QtTask with {len(doers)} doers')
+    tock = resolveTocks()["doist"] if tock is None else tock
     doist = QtDoist(doers=doers, limit=expire, tock=tock, real=True)
 
     timer = QTimer()
