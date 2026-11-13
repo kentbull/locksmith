@@ -859,7 +859,7 @@ class ApprovedResponse(doing.DoDoer):
             finally:
                 self.vault.signals.emit_doer_event('Ipex', 'response_preparation',
                                                    {'prior': self.said})
-            yield 0.25
+            yield self.vault.hby.tocks["credentialerEscrow"]  # retry while registry evidence is pending
 
 
 def exchanges(vault):

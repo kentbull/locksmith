@@ -7,6 +7,7 @@ import pytest
 from hio.base import doing
 from keri import kering
 from keri.app import habbing
+from keri.app.tocking import resolveTocks
 from keri.core import Codens, Counter, SerderKERI, coring, eventing, parsing
 from keri.db import dbing
 from keri.acdc import registraring
@@ -351,7 +352,7 @@ def test_locksmith_receiptor_uses_keri_v2_httping(monkeypatch):
         return b"replayed-kel"
 
     hab.replay = replay
-    hby = SimpleNamespace(prefixes={"AID"}, habs={"AID": hab})
+    hby = SimpleNamespace(prefixes={"AID"}, habs={"AID": hab}, tocks=resolveTocks(environ={}))
     receiptor = receipting.LocksmithReceiptor(hby=hby)
     receiptor.tock = 0.0
     receiptor.extend = lambda doers: captured.update(extended=len(doers))

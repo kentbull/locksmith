@@ -422,7 +422,7 @@ def run_vault_controller(app, hby, rgy, expire=0.0):
         raise
     doers = [vault]
 
-    tock = 0.03125  # ~31.25ms tick rate
+    tock = hby.tocks["doist"]  # KERIpy registry tick (KERI_DOIST_TOCK or config tocks.doist)
     doist = QtDoist(doers=doers, limit=expire, tock=tock, real=True)
 
     timer = QTimer()

@@ -406,13 +406,13 @@ class OOBIHandler(doing.Doer):
                     self.cred.hby.db.oobis.put(keys=(oobi,), val=obr)
 
                     while not self.cred.hby.db.roobi.get(keys=(oobi,)):
-                        yield 0.25
+                        yield self.cred.hby.tocks["commandPoll"]
 
                     obr = self.cred.hby.db.roobi.get(keys=(oobi,))
                     if force:
                         while obr.cid not in self.cred.hby.kevers:
                             self.cred.hby.kvy.processEscrows()
-                            yield 0.25
+                            yield self.cred.hby.tocks["commandPoll"]
 
                     msg = dict(status=falcon.HTTP_200, body={})
 
@@ -489,7 +489,7 @@ class WitnessAuthHandler(doing.Doer):
                 self.cred.hby.db.oobis.put(keys=(oobi,), val=obr)
 
                 while not self.cred.hby.db.roobi.get(keys=(oobi,)):
-                    yield 0.25
+                    yield self.cred.hby.tocks["commandPoll"]
 
                 eid = payload["eid"]
                 cid = payload["cid"]

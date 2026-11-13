@@ -9,6 +9,7 @@ from hio.base import doing
 from hio.help import decking
 
 from keri import help, kering
+from keri.app import directing
 from keri.core import eventing, routing
 from keri.core import parsing
 from keri.vdr.eventing import Tevery
@@ -661,9 +662,5 @@ class Reactant(doing.DoDoer):
 
 
 def runController(doers, expire=0.0):
-    """
-    Utiitity Function to create doist to run doers
-    """
-    tock = 0.03125
-    doist = doing.Doist(limit=expire, tock=tock, real=True)
-    doist.do(doers=doers)
+    """Run doers on KERIpy's runController, whose tick is the registry doist tock."""
+    directing.runController(doers=doers, expire=expire)

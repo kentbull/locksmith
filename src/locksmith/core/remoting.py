@@ -18,6 +18,7 @@ from hio.base import doing
 from keri import help, kering
 from keri.app import organizing, forwarding, oobiing
 from keri.app.habbing import GroupHab
+from keri.app.tocking import resolveTocks
 from keri.core import exchange, parsing, serdering
 from keri.core.serdering import SerderKERI
 from keri.db import basing
@@ -396,9 +397,13 @@ def resolve_oobi_blocking(
         cid=None,
         tag=None,
         timeout_seconds: float = 15.0,
-        tock: float = 0.125,
+        tock: float | None = None,
 ):
-    """Resolve an OOBI synchronously without blocking the UI event loop."""
+    """Resolve an OOBI synchronously without blocking the UI event loop.
+
+    tock is the scheduler tick in seconds; None uses the KERIpy registry doist tock.
+    """
+    tock = resolveTocks()["doist"] if tock is None else tock
 
     qtask = getattr(app, "qtask", None)
     if qtask is None:

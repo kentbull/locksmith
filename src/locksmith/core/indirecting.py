@@ -60,6 +60,8 @@ class MailboxDirector(doing.DoDoer):
         parser: Parses incoming data streams and delegates processing to relevant components.
     """
 
+    ReconcileInterval = 1.0  # seconds between poller and endpoint reconciliation passes
+
     def __init__(self, hby, topics, rgy, kvy, exc, db, auxiliary, ims=None,
                  rep=None, cues=None, rvy=None, evidence=None, mux=None, **kwa):
         """
@@ -97,9 +99,10 @@ class MailboxDirector(doing.DoDoer):
         self.messages = decking.Deck()
 
         doers = []
-        doers.extend([doing.doify(self.pollDo),
-                      doing.doify(self.msgDo),
-                      doing.doify(self.escrowDo)])
+        doers.extend([doing.doify(self.reconcileDo, tock=self.ReconcileInterval),
+                      doing.doify(self.pollDo, tock=hby.tocks["mailboxPoll"]),
+                      doing.doify(self.msgDo, tock=hby.tocks["mailboxMsg"]),
+                      doing.doify(self.escrowDo)])  # every tick, as before the registry
 
         self.rtr = rvy.rtr
         self.rvy = rvy
@@ -145,8 +148,27 @@ class MailboxDirector(doing.DoDoer):
          """
         # enter context
         self.wind(tymth)
-        self.tock = tock
-        _ = (yield self.tock)
+        _ = (yield tock)
+
+        while True:
+            for item in self.processPollIter():
+                self.messages.append(item)
+                _ = (yield tock)
+            _ = (yield tock)
+
+    def reconcileDo(self, tymth=None, tock=0.0, **kwa):
+        """Keep one poller per local identifier and receiving endpoint.
+
+        Runs every ReconcileInterval seconds (its doified tock): endpoint changes
+        are rare, while received messages are drained by pollDo every tick.
+
+        Parameters:
+            tymth: injected function wrapper closure returned by .tymen() of
+                Tymist instance.
+            tock (float): seconds between reconciliation passes
+        """
+        self.wind(tymth)
+        _ = (yield tock)
 
         while True:
             wanted = {(hab.pre, eid): hab for hab in self.hby.habs.values()
@@ -156,10 +178,7 @@ class MailboxDirector(doing.DoDoer):
                     self.remove_poller(poller.hab, poller.mailbox)
             for (pre, eid), hab in wanted.items():
                 self.add_poller(hab, eid)
-            for item in self.processPollIter():
-                self.messages.append(item)
-                _ = (yield self.tock)
-            _ = (yield 1.0)
+            _ = (yield tock)
 
     def add_pollers(self, hab):
         """
@@ -226,8 +245,7 @@ class MailboxDirector(doing.DoDoer):
             Add doing.doify(self.msgDo) to the doers list.
         """
         self.wind(tymth)
-        self.tock = tock
-        _ = (yield self.tock)
+        _ = (yield tock)
 
         while True:
             while self.messages:
@@ -237,7 +255,7 @@ class MailboxDirector(doing.DoDoer):
                 self.db.inbox.put(key, MailboxFrame(Texter(raw=bytes(msg)).qb64))
                 if commit is not None:
                     commit()
-                yield self.tock
+                yield tock
             for keys, frame in list(self.db.inbox.getTopItemIter()):
                 msg = bytearray(Texter(qb64=frame.raw).raw)
                 version = kering.Vrsn_2_0
@@ -262,8 +280,8 @@ class MailboxDirector(doing.DoDoer):
                 self.auxiliary.observe_pending()
                 # ACDC v2 evidence processing owns the message once the parser has run.
                 self.db.inbox.rem(keys)
-                yield self.tock
-            yield 1.0
+                yield tock
+            yield tock
 
     def escrowDo(self, tymth=None, tock=0.0, **kwa):
         """
@@ -282,8 +300,7 @@ class MailboxDirector(doing.DoDoer):
             Add doing.doify(self.escrowDo) to the doers list.
         """
         self.wind(tymth)
-        self.tock = tock
-        _ = (yield self.tock)
+        _ = (yield tock)
 
         while True:
             self.kvy.processEscrows()
@@ -364,7 +381,14 @@ class Poller(doing.DoDoer):
         self.msgs = msgs if msgs is not None else decking.Deck()
         self.times = dict()
 
-        doers = [doing.doify(self.eventDo)]
+        # KERIpy registry cadences: connect backoff while the mailbox has no usable
+        # endpoint, and the reconnect wait after a long-poll window closes. The window
+        # close is this client's choice, so the server's SSE retry hint (kept in .retry,
+        # where 0 still stops polling) does not set the reconnect wait.
+        self.connectTock = hab.tocks["pollerConnect"]
+        self.retryTock = hab.tocks["pollerRetry"]
+
+        doers = [doing.doify(self.eventDo, tock=hab.tocks["pollerEvent"])]
 
         super(Poller, self).__init__(doers=doers, **kwa)
 
@@ -387,8 +411,7 @@ class Poller(doing.DoDoer):
 
         """
         self.wind(tymth)
-        self.tock = tock
-        _ = (yield self.tock)
+        _ = (yield tock)
 
         witrec = self.hab.db.tops.get((self.pre, self.mailbox))
         if witrec is None:
@@ -400,7 +423,7 @@ class Poller(doing.DoDoer):
             except kering.MissingEntryError as e:
                 self.error = str(e)
                 self.connected = False
-                yield max(self.retry / 1000, 5.0)
+                yield self.connectTock
                 continue
 
             self.extend([clientDoer])
@@ -439,7 +462,7 @@ class Poller(doing.DoDoer):
             httping.createCESRRequest(msg, client, dest=self.mailbox)
 
             while client.requests:
-                yield self.tock
+                yield tock
 
             created = helping.nowUTC()
             while True:
@@ -478,10 +501,10 @@ class Poller(doing.DoDoer):
                     witrec.topics[tpc] = idx
                     self.times[tpc] = helping.nowUTC()
                     self.msgs.append((msg.encode("utf-8"), tpc, idx))
-                    yield self.tock
+                    yield tock
 
-                yield 0.25
-            yield self.retry / 1000
+                yield tock
+            yield self.retryTock
 
     def commit(self, topic, idx):
         """
